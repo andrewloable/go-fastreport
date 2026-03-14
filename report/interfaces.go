@@ -40,6 +40,9 @@ type Reader interface {
 	// NextChild advances to the next child element and returns its type name.
 	// Returns ("", false) when there are no more children.
 	NextChild() (typeName string, ok bool)
+	// FinishChild must be called after processing a child returned by NextChild.
+	// It skips remaining content of the child and restores parent reader state.
+	FinishChild() error
 }
 
 // Base is the minimum interface implemented by every report object.
@@ -90,4 +93,23 @@ type DataSourceBinder interface {
 type Translatable interface {
 	// ConvertToReportObjects performs any necessary translation.
 	ConvertToReportObjects()
+}
+
+// ChildDeserializer may be implemented by report objects that need to handle
+// specific named child XML elements during FRX deserialization.
+//
+// When reportpkg.deserializeChildren encounters a child element whose type name
+// is not registered in the serial registry, it checks whether the parent
+// implements ChildDeserializer and calls DeserializeChild.  If DeserializeChild
+// returns true the child is considered fully consumed; deserializeChildren then
+// only needs to call FinishChild() to restore the reader state.
+//
+// The method is called with the reader already positioned on the child element
+// (i.e. after the matching NextChild call).  The implementation may call
+// r.NextChild() recursively to consume that element's own children.
+type ChildDeserializer interface {
+	// DeserializeChild handles the child element named childType.
+	// Returns true if the element was consumed, false to fall through to
+	// the default behaviour (skip unknown element).
+	DeserializeChild(childType string, r Reader) bool
 }

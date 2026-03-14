@@ -388,3 +388,4 @@ func (r *testReader) ReadFloat(key string, def float32) float32 {
 }
 
 func (r *testReader) NextChild() (string, bool) { return "", false }
+func (r *testReader) FinishChild() error         { return nil }

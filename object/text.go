@@ -3,6 +3,7 @@ package object
 import (
 	"github.com/andrewloable/go-fastreport/report"
 	"github.com/andrewloable/go-fastreport/style"
+	"github.com/andrewloable/go-fastreport/utils"
 )
 
 // Duplicates specifies how duplicate values are displayed.
@@ -306,27 +307,31 @@ const (
 type TextObject struct {
 	TextObjectBase
 
-	horzAlign       HorzAlign
-	vertAlign       VertAlign
-	angle           int
-	rightToLeft     bool
-	wordWrap        bool     // default true
-	underlines      bool
-	font            style.Font
-	fontWidthRatio  float32 // default 1.0
-	firstTabOffset  float32
-	tabWidth        float32
-	clip            bool    // default true
-	wysiwyg         bool
-	lineHeight      float32
-	forceJustify    bool
-	textRenderType  TextRenderType
-	autoShrink      AutoShrinkMode
+	horzAlign         HorzAlign
+	vertAlign         VertAlign
+	angle             int
+	rightToLeft       bool
+	wordWrap          bool // default true
+	underlines        bool
+	font              style.Font
+	fontWidthRatio    float32 // default 1.0
+	firstTabOffset    float32
+	tabWidth          float32
+	clip              bool // default true
+	wysiwyg           bool
+	lineHeight        float32
+	forceJustify      bool
+	textRenderType    TextRenderType
+	autoShrink        AutoShrinkMode
 	autoShrinkMinSize float32
-	paragraphOffset float32
-	paragraphFormat ParagraphFormat
-	mergeMode       MergeMode
-	autoWidth       bool
+	paragraphOffset   float32
+	paragraphFormat   ParagraphFormat
+	mergeMode         MergeMode
+	autoWidth         bool
+
+	// highlights holds the conditional-formatting rules for this text object.
+	// The engine evaluates each condition in order and applies the first match.
+	highlights []style.HighlightCondition
 }
 
 // NewTextObject creates a TextObject with defaults.
@@ -477,6 +482,57 @@ func (t *TextObject) AutoWidth() bool { return t.autoWidth }
 
 // SetAutoWidth sets auto-width.
 func (t *TextObject) SetAutoWidth(v bool) { t.autoWidth = v }
+
+// --- Highlight conditions ---
+
+// Highlights returns the conditional-formatting rules for this object.
+func (t *TextObject) Highlights() []style.HighlightCondition { return t.highlights }
+
+// AddHighlight appends a highlight condition.
+func (t *TextObject) AddHighlight(c style.HighlightCondition) {
+	t.highlights = append(t.highlights, c)
+}
+
+// DeserializeChild handles the <Highlight> child element from FRX.
+// It satisfies report.ChildDeserializer so that reportpkg.deserializeChildren
+// can delegate unknown child elements to the TextObject itself.
+func (t *TextObject) DeserializeChild(childType string, r report.Reader) bool {
+	if childType != "Highlight" {
+		return false
+	}
+	// <Highlight> contains <Condition …/> child elements.
+	for {
+		condType, ok := r.NextChild()
+		if !ok {
+			break
+		}
+		if condType == "Condition" {
+			c := style.NewHighlightCondition()
+			c.Expression = r.ReadStr("Expression", "")
+			c.Visible = r.ReadBool("Visible", true)
+			c.ApplyBorder = r.ReadBool("ApplyBorder", false)
+			c.ApplyFill = r.ReadBool("ApplyFill", false)
+			c.ApplyFont = r.ReadBool("ApplyFont", false)
+			c.ApplyTextFill = r.ReadBool("ApplyTextFill", true)
+			if cs := r.ReadStr("Fill.Color", ""); cs != "" {
+				if col, err := utils.ParseColor(cs); err == nil {
+					c.FillColor = col
+				}
+			}
+			if cs := r.ReadStr("TextFill.Color", ""); cs != "" {
+				if col, err := utils.ParseColor(cs); err == nil {
+					c.TextFillColor = col
+				}
+			}
+			if fs := r.ReadStr("Font", ""); fs != "" {
+				c.Font = style.FontFromStr(fs)
+			}
+			t.highlights = append(t.highlights, c)
+		}
+		_ = r.FinishChild()
+	}
+	return true
+}
 
 // --- Serialization ---
 

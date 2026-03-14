@@ -81,6 +81,32 @@ func (e *ReportEngine) buildPreparedObject(obj report.Base) *preview.PreparedObj
 		po.VertAlign = int(v.VertAlign())
 		po.WordWrap = v.WordWrap()
 		po.Text = e.evalText(v.Text())
+		// Apply highlight conditions — first matching condition wins.
+		if e.report != nil {
+			for _, cond := range v.Highlights() {
+				result, err := e.report.Calc(cond.Expression)
+				if err != nil {
+					continue
+				}
+				matched, _ := result.(bool)
+				if !matched {
+					continue
+				}
+				if !cond.Visible {
+					return nil
+				}
+				if cond.ApplyFill {
+					po.FillColor = cond.FillColor
+				}
+				if cond.ApplyTextFill {
+					po.TextColor = cond.TextFillColor
+				}
+				if cond.ApplyFont {
+					po.Font = cond.Font
+				}
+				break
+			}
+		}
 
 	case *object.LineObject:
 		po.Kind = preview.ObjectTypeLine

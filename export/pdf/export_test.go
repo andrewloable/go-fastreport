@@ -2,6 +2,9 @@ package pdf_test
 
 import (
 	"bytes"
+	stdimage "image"
+	stdcolor "image/color"
+	"image/png"
 	"strings"
 	"testing"
 
@@ -121,4 +124,62 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// TestExporter_PictureObject verifies that an ObjectTypePicture with a
+// PNG blob in the BlobStore is embedded in the PDF without error.
+func TestExporter_PictureObject(t *testing.T) {
+	// Build a minimal 4x4 white PNG using Go's image/png encoder.
+	pngData := buildPNG(4, 4)
+
+	pp := preview.New()
+	pp.AddPage(595, 842, 1)
+
+	blobIdx := pp.BlobStore.Add("img1", pngData)
+
+	b := &preview.PreparedBand{
+		Name:   "DataBand",
+		Top:    10,
+		Height: 100,
+	}
+	b.Objects = []preview.PreparedObject{
+		{
+			Name:    "Pic1",
+			Kind:    preview.ObjectTypePicture,
+			Left:    10,
+			Top:     0,
+			Width:   100,
+			Height:  100,
+			BlobIdx: blobIdx,
+		},
+	}
+	_ = pp.AddBand(b)
+
+	exp := pdf.NewExporter()
+	var buf bytes.Buffer
+	if err := exp.Export(pp, &buf); err != nil {
+		t.Fatalf("Export with picture: %v", err)
+	}
+
+	out := buf.String()
+	if !strings.HasPrefix(out, "%PDF-") {
+		t.Error("output does not start with %PDF-")
+	}
+	// The content stream should contain an image placement operator.
+	if !strings.Contains(out, " Do ") && !strings.Contains(out, " Do\n") {
+		t.Error("expected 'Do' operator in PDF content stream for image")
+	}
+}
+
+// buildPNG creates a w×h solid white RGB PNG using Go's standard encoder.
+func buildPNG(w, h int) []byte {
+	img := stdimage.NewRGBA(stdimage.Rect(0, 0, w, h))
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			img.SetRGBA(x, y, stdcolor.RGBA{R: 255, G: 255, B: 255, A: 255})
+		}
+	}
+	var buf bytes.Buffer
+	_ = png.Encode(&buf, img)
+	return buf.Bytes()
 }

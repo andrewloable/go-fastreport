@@ -86,6 +86,7 @@ func (r *mockReader) NextChild() (string, bool) {
 	r.childIdx++
 	return t, true
 }
+func (r *mockReader) FinishChild() error { return nil }
 
 // simpleObject implements report.Base for testing.
 type simpleObject struct {

@@ -2,6 +2,7 @@ package reportpkg
 
 import (
 	"bytes"
+	"compress/gzip"
 	"fmt"
 	"io"
 	"os"
@@ -29,8 +30,29 @@ func (r *Report) LoadFromString(xml string) error {
 }
 
 // LoadFrom deserializes a Report from an io.Reader containing FRX XML.
+// If the stream starts with the gzip magic bytes (0x1f 0x8b), it is
+// transparently decompressed before parsing.
 func (r *Report) LoadFrom(rd io.Reader) error {
-	rdr := serial.NewReader(rd)
+	// Buffer enough bytes to detect gzip magic without consuming the stream.
+	var peek [2]byte
+	buf := &bytes.Buffer{}
+	if _, err := io.ReadFull(rd, peek[:]); err != nil {
+		return fmt.Errorf("report.LoadFrom: read header: %w", err)
+	}
+	buf.Write(peek[:])
+
+	var src io.Reader = io.MultiReader(buf, rd)
+	if peek[0] == 0x1f && peek[1] == 0x8b {
+		// Gzip-compressed FRX.
+		gz, err := gzip.NewReader(src)
+		if err != nil {
+			return fmt.Errorf("report.LoadFrom: gzip open: %w", err)
+		}
+		defer gz.Close()
+		src = gz
+	}
+
+	rdr := serial.NewReader(src)
 
 	// Expect the root <Report> element.
 	typeName, ok := rdr.ReadObjectHeader()
@@ -115,6 +137,14 @@ func deserializeChildren(rdr *serial.Reader, parent report.Base) {
 		if !ok {
 			break
 		}
+		// Give the parent object a chance to handle the child itself (e.g.
+		// TextObject handles its own <Highlight> children this way).
+		if cd, isCD := parent.(report.ChildDeserializer); isCD {
+			if cd.DeserializeChild(childType, rdr) {
+				_ = rdr.FinishChild()
+				continue
+			}
+		}
 		child, err := serial.DefaultRegistry.Create(childType)
 		if err != nil {
 			_ = rdr.SkipElement()
@@ -154,9 +184,16 @@ func (r *Report) SaveToString() (string, error) {
 }
 
 // SaveTo serializes the Report to an io.Writer as FRX XML.
+// If r.Compressed is true, the output is gzip-compressed.
 // Pages and their bands/objects are written as nested children via Report.Serialize().
 func (r *Report) SaveTo(w io.Writer) error {
-	sw := serial.NewWriter(w)
+	dst := w
+	if r.Compressed {
+		gz := gzip.NewWriter(w)
+		defer gz.Close()
+		dst = gz
+	}
+	sw := serial.NewWriter(dst)
 	if err := sw.WriteHeader(); err != nil {
 		return fmt.Errorf("report.SaveTo: write header: %w", err)
 	}

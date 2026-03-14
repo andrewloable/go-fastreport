@@ -41,6 +41,7 @@ func (p *Pages) Count() int { return len(p.pageList) }
 type Page struct {
 	obj      *core.IndirectObject
 	contents *Contents
+	xObjects *core.Dictionary // /Resources /XObject sub-dictionary
 	Width    float64
 	Height   float64
 }
@@ -79,6 +80,7 @@ func NewPage(w *Writer, pages *Pages, width, height float64) *Page {
 	page := &Page{
 		obj:      obj,
 		contents: contents,
+		xObjects: xObject,
 		Width:    width,
 		Height:   height,
 	}
@@ -89,3 +91,9 @@ func NewPage(w *Writer, pages *Pages, width, height float64) *Page {
 
 // Contents returns the page's content stream object.
 func (p *Page) Contents() *Contents { return p.contents }
+
+// AddXObject registers an indirect object as an XObject resource under the
+// given name (e.g. "Im0").  The name is used in content streams as /Im0.
+func (p *Page) AddXObject(name string, obj *core.IndirectObject) {
+	p.xObjects.Add(name, core.NewName(obj.Reference()))
+}

@@ -174,9 +174,13 @@ func (e *ReportEngine) RunDataBandFull(db *band.DataBand) error {
 
 		e.ShowFullBand(&db.BandBase)
 
-		if err := e.runBands(dataBandSubBands(db)); err != nil {
+		subBands := dataBandSubBands(db)
+		restore := e.applyRelationFilters(db, subBands)
+		if err := e.runBands(subBands); err != nil {
+			restore()
 			return err
 		}
+		restore()
 
 		if err := ds.Next(); err != nil {
 			break // EOF

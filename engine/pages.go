@@ -94,13 +94,21 @@ func (e *ReportEngine) endColumn(pg *reportpkg.ReportPage) bool {
 // showBand is the central band-output method.
 // It advances CurY by the band height, adds a PreparedBand to the current page,
 // and fires the band's BeforePrint/AfterPrint hooks.
-// Nil bands are silently skipped.
+// Nil bands and invisible bands are silently skipped.
 func (e *ReportEngine) showBand(b report.Base) {
 	if b == nil {
 		return
 	}
 	// Guard against typed nil pointers passed as interface (e.g. (*band.OverlayBand)(nil)).
 	if v := reflect.ValueOf(b); v.Kind() == reflect.Ptr && v.IsNil() {
+		return
+	}
+
+	// Visibility check: skip bands where Visible() == false.
+	type hasVisible interface {
+		Visible() bool
+	}
+	if vis, ok := b.(hasVisible); ok && !vis.Visible() {
 		return
 	}
 

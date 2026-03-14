@@ -486,3 +486,131 @@ func TestIntegration_ReportSummary(t *testing.T) {
 		t.Errorf("last band = %q, want ReportSummary", names[len(names)-1])
 	}
 }
+
+// ── Scenario 11: Invisible band is not rendered ───────────────────────────────
+
+// TestIntegration_InvisibleBand verifies that a band with Visible=false
+// is skipped by the engine and produces no PreparedBand entry.
+func TestIntegration_InvisibleBand(t *testing.T) {
+	r := reportpkg.NewReport()
+	pg := reportpkg.NewReportPage()
+	r.AddPage(pg)
+
+	// Visible band.
+	visible := band.NewDataBand()
+	visible.SetName("VisibleBand")
+	visible.SetHeight(20)
+	visible.SetVisible(true)
+	visible.SetDataSource(newSliceDS("a", "b"))
+	pg.AddBand(visible)
+
+	// Invisible band.
+	hidden := band.NewDataBand()
+	hidden.SetName("HiddenBand")
+	hidden.SetHeight(20)
+	hidden.SetVisible(false)
+	hidden.SetDataSource(newSliceDS("x", "y"))
+	pg.AddBand(hidden)
+
+	e := engine.New(r)
+	if err := e.Run(engine.DefaultRunOptions()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	pp := e.PreparedPages()
+	for i := 0; i < pp.Count(); i++ {
+		p := pp.GetPage(i)
+		if p == nil {
+			continue
+		}
+		for _, b := range p.Bands {
+			if b.Name == "HiddenBand" {
+				t.Errorf("invisible band 'HiddenBand' should not appear in prepared output")
+			}
+		}
+	}
+}
+
+// TestIntegration_AllBandsInvisible verifies that when all bands are invisible
+// the report runs without error and produces zero PreparedBands.
+func TestIntegration_AllBandsInvisible(t *testing.T) {
+	r := reportpkg.NewReport()
+	pg := reportpkg.NewReportPage()
+	r.AddPage(pg)
+
+	db := band.NewDataBand()
+	db.SetName("Hidden")
+	db.SetHeight(10)
+	db.SetVisible(false)
+	db.SetDataSource(newSliceDS("a", "b", "c"))
+	pg.AddBand(db)
+
+	e := engine.New(r)
+	if err := e.Run(engine.DefaultRunOptions()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	pp := e.PreparedPages()
+	total := 0
+	for i := 0; i < pp.Count(); i++ {
+		if p := pp.GetPage(i); p != nil {
+			total += len(p.Bands)
+		}
+	}
+	if total != 0 {
+		t.Errorf("expected 0 bands for all-invisible report, got %d", total)
+	}
+}
+
+// TestIntegration_VisibleBandAfterInvisible verifies that bands rendered
+// after an invisible band still advance CurY only by the visible bands.
+func TestIntegration_VisibleBandAfterInvisible(t *testing.T) {
+	r := reportpkg.NewReport()
+	pg := reportpkg.NewReportPage()
+	r.AddPage(pg)
+
+	// Invisible header.
+	hdr := band.NewDataHeaderBand()
+	hdr.SetName("Hdr")
+	hdr.SetHeight(30)
+	hdr.SetVisible(false)
+
+	// Visible data band.
+	db := band.NewDataBand()
+	db.SetName("Data")
+	db.SetHeight(10)
+	db.SetVisible(true)
+	db.SetHeader(hdr)
+	db.SetDataSource(newSliceDS("a"))
+	pg.AddBand(db)
+
+	e := engine.New(r)
+	if err := e.Run(engine.DefaultRunOptions()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	pp := e.PreparedPages()
+	var names []string
+	for i := 0; i < pp.Count(); i++ {
+		if p := pp.GetPage(i); p != nil {
+			for _, b := range p.Bands {
+				names = append(names, b.Name)
+			}
+		}
+	}
+	// Only "Data" should appear, not "Hdr".
+	for _, n := range names {
+		if n == "Hdr" {
+			t.Error("invisible header 'Hdr' appeared in prepared output")
+		}
+	}
+	found := false
+	for _, n := range names {
+		if n == "Data" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("visible band 'Data' missing from prepared output")
+	}
+}

@@ -30,3 +30,10 @@ go.work.sum
 # Editor/IDE
 # .idea/
 # .vscode/
+
+# Original .NET reference
+original-dotnet/
+
+# Dolt database files (added by bd init)
+.dolt/
+*.db

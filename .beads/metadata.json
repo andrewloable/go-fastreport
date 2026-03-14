@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "server",
+  "dolt_database": "go_fastreport",
+  "project_id": "10da35d2-a9b7-4489-b797-99f217689a49"
+}

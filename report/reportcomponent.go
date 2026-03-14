@@ -40,12 +40,20 @@ const (
 
 // Hyperlink holds hyperlink properties for a report component.
 type Hyperlink struct {
-	// Expression is the expression that evaluates to the URL.
-	Expression string
-	// Kind is the hyperlink kind (e.g. "URL", "Bookmark", "DetailReport").
+	// Kind is the hyperlink kind (e.g. "URL", "Bookmark", "DetailReport", "DetailPage").
 	Kind string
-	// Target is the hyperlink target (e.g. "_blank").
+	// Expression is the expression that evaluates to the URL or anchor value.
+	Expression string
+	// Value is a static URL or anchor value (used when Expression is empty).
+	Value string
+	// Target is the hyperlink target frame (e.g. "_blank", "_self").
 	Target string
+	// DetailPageName is the name of the detail report page (for DetailPage kind).
+	DetailPageName string
+	// DetailReportName is the name of the detail report (for DetailReport kind).
+	DetailReportName string
+	// ReportParameter is the parameter name to pass to the detail report.
+	ReportParameter string
 }
 
 // EventArgs holds context passed to report event callbacks.
@@ -98,6 +106,7 @@ type ReportComponentBase struct {
 func NewReportComponentBase() *ReportComponentBase {
 	rc := &ReportComponentBase{
 		ComponentBase: *NewComponentBase(),
+		border:        *style.NewBorder(),
 		exportable:    true,
 		printOn:       PrintOnAllPages,
 		fill:          &style.SolidFill{Color: color.RGBA{R: 255, G: 255, B: 255, A: 255}},
@@ -274,6 +283,9 @@ func (rc *ReportComponentBase) Serialize(w Writer) error {
 	if err := rc.ComponentBase.Serialize(w); err != nil {
 		return err
 	}
+	// Border and Fill — delta against FRX defaults.
+	serializeBorder(w, &rc.border)
+	serializeFill(w, rc.fill)
 	if !rc.exportable {
 		w.WriteBool("Exportable", false)
 	}
@@ -310,6 +322,29 @@ func (rc *ReportComponentBase) Serialize(w Writer) error {
 	if rc.bookmark != "" {
 		w.WriteStr("Bookmark", rc.bookmark)
 	}
+	if h := rc.hyperlink; h != nil {
+		if h.Kind != "" {
+			w.WriteStr("Hyperlink.Kind", h.Kind)
+		}
+		if h.Expression != "" {
+			w.WriteStr("Hyperlink.Expression", h.Expression)
+		}
+		if h.Value != "" {
+			w.WriteStr("Hyperlink.Value", h.Value)
+		}
+		if h.Target != "" {
+			w.WriteStr("Hyperlink.Target", h.Target)
+		}
+		if h.DetailPageName != "" {
+			w.WriteStr("Hyperlink.DetailPageName", h.DetailPageName)
+		}
+		if h.DetailReportName != "" {
+			w.WriteStr("Hyperlink.DetailReportName", h.DetailReportName)
+		}
+		if h.ReportParameter != "" {
+			w.WriteStr("Hyperlink.ReportParameter", h.ReportParameter)
+		}
+	}
 	return nil
 }
 
@@ -318,6 +353,9 @@ func (rc *ReportComponentBase) Deserialize(r Reader) error {
 	if err := rc.ComponentBase.Deserialize(r); err != nil {
 		return err
 	}
+	// Border and Fill.
+	deserializeBorder(r, &rc.border)
+	rc.fill = deserializeFill(r, rc.fill)
 	rc.exportable = r.ReadBool("Exportable", true)
 	rc.exportableExpression = r.ReadStr("ExportableExpression", "")
 	rc.canGrow = r.ReadBool("CanGrow", false)
@@ -330,5 +368,25 @@ func (rc *ReportComponentBase) Deserialize(r Reader) error {
 	rc.evenStyleName = r.ReadStr("EvenStyle", "")
 	rc.hoverStyleName = r.ReadStr("HoverStyle", "")
 	rc.bookmark = r.ReadStr("Bookmark", "")
+	// Hyperlink dot-notation attributes.
+	hlKind := r.ReadStr("Hyperlink.Kind", "")
+	hlExpr := r.ReadStr("Hyperlink.Expression", "")
+	hlValue := r.ReadStr("Hyperlink.Value", "")
+	hlTarget := r.ReadStr("Hyperlink.Target", "")
+	hlDetailPage := r.ReadStr("Hyperlink.DetailPageName", "")
+	hlDetailReport := r.ReadStr("Hyperlink.DetailReportName", "")
+	hlParam := r.ReadStr("Hyperlink.ReportParameter", "")
+	if hlKind != "" || hlExpr != "" || hlValue != "" || hlTarget != "" ||
+		hlDetailPage != "" || hlDetailReport != "" || hlParam != "" {
+		rc.hyperlink = &Hyperlink{
+			Kind:             hlKind,
+			Expression:       hlExpr,
+			Value:            hlValue,
+			Target:           hlTarget,
+			DetailPageName:   hlDetailPage,
+			DetailReportName: hlDetailReport,
+			ReportParameter:  hlParam,
+		}
+	}
 	return nil
 }

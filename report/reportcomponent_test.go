@@ -340,7 +340,8 @@ func (w *testWriter) WriteStr(key, value string) { w.data[key] = value }
 func (w *testWriter) WriteBool(key string, value bool) { w.data[key] = value }
 func (w *testWriter) WriteInt(key string, value int) { w.data[key] = value }
 func (w *testWriter) WriteFloat(key string, value float32) { w.data[key] = value }
-func (w *testWriter) WriteObject(obj Serializable) error { return nil }
+func (w *testWriter) WriteObject(obj Serializable) error            { return nil }
+func (w *testWriter) WriteObjectNamed(_ string, obj Serializable) error { return nil }
 
 // testReader returns values from a map; defaults for missing keys.
 type testReader struct {

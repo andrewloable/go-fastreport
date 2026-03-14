@@ -21,18 +21,68 @@ func (e *ReportEngine) initReprint() {
 // DataHeader and GroupHeader bands are treated as "headers" (printed at the
 // top of the new page); everything else is a footer (printed before the page break).
 func (e *ReportEngine) AddReprint(b *band.BandBase) {
-	entry := reprintEntry{b: b, originX: 0} // originX support can be extended
+	entry := reprintEntry{b: b, originX: 0}
 	if e.keeping {
-		switch b.Name() {
-		default:
-			e.keepReprintFooters = append(e.keepReprintFooters, entry)
-		}
-		// A full implementation would type-switch on DataHeaderBand / GroupHeaderBand.
-		// For now all bands go into keep footers.
-		_ = entry
+		e.keepReprintFooters = append(e.keepReprintFooters, entry)
 		return
 	}
 	e.reprintFooters = append(e.reprintFooters, entry)
+}
+
+// addReprintBand registers a concrete band object for reprinting, correctly
+// classifying DataHeaderBand and GroupHeaderBand as headers and footers otherwise.
+// This should be used instead of AddReprint when the concrete type is available.
+func (e *ReportEngine) addReprintBand(b *band.BandBase, isHeader bool) {
+	entry := reprintEntry{b: b, originX: 0}
+	if e.keeping {
+		if isHeader {
+			e.keepReprintHeaders = append(e.keepReprintHeaders, entry)
+		} else {
+			e.keepReprintFooters = append(e.keepReprintFooters, entry)
+		}
+		return
+	}
+	if isHeader {
+		e.reprintHeaders = append(e.reprintHeaders, entry)
+	} else {
+		e.reprintFooters = append(e.reprintFooters, entry)
+	}
+}
+
+// AddReprintDataHeader registers a DataHeaderBand for reprinting as a header.
+// Called when the band has RepeatOnEveryPage=true.
+func (e *ReportEngine) AddReprintDataHeader(b *band.DataHeaderBand) {
+	if b == nil {
+		return
+	}
+	e.addReprintBand(&b.HeaderFooterBandBase.BandBase, true)
+}
+
+// AddReprintGroupHeader registers a GroupHeaderBand for reprinting as a header.
+// Called when the band has RepeatOnEveryPage=true.
+func (e *ReportEngine) AddReprintGroupHeader(b *band.GroupHeaderBand) {
+	if b == nil {
+		return
+	}
+	e.addReprintBand(&b.HeaderFooterBandBase.BandBase, true)
+}
+
+// AddReprintDataFooter registers a DataFooterBand for reprinting as a footer.
+// Called when the band has RepeatOnEveryPage=true.
+func (e *ReportEngine) AddReprintDataFooter(b *band.DataFooterBand) {
+	if b == nil {
+		return
+	}
+	e.addReprintBand(&b.HeaderFooterBandBase.BandBase, false)
+}
+
+// AddReprintGroupFooter registers a GroupFooterBand for reprinting as a footer.
+// Called when the band has RepeatOnEveryPage=true.
+func (e *ReportEngine) AddReprintGroupFooter(b *band.GroupFooterBand) {
+	if b == nil {
+		return
+	}
+	e.addReprintBand(&b.HeaderFooterBandBase.BandBase, false)
 }
 
 // RemoveReprint unregisters a band from both header and footer reprint lists.

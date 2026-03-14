@@ -43,6 +43,9 @@ func (e *ReportEngine) RunDataBandRows(db *band.DataBand, rows int) {
 		if isFirst && !headerShown {
 			if hdr := db.Header(); hdr != nil {
 				e.ShowFullBand(&hdr.HeaderFooterBandBase.BandBase)
+				if hdr.RepeatOnEveryPage() {
+					e.AddReprintDataHeader(hdr)
+				}
 			}
 			headerShown = true
 		}
@@ -63,8 +66,14 @@ func (e *ReportEngine) RunDataBandRows(db *band.DataBand, rows int) {
 
 	// Show DataFooter after all rows.
 	if headerShown {
+		if hdr := db.Header(); hdr != nil && hdr.RepeatOnEveryPage() {
+			e.RemoveReprint(&hdr.HeaderFooterBandBase.BandBase)
+		}
 		if ftr := db.Footer(); ftr != nil {
 			e.ShowFullBand(&ftr.HeaderFooterBandBase.BandBase)
+			if ftr.RepeatOnEveryPage() {
+				e.AddReprintDataFooter(ftr)
+			}
 		}
 	}
 }
@@ -124,6 +133,10 @@ func (e *ReportEngine) RunDataBandFull(db *band.DataBand) error {
 	total := ds.RowCount()
 	if maxRows > 0 && total > maxRows {
 		total = maxRows
+	}
+
+	if db.KeepTogether() {
+		e.StartKeep()
 	}
 
 	headerShown := false
@@ -189,6 +202,13 @@ func (e *ReportEngine) RunDataBandFull(db *band.DataBand) error {
 			break
 		}
 	}
+
+	if db.KeepTogether() {
+		e.EndKeep()
+	}
+
+	// Notify deferred objects waiting for DataFinished.
+	e.OnStateChanged(db, EngineStateBlockFinished)
 
 	if headerShown {
 		if ftr := db.Footer(); ftr != nil {

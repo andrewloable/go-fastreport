@@ -34,6 +34,10 @@ func (w *mockWriter) WriteObject(obj report.Serializable) error {
 	w.objects = append(w.objects, obj)
 	return nil
 }
+func (w *mockWriter) WriteObjectNamed(_ string, obj report.Serializable) error {
+	w.objects = append(w.objects, obj)
+	return nil
+}
 
 // mockReader implements report.Reader for testing.
 type mockReader struct {

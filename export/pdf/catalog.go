@@ -8,6 +8,7 @@ import (
 // It holds the /Type /Catalog dictionary and a reference to the page tree.
 type Catalog struct {
 	obj   *core.IndirectObject
+	dict  *core.Dictionary
 	pages *Pages
 }
 
@@ -29,7 +30,19 @@ func NewCatalog(w *Writer, pages *Pages) *Catalog {
 	obj := w.NewObject(dict)
 	w.setCatalog(obj)
 
-	return &Catalog{obj: obj, pages: pages}
+	return &Catalog{obj: obj, dict: dict, pages: pages}
+}
+
+// SetOutlines registers the outline root object with the catalog.
+func (c *Catalog) SetOutlines(outlineRef *core.IndirectObject) {
+	c.dict.Add("Outlines", core.NewRef(outlineRef))
+}
+
+// SetNamedDests registers the /Names /Dests name tree with the catalog.
+func (c *Catalog) SetNamedDests(namesRef *core.IndirectObject) {
+	names := core.NewDictionary()
+	names.Add("Dests", core.NewRef(namesRef))
+	c.dict.Add("Names", names)
 }
 
 // Info holds PDF document metadata stored in the document information dictionary.

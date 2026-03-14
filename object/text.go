@@ -1,6 +1,7 @@
 package object
 
 import (
+	"github.com/andrewloable/go-fastreport/format"
 	"github.com/andrewloable/go-fastreport/report"
 	"github.com/andrewloable/go-fastreport/style"
 	"github.com/andrewloable/go-fastreport/utils"
@@ -62,6 +63,10 @@ type TextObjectBase struct {
 	processAt        ProcessAt
 	duplicates       Duplicates
 	editable         bool
+
+	// format is the value formatter applied to evaluated expression results.
+	// nil means GeneralFormat (default fmt.Sprint behavior).
+	format format.Format
 }
 
 // NewTextObjectBase creates a TextObjectBase with defaults.
@@ -148,6 +153,15 @@ func (t *TextObjectBase) Editable() bool { return t.editable }
 // SetEditable sets the editable flag.
 func (t *TextObjectBase) SetEditable(v bool) { t.editable = v }
 
+// --- Format ---
+
+// Format returns the value formatter for this text object.
+// Returns nil when no explicit format has been set (GeneralFormat).
+func (t *TextObjectBase) Format() format.Format { return t.format }
+
+// SetFormat sets the value formatter.
+func (t *TextObjectBase) SetFormat(f format.Format) { t.format = f }
+
 // --- Serialization ---
 
 // Serialize writes TextObjectBase properties that differ from defaults.
@@ -185,6 +199,9 @@ func (t *TextObjectBase) Serialize(w report.Writer) error {
 	if t.editable {
 		w.WriteBool("Editable", true)
 	}
+	if t.format != nil {
+		serializeTextFormat(w, t.format)
+	}
 	return nil
 }
 
@@ -205,6 +222,9 @@ func (t *TextObjectBase) Deserialize(r report.Reader) error {
 	t.processAt = ProcessAt(r.ReadInt("ProcessAt", 0))
 	t.duplicates = Duplicates(r.ReadInt("Duplicates", 0))
 	t.editable = r.ReadBool("Editable", false)
+	if ft := r.ReadStr("Format", ""); ft != "" {
+		t.format = deserializeTextFormat(ft, r)
+	}
 	return nil
 }
 
@@ -493,10 +513,33 @@ func (t *TextObject) AddHighlight(c style.HighlightCondition) {
 	t.highlights = append(t.highlights, c)
 }
 
-// DeserializeChild handles the <Highlight> child element from FRX.
+// DeserializeChild handles <Highlight> and <Formats> child elements from FRX.
 // It satisfies report.ChildDeserializer so that reportpkg.deserializeChildren
 // can delegate unknown child elements to the TextObject itself.
 func (t *TextObject) DeserializeChild(childType string, r report.Reader) bool {
+	if childType == "Formats" {
+		// Multi-format case: first child format is used as the primary format.
+		for {
+			ct, ok := r.NextChild()
+			if !ok {
+				break
+			}
+			f := deserializeFormatFromChild(ct, r)
+			if f != nil && t.format == nil {
+				t.format = f // use first format as primary
+			}
+			// drain any children of the format element
+			for {
+				_, ok2 := r.NextChild()
+				if !ok2 {
+					break
+				}
+				_ = r.FinishChild()
+			}
+			_ = r.FinishChild()
+		}
+		return true
+	}
 	if childType != "Highlight" {
 		return false
 	}

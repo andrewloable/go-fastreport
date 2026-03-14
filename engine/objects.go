@@ -1,15 +1,22 @@
 package engine
 
 import (
+	"bytes"
 	"fmt"
+	"image"
 	"image/color"
+	"image/png"
+	"strings"
 
 	"github.com/andrewloable/go-fastreport/band"
+	"github.com/andrewloable/go-fastreport/barcode"
+	"github.com/andrewloable/go-fastreport/format"
 	"github.com/andrewloable/go-fastreport/gauge"
 	"github.com/andrewloable/go-fastreport/object"
 	"github.com/andrewloable/go-fastreport/preview"
 	"github.com/andrewloable/go-fastreport/report"
 	"github.com/andrewloable/go-fastreport/style"
+	"github.com/andrewloable/go-fastreport/table"
 )
 
 
@@ -28,11 +35,152 @@ func (e *ReportEngine) populateBandObjects2(objs *report.ObjectCollection, pb *p
 	if objs == nil {
 		return
 	}
+	ss := e.report.Styles()
 	for i := 0; i < objs.Len(); i++ {
 		obj := objs.Get(i)
-		if po := e.buildPreparedObject(obj); po != nil {
-			pb.Objects = append(pb.Objects, *po)
+		// Apply named style overrides before snapshotting object properties.
+		if ss != nil {
+			if styleable, ok := obj.(style.Styleable); ok {
+				ss.ApplyToObject(styleable)
+			}
 		}
+		if po := e.buildPreparedObject(obj); po != nil {
+			idx := len(pb.Objects)
+			pb.Objects = append(pb.Objects, *po)
+			// Recursively add ContainerObject children with coordinate offsets.
+			if cont, ok := obj.(*object.ContainerObject); ok {
+				e.populateContainerChildren(cont, cont.Left(), cont.Top(), pb)
+			}
+			// Render TableObject cells as individual PreparedObjects.
+			if tbl, ok := obj.(*table.TableObject); ok {
+				e.populateTableObjects(tbl, tbl.Left(), tbl.Top(), pb)
+			}
+			// Register deferred text evaluation if ProcessAt != Default.
+			if txt, ok := obj.(*object.TextObject); ok && txt.ProcessAt() != object.ProcessAtDefault {
+				state := processAtToEngineState(txt.ProcessAt())
+				capturedPb := pb
+				capturedIdx := idx
+				capturedTxt := txt
+				capturedFmt := txt.Format()
+				pb.Objects[idx].Text = "" // placeholder: blank until deferred state fires
+				e.AddDeferredHandler(state, func() {
+					capturedPb.Objects[capturedIdx].Text = e.evalTextWithFormat(capturedTxt.Text(), capturedFmt)
+				})
+			}
+		}
+	}
+}
+
+// populateContainerChildren renders the children of a ContainerObject into pb,
+// offsetting each child's Left/Top by the accumulated container origin (offsetX, offsetY).
+func (e *ReportEngine) populateContainerChildren(c *object.ContainerObject, offsetX, offsetY float32, pb *preview.PreparedBand) {
+	objs := c.Objects()
+	if objs == nil {
+		return
+	}
+	for i := 0; i < objs.Len(); i++ {
+		child := objs.Get(i)
+		if po := e.buildPreparedObject(child); po != nil {
+			po.Left += offsetX
+			po.Top += offsetY
+			pb.Objects = append(pb.Objects, *po)
+			// Recurse into nested containers.
+			if nested, ok := child.(*object.ContainerObject); ok {
+				e.populateContainerChildren(nested, offsetX+nested.Left(), offsetY+nested.Top(), pb)
+			}
+		}
+	}
+}
+
+// populateTableObjects flattens a TableObject's cells into PreparedObjects.
+// Each cell is rendered at its computed absolute position (tableOriginX + colOffset,
+// tableOriginY + rowOffset). ColSpan and RowSpan determine cell size.
+func (e *ReportEngine) populateTableObjects(tbl *table.TableObject, originX, originY float32, pb *preview.PreparedBand) {
+	// Pre-compute cumulative column X offsets.
+	cols := tbl.Columns()
+	colX := make([]float32, len(cols)+1)
+	for i, col := range cols {
+		colX[i+1] = colX[i] + col.Width()
+	}
+
+	// Iterate rows, accumulating Y offset.
+	rowY := float32(0)
+	for ri, row := range tbl.Rows() {
+		rowH := row.Height()
+		for ci, cell := range row.Cells() {
+			if cell == nil {
+				continue
+			}
+			// Compute cell width from ColSpan.
+			colSpan := cell.ColSpan()
+			if colSpan < 1 {
+				colSpan = 1
+			}
+			endCol := ci + colSpan
+			if endCol > len(cols) {
+				endCol = len(cols)
+			}
+			cellW := colX[endCol] - colX[ci]
+
+			// Compute cell height from RowSpan.
+			rowSpan := cell.RowSpan()
+			if rowSpan < 1 {
+				rowSpan = 1
+			}
+			cellH := float32(0)
+			for si := ri; si < ri+rowSpan && si < len(tbl.Rows()); si++ {
+				cellH += tbl.Rows()[si].Height()
+			}
+
+			absLeft := originX + colX[ci]
+			absTop := originY + rowY
+
+			// Build the cell PreparedObject (cell embeds TextObject).
+			cellText := e.evalTextWithFormat(cell.Text(), cell.Format())
+			cellFill := color.RGBA{R: 255, G: 255, B: 255, A: 0}
+			if f, ok := cell.Fill().(*style.SolidFill); ok {
+				cellFill = f.Color
+			}
+			po := preview.PreparedObject{
+				Name:      cell.Name(),
+				Kind:      preview.ObjectTypeText,
+				Left:      absLeft,
+				Top:       absTop,
+				Width:     cellW,
+				Height:    cellH,
+				Text:      cellText,
+				BlobIdx:   -1,
+				Font:      cell.Font(),
+				TextColor: color.RGBA{A: 255},
+				FillColor: cellFill,
+				HorzAlign: int(cell.HorzAlign()),
+				VertAlign: int(cell.VertAlign()),
+				WordWrap:  cell.WordWrap(),
+				Border:    cell.Border(),
+			}
+			pb.Objects = append(pb.Objects, po)
+		}
+		rowY += rowH
+	}
+}
+
+// processAtToEngineState maps a ProcessAt value to its corresponding EngineState.
+func processAtToEngineState(pa object.ProcessAt) EngineState {
+	switch pa {
+	case object.ProcessAtReportFinished:
+		return EngineStateReportFinished
+	case object.ProcessAtReportPageFinished:
+		return EngineStateReportPageFinished
+	case object.ProcessAtPageFinished:
+		return EngineStatePageFinished
+	case object.ProcessAtColumnFinished:
+		return EngineStateColumnFinished
+	case object.ProcessAtDataFinished:
+		return EngineStateBlockFinished
+	case object.ProcessAtGroupFinished:
+		return EngineStateGroupFinished
+	default:
+		return EngineStateReportFinished
 	}
 }
 
@@ -81,7 +229,11 @@ func (e *ReportEngine) buildPreparedObject(obj report.Base) *preview.PreparedObj
 		po.HorzAlign = int(v.HorzAlign())
 		po.VertAlign = int(v.VertAlign())
 		po.WordWrap = v.WordWrap()
-		po.Text = e.evalText(v.Text())
+		po.Border = v.Border()
+		if f, ok := v.Fill().(*style.SolidFill); ok && f.Color.A > 0 {
+			po.FillColor = f.Color
+		}
+		po.Text = e.evalTextWithFormat(v.Text(), v.Format())
 		// Apply highlight conditions — first matching condition wins.
 		if e.report != nil {
 			for _, cond := range v.Highlights() {
@@ -107,6 +259,40 @@ func (e *ReportEngine) buildPreparedObject(obj report.Base) *preview.PreparedObj
 				}
 				break
 			}
+		}
+
+	case *object.ContainerObject:
+		// Render the container background as a rectangle; children are added
+		// separately by populateContainerChildren with coordinate offsets.
+		po.Kind = preview.ObjectTypeShape
+		po.ShapeKind = 0 // Rectangle
+		po.Border = v.Border()
+		if f, ok := v.Fill().(*style.SolidFill); ok {
+			po.FillColor = f.Color
+		}
+
+	case *object.PolyLineObject:
+		po.Kind = preview.ObjectTypePolyLine
+		po.Border = v.Border()
+		if f, ok := v.Fill().(*style.SolidFill); ok {
+			po.FillColor = f.Color
+		}
+		pts := v.Points()
+		for i := 0; i < pts.Len(); i++ {
+			pt := pts.Get(i)
+			po.Points = append(po.Points, [2]float32{pt.X, pt.Y})
+		}
+
+	case *object.PolygonObject:
+		po.Kind = preview.ObjectTypePolygon
+		po.Border = v.Border()
+		if f, ok := v.Fill().(*style.SolidFill); ok {
+			po.FillColor = f.Color
+		}
+		pts := v.Points()
+		for i := 0; i < pts.Len(); i++ {
+			pt := pts.Get(i)
+			po.Points = append(po.Points, [2]float32{pt.X, pt.Y})
 		}
 
 	case *object.LineObject:
@@ -142,6 +328,16 @@ func (e *ReportEngine) buildPreparedObject(obj report.Base) *preview.PreparedObj
 		po.VertAlign = int(v.VertAlign())
 		po.WordWrap = v.WordWrap()
 		po.Text = e.evalText(v.Text())
+
+	case *object.ZipCodeObject:
+		// Render as text showing the evaluated zip code value.
+		po.Kind = preview.ObjectTypeText
+		po.TextColor = color.RGBA{A: 255}
+		text := v.Expression()
+		if text == "" {
+			text = v.Text()
+		}
+		po.Text = e.evalText(text)
 
 	case *object.CheckBoxObject:
 		po.Kind = preview.ObjectTypeCheckBox
@@ -193,6 +389,37 @@ func (e *ReportEngine) buildPreparedObject(obj report.Base) *preview.PreparedObj
 		po.TextColor = color.RGBA{A: 255}
 		po.Text = v.Placeholder()
 
+	case *barcode.BarcodeObject:
+		po.Kind = preview.ObjectTypePicture
+		// Evaluate the barcode text from expression or static text.
+		text := v.Expression()
+		if text == "" {
+			text = v.Text()
+		}
+		text = e.evalText(text)
+		if text == "" && !v.HideIfNoData() {
+			text = v.NoDataText()
+		}
+		if text != "" && v.Barcode != nil {
+			if err := v.Barcode.Encode(text); err == nil {
+				w := int(geom.Width())
+				h := int(geom.Height())
+				if w <= 0 {
+					w = 200
+				}
+				if h <= 0 {
+					h = 60
+				}
+				img, err := renderBarcode(v.Barcode, w, h)
+				if err == nil && img != nil && e.preparedPages != nil {
+					var buf bytes.Buffer
+					if encErr := png.Encode(&buf, img); encErr == nil {
+						po.BlobIdx = e.preparedPages.BlobStore.Add(v.Name(), buf.Bytes())
+					}
+				}
+			}
+		}
+
 	case *object.MapObject:
 		// Map rendering is not yet implemented; emit an empty picture placeholder.
 		po.Kind = preview.ObjectTypePicture
@@ -201,9 +428,27 @@ func (e *ReportEngine) buildPreparedObject(obj report.Base) *preview.PreparedObj
 		// MSChart rendering is not yet implemented; emit an empty picture placeholder.
 		po.Kind = preview.ObjectTypePicture
 
+	case *table.TableObject:
+		// The bounding box is rendered as a shape; individual cells are added
+		// by populateTableObjects called from populateBandObjects2.
+		po.Kind = preview.ObjectTypeShape
+		po.ShapeKind = 0 // Rectangle
+		po.Border = v.Border()
+		if f, ok := v.Fill().(*style.SolidFill); ok {
+			po.FillColor = f.Color
+		}
+
 	default:
 		// Not a known renderable type (could be a nested band etc.)
 		return nil
+	}
+
+	// Register bookmark if the component has one.
+	type hasBookmark interface{ Bookmark() string }
+	if bk, ok := obj.(hasBookmark); ok {
+		if name := bk.Bookmark(); name != "" {
+			e.AddBookmark(e.evalText(name))
+		}
 	}
 
 	return po
@@ -227,12 +472,41 @@ func (e *ReportEngine) evalGaugeText(expr string, defaultVal float64) string {
 // evalText evaluates a text template with [bracket] expressions.
 // Returns the raw text on error.
 func (e *ReportEngine) evalText(text string) string {
+	return e.evalTextWithFormat(text, nil)
+}
+
+// evalTextWithFormat evaluates a text template and, if f is non-nil and the
+// text is a single bracket expression, applies the format to the raw value.
+func (e *ReportEngine) evalTextWithFormat(text string, f format.Format) string {
 	if e.report == nil || text == "" {
 		return text
+	}
+	// When a format is set and the text is exactly one bracket expression,
+	// evaluate the raw value and apply the format before converting to string.
+	if f != nil {
+		trimmed := strings.TrimSpace(text)
+		if strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]") && strings.Count(trimmed, "[") == 1 {
+			expr := trimmed[1 : len(trimmed)-1]
+			if val, err := e.report.Calc(expr); err == nil {
+				return f.FormatValue(val)
+			}
+		}
 	}
 	result, err := e.report.CalcText(text)
 	if err != nil {
 		return text
 	}
 	return result
+}
+
+// renderBarcode renders a BarcodeBase to an image.Image using the Render method
+// exposed by BaseBarcodeImpl embedders.
+func renderBarcode(bc barcode.BarcodeBase, width, height int) (image.Image, error) {
+	type renderer interface {
+		Render(width, height int) (image.Image, error)
+	}
+	if r, ok := bc.(renderer); ok {
+		return r.Render(width, height)
+	}
+	return nil, fmt.Errorf("barcode type %T does not implement Render", bc)
 }

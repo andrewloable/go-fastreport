@@ -93,7 +93,7 @@ func (e *ReportEngine) CheckKeepTogether() {
 // FinishKeepTogether is called after a new page has been started (from
 // CheckKeepTogether) to paste the kept bands at the new position.
 func (e *ReportEngine) FinishKeepTogether() {
-	if len(e.preparedPages.CutBands()) == 0 {
+	if e.preparedPages == nil || len(e.preparedPages.CutBands()) == 0 {
 		return
 	}
 	e.pasteObjects()

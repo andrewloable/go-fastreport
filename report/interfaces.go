@@ -23,8 +23,11 @@ type Writer interface {
 	WriteBool(name string, value bool)
 	// WriteFloat writes a named float32 property.
 	WriteFloat(name string, value float32)
-	// WriteObject writes a child object.
+	// WriteObject writes a child object (element name from obj.TypeName or Go type).
 	WriteObject(obj Serializable) error
+	// WriteObjectNamed writes a child object with an explicit element name.
+	// Use when the element name differs from the object's type name (e.g. "MatrixRows").
+	WriteObjectNamed(name string, obj Serializable) error
 }
 
 // Reader is a minimal read-side interface used during FRX deserialization.

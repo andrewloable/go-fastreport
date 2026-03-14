@@ -160,6 +160,12 @@ func (r *Report) Serialize(w report.Writer) error {
 	if r.FinishReportEvent != "" {
 		w.WriteStr("FinishReportEvent", r.FinishReportEvent)
 	}
+	// Write Styles child element when the stylesheet has entries.
+	if r.styles.Len() > 0 {
+		if err := w.WriteObject(&stylesSerializer{r.styles}); err != nil {
+			return err
+		}
+	}
 	// Write pages as child elements — mirrors FastReport's Base.Serialize()
 	// iterating ChildObjects and calling writer.Write(child) for each.
 	for _, pg := range r.pages {

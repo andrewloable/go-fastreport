@@ -116,9 +116,27 @@ func GetDataSource(dict DictionaryLookup, complexName string) DataSource {
 
 // FindRelation returns the Relation where parent and child match the given
 // data sources, or nil when no such relation is registered.
+// It first compares resolved DataSource pointers; if those are nil it falls
+// back to matching by data source name.
 func FindRelation(dict DictionaryLookup, parent, child DataSource) *Relation {
 	for _, r := range dict.Relations() {
-		if r.ParentDataSource == parent && r.ChildDataSource == child {
+		if r.ParentDataSource != nil && r.ChildDataSource != nil {
+			if r.ParentDataSource == parent && r.ChildDataSource == child {
+				return r
+			}
+			continue
+		}
+		// Fallback: match by name when pointers have not been resolved yet.
+		parentName := ""
+		childName := ""
+		if parent != nil {
+			parentName = parent.Name()
+		}
+		if child != nil {
+			childName = child.Name()
+		}
+		if strings.EqualFold(r.ParentSourceName, parentName) &&
+			strings.EqualFold(r.ChildSourceName, childName) {
 			return r
 		}
 	}

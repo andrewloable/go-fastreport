@@ -3,7 +3,17 @@
 package barcode
 
 import (
+	"fmt"
+	"image"
 	"image/color"
+
+	boombarcode "github.com/boombuler/barcode"
+	"github.com/boombuler/barcode/aztec"
+	"github.com/boombuler/barcode/code128"
+	"github.com/boombuler/barcode/code39"
+	"github.com/boombuler/barcode/ean"
+	"github.com/boombuler/barcode/pdf417"
+	"github.com/boombuler/barcode/qr"
 
 	"github.com/andrewloable/go-fastreport/report"
 	"github.com/andrewloable/go-fastreport/style"
@@ -65,6 +75,21 @@ type BaseBarcodeImpl struct {
 	encodedText string
 	// barcodeType is the symbology.
 	barcodeType BarcodeType
+	// encoded holds the boombuler Barcode result after Encode.
+	encoded boombarcode.Barcode
+}
+
+// Render scales the encoded barcode to the given pixel dimensions and returns
+// an image.Image. Returns an error if Encode has not been called yet.
+func (b *BaseBarcodeImpl) Render(width, height int) (image.Image, error) {
+	if b.encoded == nil {
+		return nil, fmt.Errorf("barcode not encoded — call Encode first")
+	}
+	img, err := boombarcode.Scale(b.encoded, width, height)
+	if err != nil {
+		return nil, fmt.Errorf("scale barcode: %w", err)
+	}
+	return img, nil
 }
 
 // newBaseBarcodeImpl creates a BaseBarcodeImpl for the given type.
@@ -97,9 +122,14 @@ func NewCode128Barcode() *Code128Barcode {
 	return &Code128Barcode{BaseBarcodeImpl: newBaseBarcodeImpl(BarcodeTypeCode128)}
 }
 
-// Encode validates text for Code128 (accepts any printable ASCII).
+// Encode encodes text using Code128 symbology.
 func (c *Code128Barcode) Encode(text string) error {
+	bc, err := code128.Encode(text)
+	if err != nil {
+		return fmt.Errorf("code128 encode: %w", err)
+	}
 	c.encodedText = text
+	c.encoded = bc
 	return nil
 }
 
@@ -120,9 +150,14 @@ func NewCode39Barcode() *Code39Barcode {
 	return &Code39Barcode{BaseBarcodeImpl: newBaseBarcodeImpl(BarcodeTypeCode39)}
 }
 
-// Encode validates and stores text for Code39.
+// Encode encodes text using Code39 symbology.
 func (c *Code39Barcode) Encode(text string) error {
+	bc, err := code39.Encode(text, c.CalcChecksum, c.AllowExtended)
+	if err != nil {
+		return fmt.Errorf("code39 encode: %w", err)
+	}
 	c.encodedText = text
+	c.encoded = bc
 	return nil
 }
 
@@ -144,9 +179,23 @@ func NewQRBarcode() *QRBarcode {
 	}
 }
 
-// Encode stores QR text.
+// Encode encodes text as a QR code using the configured error correction level.
 func (q *QRBarcode) Encode(text string) error {
+	level := qr.M
+	switch q.ErrorCorrection {
+	case "L":
+		level = qr.L
+	case "Q":
+		level = qr.Q
+	case "H":
+		level = qr.H
+	}
+	bc, err := qr.Encode(text, level, qr.Auto)
+	if err != nil {
+		return fmt.Errorf("qr encode: %w", err)
+	}
 	q.encodedText = text
+	q.encoded = bc
 	return nil
 }
 
@@ -357,16 +406,124 @@ func (b *BarcodeObject) Deserialize(r report.Reader) error {
 	return nil
 }
 
+// -----------------------------------------------------------------------
+// EAN13Barcode
+// -----------------------------------------------------------------------
+
+// EAN13Barcode implements EAN-13 symbology.
+type EAN13Barcode struct{ BaseBarcodeImpl }
+
+// NewEAN13Barcode creates an EAN13Barcode.
+func NewEAN13Barcode() *EAN13Barcode {
+	return &EAN13Barcode{BaseBarcodeImpl: newBaseBarcodeImpl(BarcodeTypeEAN13)}
+}
+
+// Encode encodes a 12 or 13 digit EAN-13 barcode value.
+func (e *EAN13Barcode) Encode(text string) error {
+	bc, err := ean.Encode(text)
+	if err != nil {
+		return fmt.Errorf("ean13 encode: %w", err)
+	}
+	e.encodedText = text
+	e.encoded = bc
+	return nil
+}
+
+// DefaultValue returns a sample EAN-13 value.
+func (e *EAN13Barcode) DefaultValue() string { return "590123412345" }
+
+// -----------------------------------------------------------------------
+// AztecBarcode
+// -----------------------------------------------------------------------
+
+// AztecBarcode implements Aztec 2D symbology.
+type AztecBarcode struct {
+	BaseBarcodeImpl
+	// MinECCPercent is the minimum error correction percentage (default 23).
+	MinECCPercent int
+	// UserSpecifiedLayers configures compact/full Aztec layers (0 = auto).
+	UserSpecifiedLayers int
+}
+
+// NewAztecBarcode creates an AztecBarcode.
+func NewAztecBarcode() *AztecBarcode {
+	return &AztecBarcode{
+		BaseBarcodeImpl:     newBaseBarcodeImpl(BarcodeTypeAztec),
+		MinECCPercent:       23,
+		UserSpecifiedLayers: 0,
+	}
+}
+
+// Encode encodes text as an Aztec barcode.
+func (a *AztecBarcode) Encode(text string) error {
+	bc, err := aztec.Encode([]byte(text), a.MinECCPercent, a.UserSpecifiedLayers)
+	if err != nil {
+		return fmt.Errorf("aztec encode: %w", err)
+	}
+	a.encodedText = text
+	a.encoded = bc
+	return nil
+}
+
+// DefaultValue returns a sample Aztec value.
+func (a *AztecBarcode) DefaultValue() string { return "Aztec" }
+
+// -----------------------------------------------------------------------
+// PDF417Barcode
+// -----------------------------------------------------------------------
+
+// PDF417Barcode implements PDF417 2D symbology.
+type PDF417Barcode struct {
+	BaseBarcodeImpl
+	// Columns is the number of data columns (0 = auto).
+	Columns int
+	// SecurityLevel is the error correction level 0-8 (default 2).
+	SecurityLevel int
+}
+
+// NewPDF417Barcode creates a PDF417Barcode.
+func NewPDF417Barcode() *PDF417Barcode {
+	return &PDF417Barcode{
+		BaseBarcodeImpl: newBaseBarcodeImpl(BarcodeTypePDF417),
+		Columns:         0,
+		SecurityLevel:   2,
+	}
+}
+
+// Encode encodes text as a PDF417 barcode.
+func (p *PDF417Barcode) Encode(text string) error {
+	bc, err := pdf417.Encode(text, byte(p.SecurityLevel))
+	if err != nil {
+		return fmt.Errorf("pdf417 encode: %w", err)
+	}
+	p.encodedText = text
+	p.encoded = bc
+	return nil
+}
+
+// DefaultValue returns a sample PDF417 value.
+func (p *PDF417Barcode) DefaultValue() string { return "PDF417" }
+
+// -----------------------------------------------------------------------
+// Factory
+// -----------------------------------------------------------------------
+
 // NewBarcodeByType constructs a BarcodeBase from a BarcodeType string.
 // Returns a Code128Barcode for unknown types.
 func NewBarcodeByType(t BarcodeType) BarcodeBase {
 	switch t {
-	case BarcodeTypeCode128:
+	case BarcodeTypeCode128, BarcodeTypeGS1_128:
 		return NewCode128Barcode()
 	case BarcodeTypeCode39:
 		return NewCode39Barcode()
 	case BarcodeTypeQR:
 		return NewQRBarcode()
+	case BarcodeTypeEAN13, BarcodeTypeEAN8, BarcodeTypeUPCA, BarcodeTypeUPCE:
+		return NewEAN13Barcode()
+	case BarcodeTypeAztec:
+		return NewAztecBarcode()
+	case BarcodeTypePDF417:
+		return NewPDF417Barcode()
 	default:
 		return NewCode128Barcode()
 	}

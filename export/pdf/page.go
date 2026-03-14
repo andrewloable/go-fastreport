@@ -36,14 +36,18 @@ func (p *Pages) AddPage(page *Page) {
 // Count returns the number of pages in the tree.
 func (p *Pages) Count() int { return len(p.pageList) }
 
+// PageList returns all pages in document order.
+func (p *Pages) PageList() []*Page { return p.pageList }
+
 // Page represents a single PDF page (/Type /Page).
 // Width and Height are in PDF user units (points, 1/72 inch).
 type Page struct {
-	obj      *core.IndirectObject
-	contents *Contents
-	xObjects *core.Dictionary // /Resources /XObject sub-dictionary
-	Width    float64
-	Height   float64
+	obj       *core.IndirectObject
+	contents  *Contents
+	xObjects  *core.Dictionary // /Resources /XObject sub-dictionary
+	fontDict  *core.Dictionary // /Resources /Font sub-dictionary
+	Width     float64
+	Height    float64
 }
 
 // NewPage creates a new page, links it to the given Pages tree, and registers
@@ -69,6 +73,31 @@ func NewPage(w *Writer, pages *Pages, width, height float64) *Page {
 		core.NewName("ImageC"),
 	))
 
+	// Pre-register the standard 14 PDF built-in fonts.
+	fontDict := core.NewDictionary()
+	for alias, baseFont := range map[string]string{
+		"F1":  "Helvetica",
+		"F2":  "Helvetica-Bold",
+		"F3":  "Helvetica-Oblique",
+		"F4":  "Helvetica-BoldOblique",
+		"F5":  "Times-Roman",
+		"F6":  "Times-Bold",
+		"F7":  "Times-Italic",
+		"F8":  "Times-BoldItalic",
+		"F9":  "Courier",
+		"F10": "Courier-Bold",
+		"F11": "Courier-Oblique",
+		"F12": "Courier-BoldOblique",
+	} {
+		fd := core.NewDictionary()
+		fd.Add("Type", core.NewName("Font"))
+		fd.Add("Subtype", core.NewName("Type1"))
+		fd.Add("BaseFont", core.NewName(baseFont))
+		fd.Add("Encoding", core.NewName("WinAnsiEncoding"))
+		fontDict.Add(alias, fd)
+	}
+	resources.Add("Font", fontDict)
+
 	dict := core.NewDictionary()
 	dict.Add("Type", core.NewName("Page"))
 	dict.Add("Parent", core.NewName(pages.obj.Reference()))
@@ -81,6 +110,7 @@ func NewPage(w *Writer, pages *Pages, width, height float64) *Page {
 		obj:      obj,
 		contents: contents,
 		xObjects: xObject,
+		fontDict: fontDict,
 		Width:    width,
 		Height:   height,
 	}
@@ -91,6 +121,10 @@ func NewPage(w *Writer, pages *Pages, width, height float64) *Page {
 
 // Contents returns the page's content stream object.
 func (p *Page) Contents() *Contents { return p.contents }
+
+// Obj returns the underlying indirect object for this page (used to build
+// destinations and annotations that reference the page by object number).
+func (p *Page) Obj() *core.IndirectObject { return p.obj }
 
 // AddXObject registers an indirect object as an XObject resource under the
 // given name (e.g. "Im0").  The name is used in content streams as /Im0.

@@ -201,3 +201,31 @@ func (d *Dictionary) FindTotal(name string) *Total {
 
 // Dictionary implements the DictionaryLookup interface defined in helper.go.
 var _ DictionaryLookup = (*Dictionary)(nil)
+
+// ResolveRelations resolves ParentDataSource and ChildDataSource for each
+// relation from their string names, and also splits ParentColumnNames /
+// ChildColumnNames into the ParentColumns / ChildColumns slices.
+// Call this after all data sources have been registered (typically at Prepare time).
+func (d *Dictionary) ResolveRelations() {
+	for _, rel := range d.relations {
+		if rel.ParentDataSource == nil && rel.ParentSourceName != "" {
+			rel.ParentDataSource = d.FindDataSourceByAlias(rel.ParentSourceName)
+			if rel.ParentDataSource == nil {
+				rel.ParentDataSource = d.FindDataSourceByName(rel.ParentSourceName)
+			}
+		}
+		if rel.ChildDataSource == nil && rel.ChildSourceName != "" {
+			rel.ChildDataSource = d.FindDataSourceByAlias(rel.ChildSourceName)
+			if rel.ChildDataSource == nil {
+				rel.ChildDataSource = d.FindDataSourceByName(rel.ChildSourceName)
+			}
+		}
+		// Resolve column name slices if not already set.
+		if len(rel.ParentColumns) == 0 {
+			rel.ParentColumns = rel.ParentColumnNames
+		}
+		if len(rel.ChildColumns) == 0 {
+			rel.ChildColumns = rel.ChildColumnNames
+		}
+	}
+}

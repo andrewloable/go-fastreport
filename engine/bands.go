@@ -195,17 +195,22 @@ func (e *ReportEngine) startNewPageForCurrent() {
 	if e.currentPage == nil {
 		return
 	}
+	// Cut any kept bands before breaking to a new column/page.
+	e.CheckKeepTogether()
+
 	// For multi-column layouts, try advancing to the next column first.
 	if e.currentPage.Columns.Count > 1 {
 		if e.endColumn(e.currentPage) {
 			// Successfully advanced to the next column on the same page.
 			e.startColumn(e.currentPage)
+			e.FinishKeepTogether()
 			return
 		}
 	}
 	// No more columns (or single-column page): start a new page.
 	e.endPage(e.currentPage, false)
 	e.startPage(e.currentPage, false)
+	e.FinishKeepTogether()
 }
 
 // ── ShowFullBand ──────────────────────────────────────────────────────────────
@@ -231,9 +236,23 @@ func (e *ReportEngine) showFullBandOnce(b *band.BandBase) {
 	}
 
 	b.FireBeforeLayout()
+
+	// Populate outline entry if band has an OutlineExpression.
+	addedOutline := false
+	if expr := b.OutlineExpression(); expr != "" {
+		text := e.evalText(expr)
+		if text != "" {
+			e.AddOutline(text)
+			addedOutline = true
+		}
+	}
+
 	height := e.CalcBandHeight(b)
 	if height <= 0 {
 		b.FireAfterLayout()
+		if addedOutline {
+			e.OutlineUp()
+		}
 		return
 	}
 
@@ -257,6 +276,10 @@ func (e *ReportEngine) showFullBandOnce(b *band.BandBase) {
 	// Show child band if present.
 	if child := b.Child(); child != nil {
 		e.ShowFullBand(&child.BandBase)
+	}
+
+	if addedOutline {
+		e.OutlineUp()
 	}
 }
 

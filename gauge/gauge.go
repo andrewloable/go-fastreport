@@ -16,6 +16,16 @@ import (
 
 // ── Scale ─────────────────────────────────────────────────────────────────────
 
+// GaugeTicks holds tick appearance properties for major or minor ticks.
+type GaugeTicks struct {
+	// Width is the tick line width in pixels.
+	Width float32
+	// Height / Length of the tick mark.
+	Length float32
+	// Color is the tick color as a string (e.g. "128, 128, 128").
+	Color string
+}
+
 // Scale holds the visual and numeric settings for the gauge scale.
 type Scale struct {
 	// MinorStep is the minor tick interval (default: 1).
@@ -26,6 +36,12 @@ type Scale struct {
 	ShowLabels bool
 	// LabelFormat is a fmt.Sprintf format string for labels (default: "%g").
 	LabelFormat string
+	// Font is the scale font descriptor string (e.g. "Arial, 8pt").
+	Font string
+	// MajorTicks holds major tick appearance.
+	MajorTicks GaugeTicks
+	// MinorTicks holds minor tick appearance.
+	MinorTicks GaugeTicks
 }
 
 // NewScale creates a Scale with sensible defaults.
@@ -51,14 +67,26 @@ func (s *Scale) FormatLabel(v float64) string {
 // Pointer holds settings for the gauge pointer (needle or bar fill).
 type Pointer struct {
 	// Width is the pointer width in pixels (default: 6).
-	Width float64
-	// Color is the pointer color hex string (default: "#CC0000").
+	Width float32
+	// Height is the pointer height in pixels.
+	Height float32
+	// Color is the pointer color string (default: "204, 0, 0").
 	Color string
 }
 
 // NewPointer creates a Pointer with defaults.
 func NewPointer() *Pointer {
 	return &Pointer{Width: 6, Color: "#CC0000"}
+}
+
+// ── Label ─────────────────────────────────────────────────────────────────────
+
+// GaugeLabel holds label display properties for a gauge.
+type GaugeLabel struct {
+	// Font is the label font descriptor string.
+	Font string
+	// Text is a static label text override.
+	Text string
 }
 
 // ── GaugeObject (base) ────────────────────────────────────────────────────────
@@ -80,6 +108,8 @@ type GaugeObject struct {
 	Scale *Scale
 	// Pointer holds pointer appearance settings.
 	Pointer *Pointer
+	// Label holds label display settings.
+	Label GaugeLabel
 
 	// Expression is a report expression whose value drives the gauge.
 	Expression string
@@ -137,6 +167,49 @@ func (g *GaugeObject) Serialize(w report.Writer) error {
 	if g.Expression != "" {
 		w.WriteStr("Expression", g.Expression)
 	}
+	// Scale dot-notation properties.
+	if g.Scale != nil {
+		if g.Scale.Font != "" {
+			w.WriteStr("Scale.Font", g.Scale.Font)
+		}
+		if g.Scale.MajorTicks.Width != 0 {
+			w.WriteFloat("Scale.MajorTicks.Width", g.Scale.MajorTicks.Width)
+		}
+		if g.Scale.MajorTicks.Color != "" {
+			w.WriteStr("Scale.MajorTicks.Color", g.Scale.MajorTicks.Color)
+		}
+		if g.Scale.MajorTicks.Length != 0 {
+			w.WriteFloat("Scale.MajorTicks.Length", g.Scale.MajorTicks.Length)
+		}
+		if g.Scale.MinorTicks.Width != 0 {
+			w.WriteFloat("Scale.MinorTicks.Width", g.Scale.MinorTicks.Width)
+		}
+		if g.Scale.MinorTicks.Color != "" {
+			w.WriteStr("Scale.MinorTicks.Color", g.Scale.MinorTicks.Color)
+		}
+		if g.Scale.MinorTicks.Length != 0 {
+			w.WriteFloat("Scale.MinorTicks.Length", g.Scale.MinorTicks.Length)
+		}
+	}
+	// Pointer dot-notation properties.
+	if g.Pointer != nil {
+		if g.Pointer.Width != 6 {
+			w.WriteFloat("Pointer.Width", g.Pointer.Width)
+		}
+		if g.Pointer.Height != 0 {
+			w.WriteFloat("Pointer.Height", g.Pointer.Height)
+		}
+		if g.Pointer.Color != "" && g.Pointer.Color != "#CC0000" {
+			w.WriteStr("Pointer.Color", g.Pointer.Color)
+		}
+	}
+	// Label dot-notation properties.
+	if g.Label.Font != "" {
+		w.WriteStr("Label.Font", g.Label.Font)
+	}
+	if g.Label.Text != "" {
+		w.WriteStr("Label.Text", g.Label.Text)
+	}
 	return nil
 }
 
@@ -149,20 +222,31 @@ func (g *GaugeObject) Deserialize(r report.Reader) error {
 	g.Maximum = float64(r.ReadFloat("Maximum", 100))
 	g.value = float64(r.ReadFloat("Value", 0))
 	g.Expression = r.ReadStr("Expression", "")
-	// Read common Scale/Pointer dot-notation properties from FRX.
-	// (These are informational for future rendering; not all are used.)
-	_ = r.ReadStr("Scale.Font", "")
-	_ = r.ReadFloat("Scale.MajorTicks.Width", 0)
-	_ = r.ReadStr("Scale.MajorTicks.Color", "")
-	_ = r.ReadFloat("Scale.MinorTicks.Width", 0)
-	_ = r.ReadStr("Scale.MinorTicks.Color", "")
-	_ = r.ReadFloat("Scale.MajorTicks.Length", 0)
-	_ = r.ReadFloat("Scale.MinorTicks.Length", 0)
-	_ = r.ReadFloat("Pointer.Width", 0)
-	_ = r.ReadFloat("Pointer.Height", 0)
-	_ = r.ReadStr("Pointer.Color", "")
-	_ = r.ReadStr("Label.Font", "")
-	_ = r.ReadStr("Label.Text", "")
+	// Scale dot-notation properties.
+	if g.Scale == nil {
+		g.Scale = NewScale()
+	}
+	g.Scale.Font = r.ReadStr("Scale.Font", "")
+	g.Scale.MajorTicks.Width = r.ReadFloat("Scale.MajorTicks.Width", 0)
+	g.Scale.MajorTicks.Color = r.ReadStr("Scale.MajorTicks.Color", "")
+	g.Scale.MajorTicks.Length = r.ReadFloat("Scale.MajorTicks.Length", 0)
+	g.Scale.MinorTicks.Width = r.ReadFloat("Scale.MinorTicks.Width", 0)
+	g.Scale.MinorTicks.Color = r.ReadStr("Scale.MinorTicks.Color", "")
+	g.Scale.MinorTicks.Length = r.ReadFloat("Scale.MinorTicks.Length", 0)
+	// Pointer dot-notation properties.
+	if g.Pointer == nil {
+		g.Pointer = NewPointer()
+	}
+	if v := r.ReadFloat("Pointer.Width", -1); v >= 0 {
+		g.Pointer.Width = v
+	}
+	g.Pointer.Height = r.ReadFloat("Pointer.Height", 0)
+	if c := r.ReadStr("Pointer.Color", ""); c != "" {
+		g.Pointer.Color = c
+	}
+	// Label dot-notation properties.
+	g.Label.Font = r.ReadStr("Label.Font", "")
+	g.Label.Text = r.ReadStr("Label.Text", "")
 	return nil
 }
 

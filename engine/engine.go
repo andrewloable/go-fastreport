@@ -225,11 +225,17 @@ func (e *ReportEngine) runPhase1(resetDataState bool) error {
 	e.ensureSystemVariables()
 	// Initialise aggregate total accumulators from the Dictionary.
 	e.initTotals()
+	// Evaluate parameter expressions (may reference system variables).
+	e.initParameters()
 
 	if resetDataState {
 		if err := e.initializeData(); err != nil {
 			return err
 		}
+	}
+	// Resolve relation DataSource pointers from their string names.
+	if dict := e.report.Dictionary(); dict != nil {
+		dict.ResolveRelations()
 	}
 
 	// Fire OnStartReport event.
@@ -270,7 +276,35 @@ func (e *ReportEngine) runFinished() {
 	if e.report.FinishReportEvent != "" {
 		// event would be fired here
 	}
+	// Process any deferred text objects waiting for ReportFinished.
+	e.OnStateChanged(nil, EngineStateReportFinished)
 	e.limitPreparedPages()
+}
+
+// initParameters evaluates Expression fields on all dictionary parameters and
+// sets their Value. Child parameters are evaluated recursively after parents so
+// that parent values are available to child expressions.
+func (e *ReportEngine) initParameters() {
+	if e.report == nil {
+		return
+	}
+	dict := e.report.Dictionary()
+	if dict == nil {
+		return
+	}
+	var evalParams func(params []*data.Parameter)
+	evalParams = func(params []*data.Parameter) {
+		for _, p := range params {
+			if p.Expression != "" {
+				if val, err := e.report.Calc(p.Expression); err == nil {
+					p.Value = val
+				}
+			}
+			// Recurse into nested child parameters.
+			evalParams(p.Parameters())
+		}
+	}
+	evalParams(dict.Parameters())
 }
 
 // initializeData opens all registered data sources.

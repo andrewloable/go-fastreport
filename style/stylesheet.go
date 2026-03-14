@@ -4,22 +4,44 @@ import "image/color"
 
 // StyleEntry holds the complete visual properties that a named style
 // can override on a report object. It is the Go equivalent of
-// FastReport.Style (the named-style definition used in the StyleSheet).
+// FastReport.StyleBase / FastReport.Style.
 type StyleEntry struct {
 	// Name is the style's unique identifier.
 	Name string
-	// Font overrides the component font when FontChanged is true.
-	Font        Font
-	FontChanged bool
-	// TextColor overrides the text colour when TextColorChanged is true.
-	TextColor        color.RGBA
-	TextColorChanged bool
-	// FillColor overrides the solid-fill background colour when FillColorChanged is true.
-	FillColor        color.RGBA
-	FillColorChanged bool
-	// BorderColor overrides all border-line colours when BorderColorChanged is true.
-	BorderColor        color.RGBA
+
+	// ApplyBorder controls whether the Border is applied to the object.
+	// Defaults to true.
+	ApplyBorder bool
+	// Border holds the border overrides to apply when ApplyBorder is true.
+	Border Border
+
+	// ApplyFill controls whether the Fill colour is applied to the object.
+	// Defaults to true.
+	ApplyFill bool
+	// FillColor is the solid fill colour override when ApplyFill is true.
+	// For compatibility only — full fill support uses the Fill interface.
+	FillColor color.RGBA
+
+	// ApplyTextFill controls whether the text fill is applied to the object.
+	// Defaults to true.
+	ApplyTextFill bool
+	// TextColor is the text fill colour override when ApplyTextFill is true.
+	TextColor color.RGBA
+
+	// ApplyFont controls whether the Font is applied to the object.
+	// Defaults to true.
+	ApplyFont bool
+	// Font overrides the component font when ApplyFont is true.
+	Font Font
+
+	// Legacy "Changed" fields kept for backward compatibility with existing code.
+	// They map to the corresponding Apply* flags.
+	FontChanged        bool
+	TextColorChanged   bool
+	FillColorChanged   bool
 	BorderColorChanged bool
+	// BorderColor overrides all border-line colours (legacy; prefer Border).
+	BorderColor color.RGBA
 }
 
 // StyleSheet is a named-style registry. It maps style names to StyleEntry

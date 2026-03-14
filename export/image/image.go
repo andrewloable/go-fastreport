@@ -17,6 +17,7 @@ import (
 
 	"github.com/andrewloable/go-fastreport/export"
 	"github.com/andrewloable/go-fastreport/preview"
+	"github.com/andrewloable/go-fastreport/style"
 )
 
 // DefaultDPI is the output resolution used when converting pixel coordinates
@@ -130,24 +131,25 @@ func (e *Exporter) renderObject(obj preview.PreparedObject, bandTop float32) {
 	if e.curPage == nil {
 		return
 	}
+
+	x := e.scaled(int(obj.Left))
+	y := e.scaled(int(bandTop + obj.Top))
+	w := e.scaled(int(obj.Width))
+	h := e.scaled(int(obj.Height))
+	if w < 1 {
+		w = 1
+	}
+	if h < 1 {
+		h = 1
+	}
+	bounds := image.Rect(x, y, x+w, y+h).Intersect(e.curPage.Bounds())
+
 	switch obj.Kind {
 	case preview.ObjectTypeText:
-		if obj.Text == "" {
-			return
-		}
-		x := e.scaled(int(obj.Left))
-		y := e.scaled(int(bandTop + obj.Top))
-		w := e.scaled(int(obj.Width))
-		h := e.scaled(int(obj.Height))
-
-		// Clip text rendering to object bounds.
-		bounds := image.Rect(x, y, x+w, y+h)
-		bounds = bounds.Intersect(e.curPage.Bounds())
 		if bounds.Empty() {
 			return
 		}
-
-		// Fill object background (white by default).
+		// Fill object background.
 		if obj.FillColor.A > 0 {
 			draw.Draw(e.curPage, bounds, &image.Uniform{obj.FillColor}, image.Point{}, draw.Over)
 		} else {
@@ -155,28 +157,30 @@ func (e *Exporter) renderObject(obj preview.PreparedObject, bandTop float32) {
 			draw.Draw(e.curPage, bounds, &image.Uniform{white}, image.Point{}, draw.Over)
 		}
 
+		e.drawBorderLines(obj.Border, x, y, w, h)
+
+		if obj.Text == "" {
+			return
+		}
+
 		tc := obj.TextColor
 		if tc.A == 0 {
-			tc = color.RGBA{A: 255} // default black
+			tc = color.RGBA{A: 255}
 		}
 
 		face := basicfont.Face7x13
 		lineH := face.Metrics().Height.Ceil()
 		ascent := face.Metrics().Ascent.Ceil()
-
-		// Simple word-wrap: split by newline, then by width.
 		lines := e.wrapText(obj.Text, w, face)
 
-		// Vertical alignment: top=0, center=1, bottom=2.
 		textBlockH := len(lines) * lineH
 		startY := y + ascent
 		switch obj.VertAlign {
-		case 1: // center
+		case 1:
 			startY = y + (h-textBlockH)/2 + ascent
-		case 2: // bottom
+		case 2:
 			startY = y + h - textBlockH + ascent
 		}
-
 		d := &font.Drawer{
 			Dst:  e.curPage,
 			Src:  image.NewUniform(tc),
@@ -186,13 +190,12 @@ func (e *Exporter) renderObject(obj preview.PreparedObject, bandTop float32) {
 			if startY > y+h {
 				break
 			}
-			// Horizontal alignment: left=0, center=1, right=2.
 			lineW := font.MeasureString(face, line).Ceil()
-			dotX := x + 2 // left padding
+			dotX := x + 2
 			switch obj.HorzAlign {
-			case 1: // center
+			case 1:
 				dotX = x + (w-lineW)/2
-			case 2: // right
+			case 2:
 				dotX = x + w - lineW - 2
 			}
 			if dotX < x {
@@ -201,6 +204,199 @@ func (e *Exporter) renderObject(obj preview.PreparedObject, bandTop float32) {
 			d.Dot = fixed.P(dotX, startY)
 			d.DrawString(line)
 			startY += lineH
+		}
+
+	case preview.ObjectTypeLine:
+		lineColor := color.RGBA{A: 255}
+		if obj.Border.Lines[0] != nil && obj.Border.Lines[0].Color.A > 0 {
+			lineColor = obj.Border.Lines[0].Color
+		}
+		if obj.LineDiagonal {
+			e.drawLine(x, y, x+w, y+h, lineColor)
+		} else {
+			// Non-diagonal: horizontal or vertical based on dominant dimension.
+			if w >= h {
+				e.drawHLine(x, y+h/2, x+w, lineColor)
+			} else {
+				e.drawVLine(x+w/2, y, y+h, lineColor)
+			}
+		}
+
+	case preview.ObjectTypeShape:
+		if !bounds.Empty() && obj.FillColor.A > 0 {
+			draw.Draw(e.curPage, bounds, &image.Uniform{obj.FillColor}, image.Point{}, draw.Over)
+		}
+		shapeColor := color.RGBA{A: 255}
+		if obj.Border.Lines[0] != nil && obj.Border.Lines[0].Color.A > 0 {
+			shapeColor = obj.Border.Lines[0].Color
+		}
+		switch obj.ShapeKind {
+		case 2: // Ellipse
+			e.drawEllipse(x, y, w, h, shapeColor)
+		case 3: // Triangle — draw as simple polygon outline
+			e.drawLine(x+w/2, y, x+w, y+h, shapeColor)
+			e.drawLine(x+w, y+h, x, y+h, shapeColor)
+			e.drawLine(x, y+h, x+w/2, y, shapeColor)
+		case 4: // Diamond
+			e.drawLine(x+w/2, y, x+w, y+h/2, shapeColor)
+			e.drawLine(x+w, y+h/2, x+w/2, y+h, shapeColor)
+			e.drawLine(x+w/2, y+h, x, y+h/2, shapeColor)
+			e.drawLine(x, y+h/2, x+w/2, y, shapeColor)
+		default: // Rectangle (0) and RoundRectangle (1) — simplified to plain rect
+			e.drawRect(bounds, shapeColor)
+		}
+		e.drawBorderLines(obj.Border, x, y, w, h)
+
+	case preview.ObjectTypeCheckBox:
+		if !bounds.Empty() {
+			white := color.RGBA{R: 255, G: 255, B: 255, A: 255}
+			draw.Draw(e.curPage, bounds, &image.Uniform{white}, image.Point{}, draw.Over)
+			boxColor := color.RGBA{A: 255}
+			e.drawRect(bounds, boxColor)
+			// Draw check-mark (X) when checked.
+			if obj.Text == "true" {
+				pad := 2
+				e.drawLine(x+pad, y+pad, x+w-pad, y+h-pad, boxColor)
+				e.drawLine(x+w-pad, y+pad, x+pad, y+h-pad, boxColor)
+			}
+		}
+
+	case preview.ObjectTypePicture:
+		// Picture blobs are embedded by the engine; image export skips them here
+		// as decoding is handled by the PDF/HTML exporters.
+
+	case preview.ObjectTypePolyLine:
+		if len(obj.Points) < 2 {
+			return
+		}
+		lineColor := color.RGBA{A: 255}
+		if obj.Border.Lines[0] != nil && obj.Border.Lines[0].Color.A > 0 {
+			lineColor = obj.Border.Lines[0].Color
+		}
+		for i := 1; i < len(obj.Points); i++ {
+			x0p := x + e.scaled(int(obj.Points[i-1][0]))
+			y0p := y + e.scaled(int(obj.Points[i-1][1]))
+			x1p := x + e.scaled(int(obj.Points[i][0]))
+			y1p := y + e.scaled(int(obj.Points[i][1]))
+			e.drawLine(x0p, y0p, x1p, y1p, lineColor)
+		}
+
+	case preview.ObjectTypePolygon:
+		if len(obj.Points) < 2 {
+			return
+		}
+		lineColor := color.RGBA{A: 255}
+		if obj.Border.Lines[0] != nil && obj.Border.Lines[0].Color.A > 0 {
+			lineColor = obj.Border.Lines[0].Color
+		}
+		n := len(obj.Points)
+		for i := 0; i < n; i++ {
+			next := (i + 1) % n
+			x0p := x + e.scaled(int(obj.Points[i][0]))
+			y0p := y + e.scaled(int(obj.Points[i][1]))
+			x1p := x + e.scaled(int(obj.Points[next][0]))
+			y1p := y + e.scaled(int(obj.Points[next][1]))
+			e.drawLine(x0p, y0p, x1p, y1p, lineColor)
+		}
+	}
+}
+
+// drawBorderLines draws the visible border sides of a style.Border onto the canvas.
+func (e *Exporter) drawBorderLines(b style.Border, x, y, w, h int) {
+	black := color.RGBA{A: 255}
+	// Top side (bit 4 = BorderLinesTop).
+	if b.VisibleLines&style.BorderLinesTop != 0 && b.Lines[style.BorderTop] != nil {
+		c := b.Lines[style.BorderTop].Color
+		if c.A == 0 {
+			c = black
+		}
+		e.drawHLine(x, y, x+w, c)
+	}
+	// Bottom side (bit 8 = BorderLinesBottom).
+	if b.VisibleLines&style.BorderLinesBottom != 0 && b.Lines[style.BorderBottom] != nil {
+		c := b.Lines[style.BorderBottom].Color
+		if c.A == 0 {
+			c = black
+		}
+		e.drawHLine(x, y+h-1, x+w, c)
+	}
+	// Left side (bit 1 = BorderLinesLeft).
+	if b.VisibleLines&style.BorderLinesLeft != 0 && b.Lines[style.BorderLeft] != nil {
+		c := b.Lines[style.BorderLeft].Color
+		if c.A == 0 {
+			c = black
+		}
+		e.drawVLine(x, y, y+h, c)
+	}
+	// Right side (bit 2 = BorderLinesRight).
+	if b.VisibleLines&style.BorderLinesRight != 0 && b.Lines[style.BorderRight] != nil {
+		c := b.Lines[style.BorderRight].Color
+		if c.A == 0 {
+			c = black
+		}
+		e.drawVLine(x+w-1, y, y+h, c)
+	}
+}
+
+// drawLine draws a line from (x0,y0) to (x1,y1) using Bresenham's algorithm.
+func (e *Exporter) drawLine(x0, y0, x1, y1 int, c color.RGBA) {
+	dx := x1 - x0
+	if dx < 0 {
+		dx = -dx
+	}
+	dy := y1 - y0
+	if dy < 0 {
+		dy = -dy
+	}
+	sx := 1
+	if x0 > x1 {
+		sx = -1
+	}
+	sy := 1
+	if y0 > y1 {
+		sy = -1
+	}
+	err := dx - dy
+	bounds := e.curPage.Bounds()
+	for {
+		if x0 >= bounds.Min.X && x0 < bounds.Max.X && y0 >= bounds.Min.Y && y0 < bounds.Max.Y {
+			e.curPage.SetRGBA(x0, y0, c)
+		}
+		if x0 == x1 && y0 == y1 {
+			break
+		}
+		e2 := 2 * err
+		if e2 > -dy {
+			err -= dy
+			x0 += sx
+		}
+		if e2 < dx {
+			err += dx
+			y0 += sy
+		}
+	}
+}
+
+// drawEllipse draws the outline of an ellipse inscribed in the given rect.
+func (e *Exporter) drawEllipse(x, y, w, h int, c color.RGBA) {
+	if w <= 0 || h <= 0 {
+		return
+	}
+	a := float64(w) / 2.0
+	b := float64(h) / 2.0
+	cx := float64(x) + a
+	cy := float64(y) + b
+	bounds := e.curPage.Bounds()
+	steps := int(math.Pi * (a + b))
+	if steps < 8 {
+		steps = 8
+	}
+	for i := 0; i < steps; i++ {
+		t := 2 * math.Pi * float64(i) / float64(steps)
+		px := int(math.Round(cx + a*math.Cos(t)))
+		py := int(math.Round(cy + b*math.Sin(t)))
+		if px >= bounds.Min.X && px < bounds.Max.X && py >= bounds.Min.Y && py < bounds.Max.Y {
+			e.curPage.SetRGBA(px, py, c)
 		}
 	}
 }

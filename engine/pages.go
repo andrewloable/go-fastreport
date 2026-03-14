@@ -40,6 +40,14 @@ func (e *ReportEngine) startPage(pg *reportpkg.ReportPage, isFirst bool) {
 		e.preparedPages.AddPage(e.pageWidth, e.pageHeight, e.pageNo)
 	}
 
+	// Page-level outline entry.
+	if pg.OutlineExpression != "" {
+		text := e.evalText(pg.OutlineExpression)
+		if text != "" {
+			e.AddOutline(text)
+		}
+	}
+
 	if isFirst {
 		// Show overlay band if present.
 		e.showBand(pg.Overlay())
@@ -51,9 +59,13 @@ func (e *ReportEngine) startPage(pg *reportpkg.ReportPage, isFirst bool) {
 			e.showBand(pg.PageHeader())
 			e.showBand(pg.ReportTitle())
 		}
+		// Reprint headers after the page header on every page (first page too).
+		e.ShowReprintHeaders()
 	} else {
 		e.showBand(pg.Overlay())
 		e.showBand(pg.PageHeader())
+		// Reprint data/group headers that have RepeatOnEveryPage=true.
+		e.ShowReprintHeaders()
 	}
 
 	// Column header below the page header.
@@ -69,6 +81,7 @@ func (e *ReportEngine) endPage(pg *reportpkg.ReportPage, isLast bool) {
 		e.showBand(pg.ReportSummary())
 	}
 	e.showBand(pg.PageFooter())
+	e.OnStateChanged(pg, EngineStatePageFinished)
 }
 
 // startColumn initialises the current column.
@@ -84,6 +97,7 @@ func (e *ReportEngine) endColumn(pg *reportpkg.ReportPage) bool {
 	if cols <= 1 {
 		return false
 	}
+	e.OnStateChanged(pg, EngineStateColumnFinished)
 	e.curColumn++
 	if e.curColumn >= cols {
 		e.curColumn = 0
@@ -170,6 +184,7 @@ func (e *ReportEngine) RunReportPage(pg *reportpkg.ReportPage) error {
 
 	// End page.
 	e.endPage(pg, true)
+	e.OnStateChanged(pg, EngineStateReportPageFinished)
 	return nil
 }
 

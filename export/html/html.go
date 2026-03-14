@@ -6,6 +6,7 @@ package html
 import (
 	"encoding/base64"
 	"fmt"
+	"image/color"
 	"io"
 	"strings"
 
@@ -133,6 +134,9 @@ func (e *Exporter) renderObject(obj preview.PreparedObject, scale float32) {
 			float32(obj.FillColor.A)/255.0,
 		))
 	}
+
+	// Border.
+	css.WriteString(borderCSS(&obj.Border, scale))
 
 	switch obj.Kind {
 	case preview.ObjectTypeText:
@@ -298,6 +302,65 @@ body { background: #e0e0e0; font-family: Arial, sans-serif; }
 // Useful for testing. Call after Export has been called.
 func (e *Exporter) HTML() string {
 	return e.sb.String()
+}
+
+// borderCSS converts a style.Border into CSS border/box-shadow declarations.
+// It handles per-side borders using border-top/right/bottom/left shorthand.
+func borderCSS(b *style.Border, scale float32) string {
+	if b == nil || b.VisibleLines == style.BorderLinesNone {
+		return ""
+	}
+	var sb strings.Builder
+
+	type side struct {
+		flag style.BorderLines
+		prop string
+		idx  int
+	}
+	sides := []side{
+		{style.BorderLinesTop, "border-top", int(style.BorderTop)},
+		{style.BorderLinesRight, "border-right", int(style.BorderRight)},
+		{style.BorderLinesBottom, "border-bottom", int(style.BorderBottom)},
+		{style.BorderLinesLeft, "border-left", int(style.BorderLeft)},
+	}
+
+	for _, s := range sides {
+		if b.VisibleLines&s.flag == 0 {
+			continue
+		}
+		var line *style.BorderLine
+		if b.Lines[s.idx] != nil {
+			line = b.Lines[s.idx]
+		}
+		width := float32(1)
+		lineStyle := "solid"
+		c := color.RGBA{R: 0, G: 0, B: 0, A: 255} // default black
+		if line != nil {
+			width = line.Width * scale
+			c = line.Color
+			switch line.Style {
+			case style.LineStyleDash:
+				lineStyle = "dashed"
+			case style.LineStyleDot:
+				lineStyle = "dotted"
+			case style.LineStyleDashDot, style.LineStyleDashDotDot:
+				lineStyle = "dashed"
+			case style.LineStyleDouble:
+				lineStyle = "double"
+			}
+		}
+		sb.WriteString(fmt.Sprintf("%s:%.2fpx %s rgba(%d,%d,%d,%.2f);",
+			s.prop, width, lineStyle, c.R, c.G, c.B, float32(c.A)/255.0))
+	}
+
+	if b.Shadow {
+		sw := b.ShadowWidth * scale
+		sc := b.ShadowColor
+		sb.WriteString(fmt.Sprintf("box-shadow:%.2fpx %.2fpx 0 rgba(%d,%d,%d,%.2f);",
+			sw, sw, sc.R, sc.G, sc.B, float32(sc.A)/255.0))
+	}
+
+	return sb.String()
 }
 
 // imageMIME detects the MIME type from image magic bytes.

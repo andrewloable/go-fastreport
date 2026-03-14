@@ -11,6 +11,8 @@ import (
 	"github.com/andrewloable/go-fastreport/data"
 	"github.com/andrewloable/go-fastreport/report"
 	"github.com/andrewloable/go-fastreport/serial"
+	"github.com/andrewloable/go-fastreport/style"
+	"github.com/andrewloable/go-fastreport/utils"
 )
 
 // ── Load ──────────────────────────────────────────────────────────────────────
@@ -83,6 +85,8 @@ func (r *Report) LoadFrom(rd io.Reader) error {
 				return fmt.Errorf("report.LoadFrom: deserialize page: %w", err)
 			}
 			r.AddPage(pg)
+		case "Styles":
+			deserializeStyles(rdr, r.Styles())
 		case "Dictionary":
 			deserializeDictionary(rdr, r.Dictionary())
 		default:
@@ -277,6 +281,122 @@ func parseTotalType(s string) data.TotalType {
 	default:
 		return data.TotalTypeSum
 	}
+}
+
+// deserializeStyles reads the <Styles> element and populates the report's
+// StyleSheet with named Style entries.
+func deserializeStyles(rdr *serial.Reader, ss *style.StyleSheet) {
+	for {
+		childType, ok := rdr.NextChild()
+		if !ok {
+			break
+		}
+		if childType == "Style" {
+			entry := deserializeStyleEntry(rdr)
+			if entry.Name != "" {
+				ss.Add(entry)
+			}
+		} else {
+			_ = rdr.SkipElement()
+		}
+		_ = rdr.FinishChild()
+	}
+}
+
+// deserializeStyleEntry reads a single <Style> element into a StyleEntry.
+func deserializeStyleEntry(rdr *serial.Reader) *style.StyleEntry {
+	e := &style.StyleEntry{
+		Name:          rdr.ReadStr("Name", ""),
+		ApplyBorder:   rdr.ReadBool("ApplyBorder", true),
+		ApplyFill:     rdr.ReadBool("ApplyFill", true),
+		ApplyTextFill: rdr.ReadBool("ApplyTextFill", true),
+		ApplyFont:     rdr.ReadBool("ApplyFont", true),
+	}
+	// Set legacy flags from Apply* flags.
+	e.FillColorChanged = e.ApplyFill
+	e.FontChanged = e.ApplyFont
+	e.TextColorChanged = e.ApplyTextFill
+	e.BorderColorChanged = e.ApplyBorder
+
+	// Fill color.
+	if s := rdr.ReadStr("Fill.Color", ""); s != "" {
+		if c, err := utils.ParseColor(s); err == nil {
+			e.FillColor = c
+		}
+	}
+	// Text fill color.
+	if s := rdr.ReadStr("TextFill.Color", ""); s != "" {
+		if c, err := utils.ParseColor(s); err == nil {
+			e.TextColor = c
+		}
+	}
+	// Border color (simple, all lines).
+	if s := rdr.ReadStr("Border.Color", ""); s != "" {
+		if c, err := utils.ParseColor(s); err == nil {
+			e.BorderColor = c
+			// Populate the Border struct too.
+			e.Border = *style.NewBorder()
+			e.Border.SetColor(c)
+		}
+	}
+	// Border lines visibility.
+	if s := rdr.ReadStr("Border.Lines", ""); s != "" {
+		if e.Border.Lines[0] == nil {
+			e.Border = *style.NewBorder()
+		}
+		e.Border.VisibleLines = parseBorderLines(s)
+	}
+	// Border shadow.
+	if rdr.ReadBool("Border.Shadow", false) {
+		if e.Border.Lines[0] == nil {
+			e.Border = *style.NewBorder()
+		}
+		e.Border.Shadow = true
+	}
+	// Font string.
+	if s := rdr.ReadStr("Font", ""); s != "" {
+		e.Font = style.FontFromStr(s)
+		e.FontChanged = true
+		e.ApplyFont = true
+	}
+
+	// Drain children (none expected for Style).
+	for {
+		_, ok := rdr.NextChild()
+		if !ok {
+			break
+		}
+		_ = rdr.FinishChild()
+	}
+	return e
+}
+
+// parseBorderLines converts a comma-separated FRX BorderLines string.
+func parseBorderLines(s string) style.BorderLines {
+	if s == "" {
+		return style.BorderLinesNone
+	}
+	s = strings.TrimSpace(s)
+	if strings.EqualFold(s, "None") {
+		return style.BorderLinesNone
+	}
+	if strings.EqualFold(s, "All") {
+		return style.BorderLinesAll
+	}
+	var result style.BorderLines
+	for _, p := range strings.Split(s, ",") {
+		switch strings.TrimSpace(p) {
+		case "Left":
+			result |= style.BorderLinesLeft
+		case "Right":
+			result |= style.BorderLinesRight
+		case "Top":
+			result |= style.BorderLinesTop
+		case "Bottom":
+			result |= style.BorderLinesBottom
+		}
+	}
+	return result
 }
 
 // splitComma splits a comma-separated string into a trimmed slice.

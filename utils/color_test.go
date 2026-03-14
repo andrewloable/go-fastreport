@@ -115,12 +115,59 @@ func TestParseColor_Errors(t *testing.T) {
 		"#1234567",
 		"#ZZZZZZ",
 		"notacolor",
-		"red",
 	}
 	for _, s := range bad {
 		_, err := ParseColor(s)
 		if err == nil {
 			t.Errorf("ParseColor(%q) expected error, got nil", s)
+		}
+	}
+}
+
+func TestParseColor_Named(t *testing.T) {
+	tests := []struct {
+		input string
+		want  color.RGBA
+	}{
+		{"White", color.RGBA{R: 255, G: 255, B: 255, A: 255}},
+		{"white", color.RGBA{R: 255, G: 255, B: 255, A: 255}},
+		{"Black", color.RGBA{R: 0, G: 0, B: 0, A: 255}},
+		{"Transparent", color.RGBA{R: 0, G: 0, B: 0, A: 0}},
+		{"Red", color.RGBA{R: 255, G: 0, B: 0, A: 255}},
+		{"LightGray", color.RGBA{R: 211, G: 211, B: 211, A: 255}},
+		{"WhiteSmoke", color.RGBA{R: 245, G: 245, B: 245, A: 255}},
+	}
+	for _, tc := range tests {
+		got, err := ParseColor(tc.input)
+		if err != nil {
+			t.Errorf("ParseColor(%q) error: %v", tc.input, err)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("ParseColor(%q) = %v, want %v", tc.input, got, tc.want)
+		}
+	}
+}
+
+func TestParseColor_CSV(t *testing.T) {
+	tests := []struct {
+		input string
+		want  color.RGBA
+	}{
+		// R, G, B (alpha implicit 255)
+		{"0, 192, 0", color.RGBA{R: 0, G: 192, B: 0, A: 255}},
+		{"255, 0, 0", color.RGBA{R: 255, G: 0, B: 0, A: 255}},
+		// A, R, G, B
+		{"128, 255, 0, 0", color.RGBA{A: 128, R: 255, G: 0, B: 0}},
+	}
+	for _, tc := range tests {
+		got, err := ParseColor(tc.input)
+		if err != nil {
+			t.Errorf("ParseColor(%q) error: %v", tc.input, err)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("ParseColor(%q) = %v, want %v", tc.input, got, tc.want)
 		}
 	}
 }

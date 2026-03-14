@@ -268,6 +268,14 @@ func (e *ReportEngine) RunGroup(groupBand *band.GroupHeaderBand) {
 		return
 	}
 
+	if groupBand.KeepTogether() {
+		e.StartKeep()
+	}
 	tree := e.makeGroupTree(groupBand)
 	e.showGroupTree(tree)
+	if groupBand.KeepTogether() {
+		e.EndKeep()
+	}
+	// Notify deferred objects waiting for GroupFinished.
+	e.OnStateChanged(groupBand, EngineStateGroupFinished)
 }

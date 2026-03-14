@@ -188,6 +188,10 @@ const (
 	ObjectTypeCheckBox
 	// ObjectTypeBarcode is a BarcodeObject.
 	ObjectTypeBarcode
+	// ObjectTypePolyLine is an open polyline (PolyLineObject).
+	ObjectTypePolyLine
+	// ObjectTypePolygon is a closed polygon (PolygonObject).
+	ObjectTypePolygon
 )
 
 // PreparedObject is a rendered report component snapshot.
@@ -209,6 +213,9 @@ type PreparedObject struct {
 	ShapeCurve float32
 	// LineDiagonal indicates a diagonal line (for ObjectTypeLine).
 	LineDiagonal bool
+	// Points holds vertex coordinates for ObjectTypePolyLine and ObjectTypePolygon.
+	// Each element is [x, y] in pixels relative to the object's Left/Top origin.
+	Points [][2]float32
 
 	// ── Style fields ────────────────────────────────────────────────────────
 	// Font describes the text font.

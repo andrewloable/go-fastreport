@@ -540,11 +540,12 @@ func TestAll_ContainsExpectedFunctions(t *testing.T) {
 		"MaxInt", "MinInt", "Abs", "Round", "Ceiling", "Floor",
 		"Length", "LowerCase", "UpperCase", "TitleCase", "Trim",
 		"PadLeft", "PadRight", "Insert", "Remove", "Replace",
-		"Substring", "Contains", "IndexOf", "Asc", "Chr",
-		"AddDays", "AddMonths", "AddYears", "DateSerial",
+		"Substring", "Contains", "StartsWith", "EndsWith", "IndexOf", "Asc", "Chr",
+		"AddDays", "AddMonths", "AddYears", "DateSerial", "DateDiff",
 		"Day", "Month", "Year", "Hour", "Minute", "Second",
 		"DayOfWeek", "DaysInMonth", "MonthName",
-		"FormatNumber", "FormatCurrency", "FormatPercent",
+		"FormatNumber", "FormatCurrency", "FormatPercent", "Format",
+		"ToInt", "ToFloat", "ToString",
 		"IIF", "Choose", "Switch",
 		"NumToWords", "Roman",
 	}
@@ -552,5 +553,93 @@ func TestAll_ContainsExpectedFunctions(t *testing.T) {
 		if _, ok := all[name]; !ok {
 			t.Errorf("All() missing function %q", name)
 		}
+	}
+}
+
+// ── New functions ─────────────────────────────────────────────────────────────
+
+func TestStartsWith(t *testing.T) {
+	if !functions.StartsWith("hello world", "hello") {
+		t.Error("StartsWith: expected true")
+	}
+	if functions.StartsWith("hello world", "world") {
+		t.Error("StartsWith: expected false")
+	}
+}
+
+func TestEndsWith(t *testing.T) {
+	if !functions.EndsWith("hello world", "world") {
+		t.Error("EndsWith: expected true")
+	}
+	if functions.EndsWith("hello world", "hello") {
+		t.Error("EndsWith: expected false")
+	}
+}
+
+func TestDateDiff_Days(t *testing.T) {
+	d1 := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	d2 := time.Date(2024, 1, 11, 0, 0, 0, 0, time.UTC)
+	if got := functions.DateDiff("d", d1, d2); got != 10 {
+		t.Errorf("DateDiff days: got %v, want 10", got)
+	}
+}
+
+func TestDateDiff_Years(t *testing.T) {
+	d1 := time.Date(2020, 3, 15, 0, 0, 0, 0, time.UTC)
+	d2 := time.Date(2024, 3, 15, 0, 0, 0, 0, time.UTC)
+	if got := functions.DateDiff("y", d1, d2); got != 4 {
+		t.Errorf("DateDiff years: got %v, want 4", got)
+	}
+}
+
+func TestDateDiff_Months(t *testing.T) {
+	d1 := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	d2 := time.Date(2024, 4, 1, 0, 0, 0, 0, time.UTC)
+	if got := functions.DateDiff("month", d1, d2); got != 3 {
+		t.Errorf("DateDiff months: got %v, want 3", got)
+	}
+}
+
+func TestFormat(t *testing.T) {
+	got := functions.Format("%.2f", 3.14159)
+	if got != "3.14" {
+		t.Errorf("Format: got %q, want 3.14", got)
+	}
+}
+
+func TestFormat_EmptyPattern(t *testing.T) {
+	got := functions.Format("", 42)
+	if got != "42" {
+		t.Errorf("Format empty: got %q, want 42", got)
+	}
+}
+
+func TestToInt(t *testing.T) {
+	if got := functions.ToInt(3.7); got != 3 {
+		t.Errorf("ToInt(3.7): got %d, want 3", got)
+	}
+	if got := functions.ToInt("42"); got != 42 {
+		t.Errorf("ToInt(\"42\"): got %d, want 42", got)
+	}
+	if got := functions.ToInt(nil); got != 0 {
+		t.Errorf("ToInt(nil): got %d, want 0", got)
+	}
+}
+
+func TestToFloat(t *testing.T) {
+	if got := functions.ToFloat(5); got != 5.0 {
+		t.Errorf("ToFloat(5): got %v, want 5.0", got)
+	}
+	if got := functions.ToFloat("3.14"); got != 3.14 {
+		t.Errorf("ToFloat(\"3.14\"): got %v, want 3.14", got)
+	}
+}
+
+func TestToString(t *testing.T) {
+	if got := functions.ToString(42); got != "42" {
+		t.Errorf("ToString(42): got %q, want 42", got)
+	}
+	if got := functions.ToString(nil); got != "" {
+		t.Errorf("ToString(nil): got %q, want empty", got)
 	}
 }

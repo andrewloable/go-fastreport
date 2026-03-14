@@ -202,6 +202,12 @@ func SubstringLen(s string, startIndex, length int) string {
 // Contains returns true if s contains value.
 func Contains(s, value string) bool { return strings.Contains(s, value) }
 
+// StartsWith returns true if s starts with prefix.
+func StartsWith(s, prefix string) bool { return strings.HasPrefix(s, prefix) }
+
+// EndsWith returns true if s ends with suffix.
+func EndsWith(s, suffix string) bool { return strings.HasSuffix(s, suffix) }
+
 // IndexOf returns the rune index of the first occurrence of value in s, or -1.
 func IndexOf(s, value string) int {
 	idx := strings.Index(s, value)
@@ -301,6 +307,40 @@ func WeekOfYear(date time.Time) int {
 	return week
 }
 
+// DateDiff returns the difference between date2 and date1 in the specified
+// interval. Interval values (case-insensitive): "d"/"day"/"days" → days;
+// "h"/"hour"/"hours" → hours; "m"/"minute"/"minutes" → minutes;
+// "s"/"second"/"seconds" → seconds; "month"/"months"/"mm" → months;
+// "y"/"year"/"years" → years.
+func DateDiff(interval string, date1, date2 time.Time) float64 {
+	dur := date2.Sub(date1)
+	switch strings.ToLower(strings.TrimSpace(interval)) {
+	case "y", "year", "years", "yyyy":
+		y1, m1, d1 := date1.Date()
+		y2, m2, d2 := date2.Date()
+		years := float64(y2 - y1)
+		// subtract a year if the anniversary hasn't been reached yet
+		if m2 < m1 || (m2 == m1 && d2 < d1) {
+			years--
+		}
+		return years
+	case "mm", "month", "months":
+		y1, m1, _ := date1.Date()
+		y2, m2, _ := date2.Date()
+		return float64((y2-y1)*12 + (int(m2) - int(m1)))
+	case "d", "day", "days":
+		return dur.Hours() / 24
+	case "h", "hour", "hours":
+		return dur.Hours()
+	case "m", "minute", "minutes", "n":
+		return dur.Minutes()
+	case "s", "second", "seconds":
+		return dur.Seconds()
+	default:
+		return dur.Hours() / 24 // default to days
+	}
+}
+
 // ── Formatting ────────────────────────────────────────────────────────────────
 
 // FormatNumber formats a numeric value with the given number of decimal places.
@@ -325,6 +365,114 @@ func FormatDateTime(date time.Time, layout string) string {
 		layout = time.RFC3339
 	}
 	return date.Format(layout)
+}
+
+// Format formats a value using a Go fmt.Sprintf format string.
+// Equivalent to C# String.Format but uses Go format verbs (e.g. "%.2f").
+// If format is empty, falls back to fmt.Sprint(value).
+func Format(format string, value any) string {
+	if format == "" {
+		return fmt.Sprint(value)
+	}
+	return fmt.Sprintf(format, value)
+}
+
+// ── Type conversion ───────────────────────────────────────────────────────────
+
+// ToInt converts a value to int. Supports numeric types and string parsing.
+// Returns 0 on conversion failure.
+func ToInt(v any) int {
+	if v == nil {
+		return 0
+	}
+	switch t := v.(type) {
+	case int:
+		return t
+	case int8:
+		return int(t)
+	case int16:
+		return int(t)
+	case int32:
+		return int(t)
+	case int64:
+		return int(t)
+	case uint:
+		return int(t)
+	case uint8:
+		return int(t)
+	case uint16:
+		return int(t)
+	case uint32:
+		return int(t)
+	case uint64:
+		return int(t)
+	case float32:
+		return int(t)
+	case float64:
+		return int(t)
+	case bool:
+		if t {
+			return 1
+		}
+		return 0
+	case string:
+		var i int
+		fmt.Sscanf(t, "%d", &i)
+		return i
+	}
+	return 0
+}
+
+// ToFloat converts a value to float64. Supports numeric types and string parsing.
+// Returns 0 on conversion failure.
+func ToFloat(v any) float64 {
+	if v == nil {
+		return 0
+	}
+	switch t := v.(type) {
+	case float64:
+		return t
+	case float32:
+		return float64(t)
+	case int:
+		return float64(t)
+	case int8:
+		return float64(t)
+	case int16:
+		return float64(t)
+	case int32:
+		return float64(t)
+	case int64:
+		return float64(t)
+	case uint:
+		return float64(t)
+	case uint8:
+		return float64(t)
+	case uint16:
+		return float64(t)
+	case uint32:
+		return float64(t)
+	case uint64:
+		return float64(t)
+	case bool:
+		if t {
+			return 1
+		}
+		return 0
+	case string:
+		var f float64
+		fmt.Sscanf(t, "%f", &f)
+		return f
+	}
+	return 0
+}
+
+// ToString converts any value to its string representation.
+func ToString(v any) string {
+	if v == nil {
+		return ""
+	}
+	return fmt.Sprint(v)
 }
 
 // ── Control flow ──────────────────────────────────────────────────────────────
@@ -386,10 +534,12 @@ func All() map[string]any {
 		"Remove":     Remove,
 		"Replace":    Replace,
 		"Substring":  Substring,
-		"Contains":   Contains,
-		"IndexOf":    IndexOf,
-		"Asc":        Asc,
-		"Chr":        Chr,
+		"Contains":    Contains,
+		"StartsWith":  StartsWith,
+		"EndsWith":    EndsWith,
+		"IndexOf":     IndexOf,
+		"Asc":         Asc,
+		"Chr":         Chr,
 		// Date/time
 		"AddDays":      AddDays,
 		"AddHours":     AddHours,
@@ -409,11 +559,17 @@ func All() map[string]any {
 		"DaysInMonth":  DaysInMonth,
 		"MonthName":    MonthName,
 		"WeekOfYear":   WeekOfYear,
+		"DateDiff":     DateDiff,
 		// Formatting
 		"FormatNumber":   FormatNumber,
 		"FormatCurrency": FormatCurrency,
 		"FormatPercent":  FormatPercent,
 		"FormatDateTime": FormatDateTime,
+		"Format":         Format,
+		// Type conversion
+		"ToInt":    ToInt,
+		"ToFloat":  ToFloat,
+		"ToString": ToString,
 		// Control flow
 		"IIF":    IIF,
 		"Choose": Choose,

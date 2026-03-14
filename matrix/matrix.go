@@ -180,6 +180,10 @@ type MatrixObject struct {
 	// DataSource is the data source to iterate for populating the matrix.
 	DataSource data.DataSource
 
+	// DataSourceName is the string name of the bound data source, preserved
+	// from the FRX and used to resolve DataSource at engine run time.
+	DataSourceName string
+
 	// AutoSize enables automatic column/row sizing from content.
 	AutoSize bool
 	// CellsSideBySide renders multiple cell descriptors side by side.
@@ -313,10 +317,89 @@ func (m *MatrixObject) BuildTemplate() {
 	}
 }
 
-// Serialize writes MatrixObject properties that differ from defaults.
+// ── Descriptor serialization helpers ─────────────────────────────────────────
+
+// headerHolder wraps a HeaderDescriptor slice for writing as a named child block.
+type headerHolder struct {
+	headers []*HeaderDescriptor
+}
+
+func (h *headerHolder) Serialize(w report.Writer) error {
+	for _, hd := range h.headers {
+		if err := w.WriteObjectNamed("Header", &headerDescriptorWriter{hd}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (h *headerHolder) Deserialize(_ report.Reader) error { return nil }
+
+// headerDescriptorWriter serializes a single HeaderDescriptor.
+type headerDescriptorWriter struct{ h *HeaderDescriptor }
+
+func (hw *headerDescriptorWriter) Serialize(w report.Writer) error {
+	if hw.h.Expression != "" {
+		w.WriteStr("Expression", hw.h.Expression)
+	}
+	if hw.h.Sort != "" {
+		w.WriteStr("Sort", hw.h.Sort)
+	}
+	if hw.h.ShowTotal {
+		w.WriteBool("ShowTotal", true)
+	}
+	if hw.h.TotalText != "" && hw.h.TotalText != "Total" {
+		w.WriteStr("TotalText", hw.h.TotalText)
+	}
+	if hw.h.InterleaveRows {
+		w.WriteBool("InterleaveRows", true)
+	}
+	return nil
+}
+
+func (hw *headerDescriptorWriter) Deserialize(_ report.Reader) error { return nil }
+
+// cellHolder wraps a CellDescriptor slice for writing as a named child block.
+type cellHolder struct {
+	cells []*CellDescriptor
+}
+
+func (c *cellHolder) Serialize(w report.Writer) error {
+	for _, cd := range c.cells {
+		if err := w.WriteObjectNamed("Cell", &cellDescriptorWriter{cd}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (c *cellHolder) Deserialize(_ report.Reader) error { return nil }
+
+// cellDescriptorWriter serializes a single CellDescriptor.
+type cellDescriptorWriter struct{ c *CellDescriptor }
+
+func (cw *cellDescriptorWriter) Serialize(w report.Writer) error {
+	if cw.c.Expression != "" {
+		w.WriteStr("Expression", cw.c.Expression)
+	}
+	if cw.c.Function != AggregateFunctionNone {
+		w.WriteInt("Function", int(cw.c.Function))
+	}
+	return nil
+}
+
+func (cw *cellDescriptorWriter) Deserialize(_ report.Reader) error { return nil }
+
+// ── MatrixObject Serialize / Deserialize ──────────────────────────────────────
+
+// Serialize writes MatrixObject properties that differ from defaults,
+// including MatrixRows, MatrixColumns, and MatrixCells child blocks.
 func (m *MatrixObject) Serialize(w report.Writer) error {
 	if err := m.TableBase.Serialize(w); err != nil {
 		return err
+	}
+	if m.DataSourceName != "" {
+		w.WriteStr("DataSource", m.DataSourceName)
 	}
 	if m.AutoSize {
 		w.WriteBool("AutoSize", true)
@@ -330,6 +413,22 @@ func (m *MatrixObject) Serialize(w report.Writer) error {
 	if m.Style != "" {
 		w.WriteStr("Style", m.Style)
 	}
+	// Write descriptor child blocks.
+	if len(m.Data.Rows) > 0 {
+		if err := w.WriteObjectNamed("MatrixRows", &headerHolder{m.Data.Rows}); err != nil {
+			return err
+		}
+	}
+	if len(m.Data.Columns) > 0 {
+		if err := w.WriteObjectNamed("MatrixColumns", &headerHolder{m.Data.Columns}); err != nil {
+			return err
+		}
+	}
+	if len(m.Data.Cells) > 0 {
+		if err := w.WriteObjectNamed("MatrixCells", &cellHolder{m.Data.Cells}); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -338,12 +437,11 @@ func (m *MatrixObject) Deserialize(r report.Reader) error {
 	if err := m.TableBase.Deserialize(r); err != nil {
 		return err
 	}
+	m.DataSourceName = r.ReadStr("DataSource", "")
 	m.AutoSize = r.ReadBool("AutoSize", false)
 	m.CellsSideBySide = r.ReadBool("CellsSideBySide", false)
 	m.EvenStylePriority = EvenStylePriority(r.ReadInt("EvenStylePriority", 0))
 	m.Style = r.ReadStr("Style", "")
-	// DataSource is a string alias resolved at engine run time.
-	_ = r.ReadStr("DataSource", "")
 	return nil
 }
 
@@ -357,9 +455,13 @@ func (m *MatrixObject) DeserializeChild(childType string, r report.Reader) bool 
 				break
 			}
 			if ct == "Header" {
-				hd := &HeaderDescriptor{}
-				hd.Expression = r.ReadStr("Expression", "")
-				hd.Sort = r.ReadStr("Sort", "")
+				hd := &HeaderDescriptor{
+					Descriptor:     Descriptor{Expression: r.ReadStr("Expression", "")},
+					Sort:           r.ReadStr("Sort", ""),
+					ShowTotal:      r.ReadBool("ShowTotal", false),
+					TotalText:      r.ReadStr("TotalText", "Total"),
+					InterleaveRows: r.ReadBool("InterleaveRows", false),
+				}
 				m.Data.Rows = append(m.Data.Rows, hd)
 			}
 			_ = r.FinishChild()
@@ -372,9 +474,13 @@ func (m *MatrixObject) DeserializeChild(childType string, r report.Reader) bool 
 				break
 			}
 			if ct == "Header" {
-				hd := &HeaderDescriptor{}
-				hd.Expression = r.ReadStr("Expression", "")
-				hd.Sort = r.ReadStr("Sort", "")
+				hd := &HeaderDescriptor{
+					Descriptor:     Descriptor{Expression: r.ReadStr("Expression", "")},
+					Sort:           r.ReadStr("Sort", ""),
+					ShowTotal:      r.ReadBool("ShowTotal", false),
+					TotalText:      r.ReadStr("TotalText", "Total"),
+					InterleaveRows: r.ReadBool("InterleaveRows", false),
+				}
 				m.Data.Columns = append(m.Data.Columns, hd)
 			}
 			_ = r.FinishChild()
@@ -387,9 +493,10 @@ func (m *MatrixObject) DeserializeChild(childType string, r report.Reader) bool 
 				break
 			}
 			if ct == "Cell" {
-				cd := &CellDescriptor{}
-				cd.Expression = r.ReadStr("Expression", "")
-				cd.Function = AggregateFunction(r.ReadInt("Function", 0))
+				cd := &CellDescriptor{
+					Descriptor: Descriptor{Expression: r.ReadStr("Expression", "")},
+					Function:   AggregateFunction(r.ReadInt("Function", 0)),
+				}
 				m.Data.Cells = append(m.Data.Cells, cd)
 			}
 			_ = r.FinishChild()

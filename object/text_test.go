@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/andrewloable/go-fastreport/object"
+	"github.com/andrewloable/go-fastreport/report"
 	"github.com/andrewloable/go-fastreport/style"
 )
 
@@ -13,13 +14,12 @@ type testWriter struct{ data map[string]any }
 
 func newTestWriter() *testWriter { return &testWriter{data: make(map[string]any)} }
 
-func (w *testWriter) WriteStr(key, val string)    { w.data[key] = val }
-func (w *testWriter) WriteBool(key string, val bool) { w.data[key] = val }
-func (w *testWriter) WriteInt(key string, val int)  { w.data[key] = val }
-func (w *testWriter) WriteFloat(key string, val float32) { w.data[key] = val }
-func (w *testWriter) WriteObject(obj interface{ Serialize(interface{ WriteStr(string, string); WriteBool(string, bool); WriteInt(string, int); WriteFloat(string, float32); WriteObject(interface{}) error }) error }) error {
-	return nil
-}
+func (w *testWriter) WriteStr(key, val string)              { w.data[key] = val }
+func (w *testWriter) WriteBool(key string, val bool)        { w.data[key] = val }
+func (w *testWriter) WriteInt(key string, val int)          { w.data[key] = val }
+func (w *testWriter) WriteFloat(key string, val float32)    { w.data[key] = val }
+func (w *testWriter) WriteObject(_ report.Serializable) error { return nil }
+func (w *testWriter) WriteObjectNamed(_ string, _ report.Serializable) error { return nil }
 
 type testReader struct{ data map[string]any }
 

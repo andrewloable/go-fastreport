@@ -297,9 +297,23 @@ func toFloat64(v any) (float64, error) {
 		return float64(x), nil
 	case int:
 		return float64(x), nil
+	case int8:
+		return float64(x), nil
+	case int16:
+		return float64(x), nil
 	case int32:
 		return float64(x), nil
 	case int64:
+		return float64(x), nil
+	case uint:
+		return float64(x), nil
+	case uint8:
+		return float64(x), nil
+	case uint16:
+		return float64(x), nil
+	case uint32:
+		return float64(x), nil
+	case uint64:
 		return float64(x), nil
 	}
 	return 0, fmt.Errorf("cannot convert %T to float64", v)

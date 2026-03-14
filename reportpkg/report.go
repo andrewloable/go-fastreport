@@ -74,6 +74,16 @@ func (r *Report) Page(i int) *ReportPage { return r.pages[i] }
 // AddPage appends a page to the report.
 func (r *Report) AddPage(p *ReportPage) { r.pages = append(r.pages, p) }
 
+// FindPage returns the ReportPage with the given name, or nil if not found.
+func (r *Report) FindPage(name string) *ReportPage {
+	for _, p := range r.pages {
+		if p.Name() == name {
+			return p
+		}
+	}
+	return nil
+}
+
 // RemovePage removes a page by reference.
 func (r *Report) RemovePage(p *ReportPage) {
 	for i, pg := range r.pages {

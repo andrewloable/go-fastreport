@@ -1,0 +1,191 @@
+package engine
+
+import (
+	"github.com/andrewloable/go-fastreport/band"
+	"github.com/andrewloable/go-fastreport/preview"
+	"github.com/andrewloable/go-fastreport/report"
+)
+
+// ── CanPrint ──────────────────────────────────────────────────────────────────
+
+// CanPrint returns true if obj should be rendered on the current page.
+// It evaluates the PrintOn bitmask against the current page position.
+// pageIndex is the zero-based index of the current page in PreparedPages.
+// totalPages is the total number of prepared pages.
+//
+// Each bit in PrintOn is treated as an independent "allow" condition;
+// the component prints if ANY enabled condition matches the current page.
+// PrintOnAllPages (0) always prints.
+func (e *ReportEngine) CanPrint(obj *report.ReportComponentBase, pageIndex, totalPages int) bool {
+	if !obj.Visible() {
+		return false
+	}
+
+	printOn := obj.PrintOn()
+
+	// PrintOnAllPages (zero value) — always print.
+	if printOn == report.PrintOnAllPages {
+		return true
+	}
+
+	isFirstPage := pageIndex == 0
+	isLastPage := pageIndex == totalPages-1
+	isSinglePage := isFirstPage && isLastPage
+	pageNumber := pageIndex + 1 // 1-based page number for odd/even check
+
+	canPrint := false
+	if (printOn&report.PrintOnOddPages) != 0 && pageNumber%2 == 1 {
+		canPrint = true
+	}
+	if (printOn&report.PrintOnEvenPages) != 0 && pageNumber%2 == 0 {
+		canPrint = true
+	}
+	if (printOn&report.PrintOnFirstPage) != 0 && isFirstPage {
+		canPrint = true
+	}
+	if (printOn&report.PrintOnLastPage) != 0 && isLastPage {
+		canPrint = true
+	}
+	if (printOn&report.PrintOnSinglePage) != 0 && isSinglePage {
+		canPrint = true
+	}
+	return canPrint
+}
+
+// ── CalcBandHeight ────────────────────────────────────────────────────────────
+
+// CalcBandHeight returns the rendered height of a band in pixels.
+// For bands that implement CalcHeight (BreakableComponent), it calls that
+// method; otherwise it uses the declared Height.
+func (e *ReportEngine) CalcBandHeight(b report.Base) float32 {
+	type hasCalcHeight interface {
+		CalcHeight() float32
+	}
+	if ch, ok := b.(hasCalcHeight); ok {
+		return ch.CalcHeight()
+	}
+	type hasHeight interface {
+		Height() float32
+	}
+	if h, ok := b.(hasHeight); ok {
+		return h.Height()
+	}
+	return 0
+}
+
+// ── AddBandToPreparedPages ────────────────────────────────────────────────────
+
+// AddBandToPreparedPages adds b to the current PreparedPage.
+// If there is not enough free space and the band cannot break, it starts a new
+// page first. Returns true if the band was added, false if it was skipped.
+//
+// b may be any *band.BandBase (or an embedding struct cast to *band.BandBase).
+func (e *ReportEngine) AddBandToPreparedPages(b *band.BandBase) bool {
+	if e.preparedPages == nil {
+		return false
+	}
+
+	height := e.CalcBandHeight(b)
+	if height <= 0 {
+		return false
+	}
+
+	// Check free space for regular bands (not page service bands).
+	if b.FlagCheckFreeSpace && e.freeSpace < height {
+		if b.CanBreak() || b.FlagMustBreak {
+			// Band can break — break it (simplified: just start new page for now).
+			e.startNewPageForCurrent()
+		} else {
+			// No break: start a new page and retry.
+			e.startNewPageForCurrent()
+			b.FlagMustBreak = true
+			result := e.AddBandToPreparedPages(b)
+			b.FlagMustBreak = false
+			return result
+		}
+	}
+
+	pb := &preview.PreparedBand{
+		Name:   b.Name(),
+		Top:    e.curY,
+		Height: height,
+	}
+	_ = e.preparedPages.AddBand(pb)
+	e.AdvanceY(height)
+	return true
+}
+
+// startNewPageForCurrent ends the current page and starts a new one.
+// It reuses the currentPage template.
+func (e *ReportEngine) startNewPageForCurrent() {
+	if e.currentPage == nil {
+		return
+	}
+	e.endPage(e.currentPage, false)
+	e.startPage(e.currentPage, false)
+}
+
+// ── ShowFullBand ──────────────────────────────────────────────────────────────
+
+// ShowFullBand shows band b, repeating it RepeatBandNTimes times.
+// It fires BeforeLayout/AfterLayout events and recursively shows any ChildBand.
+func (e *ReportEngine) ShowFullBand(b *band.BandBase) {
+	if b == nil {
+		return
+	}
+	n := b.RepeatBandNTimes()
+	if n <= 0 {
+		n = 1
+	}
+	for i := 0; i < n; i++ {
+		e.showFullBandOnce(b)
+	}
+}
+
+func (e *ReportEngine) showFullBandOnce(b *band.BandBase) {
+	if !b.Visible() {
+		return
+	}
+
+	b.FireBeforeLayout()
+	height := e.CalcBandHeight(b)
+	if height <= 0 {
+		b.FireAfterLayout()
+		return
+	}
+
+	// Check free space.
+	if b.FlagCheckFreeSpace && e.freeSpace < height {
+		e.startNewPageForCurrent()
+	}
+
+	if e.preparedPages != nil {
+		pb := &preview.PreparedBand{
+			Name:   b.Name(),
+			Top:    e.curY,
+			Height: height,
+		}
+		_ = e.preparedPages.AddBand(pb)
+	}
+	e.AdvanceY(height)
+	b.FireAfterLayout()
+
+	// Show child band if present.
+	if child := b.Child(); child != nil {
+		e.ShowFullBand(&child.BandBase)
+	}
+}
+
+// ShowDataBandRow shows a data band for a single data row, handling
+// StartNewPage, row tracking, and child bands.
+func (e *ReportEngine) ShowDataBandRow(db *band.DataBand, rowNo, absRowNo int) {
+	db.SetRowNo(rowNo)
+	db.SetAbsRowNo(absRowNo)
+
+	// StartNewPage: skip on the first row (avoids empty first page).
+	if db.StartNewPage() && db.FlagUseStartNewPage && rowNo != 1 {
+		e.startNewPageForCurrent()
+	}
+
+	e.ShowFullBand(&db.BandBase)
+}

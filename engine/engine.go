@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/andrewloable/go-fastreport/data"
+	"github.com/andrewloable/go-fastreport/preview"
 	"github.com/andrewloable/go-fastreport/reportpkg"
 )
 
@@ -82,15 +83,46 @@ type ReportEngine struct {
 
 	// aborted is set to true if the run is cancelled.
 	aborted bool
+
+	// preparedPages is the output collection built during the run.
+	preparedPages *preview.PreparedPages
+
+	// currentPage is the ReportPage template currently being processed.
+	currentPage *reportpkg.ReportPage
+
+	// columnStartY is the Y position at the top of the current column body.
+	columnStartY float32
+
+	// keep-together state (see keep.go)
+	keeping      bool
+	keepPosition int
+	keepCurX     float32
+	keepCurY     float32
+	keepDeltaY   float32
+
+	// page number tracking (see pagenumbers.go)
+	pageNumbers  []pageNumberInfo
+	logicalPageNo int
+
+	// reprint headers/footers (see reprint.go)
+	reprintHeaders     []reprintEntry
+	reprintFooters     []reprintEntry
+	keepReprintHeaders []reprintEntry
+	keepReprintFooters []reprintEntry
+
+	// deferred object processing (see processat.go)
+	deferredObjects []deferredItem
+	stateHandlers   []EngineStateHandler
 }
 
 // New creates a ReportEngine for the given report.
 func New(r *reportpkg.Report) *ReportEngine {
 	return &ReportEngine{
-		report:  r,
-		pageNo:  1,
-		rowNo:   1,
-		absRowNo: 1,
+		report:        r,
+		pageNo:        1,
+		rowNo:         1,
+		absRowNo:      1,
+		preparedPages: preview.New(),
 	}
 }
 
@@ -268,8 +300,6 @@ func (e *ReportEngine) prepareToSecondPass() error {
 }
 
 // runReportPages iterates through the report's ReportPages and generates output.
-// In the full engine implementation this method drives band printing; here it
-// establishes page dimensions and counts pages.
 func (e *ReportEngine) runReportPages() error {
 	for _, pg := range e.report.Pages() {
 		if e.aborted {
@@ -278,23 +308,10 @@ func (e *ReportEngine) runReportPages() error {
 		if e.pagesLimit > 0 && e.totalPages >= e.pagesLimit {
 			break
 		}
-		if err := e.processPage(pg); err != nil {
+		if err := e.RunReportPage(pg); err != nil {
 			return err
 		}
 	}
-	return nil
-}
-
-// processPage sets up the current page dimensions and increments counters.
-func (e *ReportEngine) processPage(pg *reportpkg.ReportPage) error {
-	// Compute usable dimensions (paper minus margins, converted mm→px at 96 dpi).
-	const mmPerPx = 96.0 / 25.4
-	e.pageWidth = (pg.PaperWidth - pg.LeftMargin - pg.RightMargin) * mmPerPx
-	e.pageHeight = (pg.PaperHeight - pg.TopMargin - pg.BottomMargin) * mmPerPx
-	e.freeSpace = e.pageHeight
-
-	e.totalPages++
-	e.pageNo++
 	return nil
 }
 

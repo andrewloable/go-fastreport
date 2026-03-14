@@ -216,6 +216,16 @@ func (g *GroupHeaderBand) Deserialize(r report.Reader) error {
 // DataBand
 // -----------------------------------------------------------------------
 
+// DataSource is a minimal interface for data iteration used by DataBand.
+// Concrete implementations (data.BaseDataSource, json/csv sources, etc.) satisfy this.
+type DataSource interface {
+	RowCount() int
+	First() error
+	Next() error
+	EOF() bool
+	GetValue(column string) (any, error)
+}
+
 // DataBand repeats once per row of a connected data source.
 // It is the Go equivalent of FastReport.DataBand.
 type DataBand struct {
@@ -233,15 +243,34 @@ type DataBand struct {
 	parentIDColumn       string
 	indent               float32
 	keepSummary          bool
+
+	// dataSource is the data provider bound at runtime.
+	dataSource DataSource
+	// maxRows limits printed rows (0 = unlimited).
+	maxRows int
 }
 
 // NewDataBand creates a DataBand with defaults.
 func NewDataBand() *DataBand {
+	b := NewBandBase()
+	b.FlagCheckFreeSpace = true // DataBands respect page free-space by default.
 	return &DataBand{
-		BandBase: *NewBandBase(),
+		BandBase: *b,
 		columns:  NewBandColumns(),
 	}
 }
+
+// DataSourceRef returns the bound data source (nil if not set).
+func (d *DataBand) DataSourceRef() DataSource { return d.dataSource }
+
+// SetDataSource binds a data source to this band.
+func (d *DataBand) SetDataSource(ds DataSource) { d.dataSource = ds }
+
+// MaxRows returns the maximum rows to print (0 = unlimited).
+func (d *DataBand) MaxRows() int { return d.maxRows }
+
+// SetMaxRows sets the maximum row limit.
+func (d *DataBand) SetMaxRows(n int) { d.maxRows = n }
 
 // Header returns the DataHeaderBand for this data band.
 func (d *DataBand) Header() *DataHeaderBand { return d.header }

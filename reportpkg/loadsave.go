@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/andrewloable/go-fastreport/data"
 	"github.com/andrewloable/go-fastreport/report"
 	"github.com/andrewloable/go-fastreport/serial"
 )
@@ -82,6 +83,8 @@ func (r *Report) LoadFrom(rd io.Reader) error {
 				return fmt.Errorf("report.LoadFrom: deserialize page: %w", err)
 			}
 			r.AddPage(pg)
+		case "Dictionary":
+			deserializeDictionary(rdr, r.Dictionary())
 		default:
 			// Unknown top-level child — skip.
 			_ = rdr.SkipElement()
@@ -161,6 +164,132 @@ func deserializeChildren(rdr *serial.Reader, parent report.Base) {
 	}
 }
 
+
+// deserializeDictionary reads the <Dictionary> element and populates the
+// report dictionary with Parameters, Relations, and Totals.
+// DataSource connection elements (TableDataSource, CsvDataConnection, etc.) are
+// skipped — they require the caller to register data sources programmatically.
+func deserializeDictionary(rdr *serial.Reader, dict *data.Dictionary) {
+	for {
+		childType, ok := rdr.NextChild()
+		if !ok {
+			break
+		}
+		switch childType {
+		case "Parameter":
+			p := deserializeParameter(rdr)
+			dict.AddParameter(p)
+		case "Relation":
+			r := deserializeRelation(rdr)
+			dict.AddRelation(r)
+		case "Total":
+			t := deserializeTotal(rdr)
+			dict.AddTotal(t)
+		default:
+			// DataSource connections and other children are skipped.
+			_ = rdr.SkipElement()
+		}
+		_ = rdr.FinishChild()
+	}
+}
+
+// deserializeParameter reads a single <Parameter> element (and nested children).
+func deserializeParameter(rdr *serial.Reader) *data.Parameter {
+	p := &data.Parameter{
+		Name:       rdr.ReadStr("Name", ""),
+		DataType:   rdr.ReadStr("DataType", ""),
+		Expression: rdr.ReadStr("Expression", ""),
+	}
+	// Read nested Parameter children.
+	for {
+		ct, ok := rdr.NextChild()
+		if !ok {
+			break
+		}
+		if ct == "Parameter" {
+			child := deserializeParameter(rdr)
+			p.AddParameter(child)
+		} else {
+			_ = rdr.SkipElement()
+		}
+		_ = rdr.FinishChild()
+	}
+	return p
+}
+
+// deserializeRelation reads a single <Relation> element.
+// Data source references are stored by name only; the engine resolves them
+// at prepare time via Dictionary.FindDataSourceByAlias.
+func deserializeRelation(rdr *serial.Reader) *data.Relation {
+	r := &data.Relation{
+		Name:              rdr.ReadStr("Name", ""),
+		ParentSourceName:  rdr.ReadStr("ParentDataSource", ""),
+		ChildSourceName:   rdr.ReadStr("ChildDataSource", ""),
+		ParentColumnNames: splitComma(rdr.ReadStr("ParentColumns", "")),
+		ChildColumnNames:  splitComma(rdr.ReadStr("ChildColumns", "")),
+	}
+	// Drain children (none expected).
+	for {
+		_, ok := rdr.NextChild()
+		if !ok {
+			break
+		}
+		_ = rdr.FinishChild()
+	}
+	return r
+}
+
+// deserializeTotal reads a single <Total> element.
+func deserializeTotal(rdr *serial.Reader) *data.Total {
+	t := &data.Total{
+		Name:       rdr.ReadStr("Name", ""),
+		Expression: rdr.ReadStr("Expression", ""),
+		TotalType:  parseTotalType(rdr.ReadStr("TotalType", "Sum")),
+		Evaluator:  rdr.ReadStr("Evaluator", ""),
+		PrintOn:    rdr.ReadStr("PrintOn", ""),
+	}
+	// Drain children (none expected).
+	for {
+		_, ok := rdr.NextChild()
+		if !ok {
+			break
+		}
+		_ = rdr.FinishChild()
+	}
+	return t
+}
+
+// parseTotalType maps a FastReport TotalType string to a data.TotalType constant.
+func parseTotalType(s string) data.TotalType {
+	switch strings.ToLower(s) {
+	case "sum":
+		return data.TotalTypeSum
+	case "min":
+		return data.TotalTypeMin
+	case "max":
+		return data.TotalTypeMax
+	case "avg":
+		return data.TotalTypeAvg
+	case "count":
+		return data.TotalTypeCount
+	case "countdistinct":
+		return data.TotalTypeCountDistinct
+	default:
+		return data.TotalTypeSum
+	}
+}
+
+// splitComma splits a comma-separated string into a trimmed slice.
+func splitComma(s string) []string {
+	if s == "" {
+		return nil
+	}
+	parts := strings.Split(s, ",")
+	for i, p := range parts {
+		parts[i] = strings.TrimSpace(p)
+	}
+	return parts
+}
 
 // ── Save ──────────────────────────────────────────────────────────────────────
 

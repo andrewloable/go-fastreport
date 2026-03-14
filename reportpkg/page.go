@@ -139,7 +139,39 @@ func (p *ReportPage) Overlay() *band.OverlayBand { return p.overlay }
 func (p *ReportPage) SetOverlay(b *band.OverlayBand) { p.overlay = b }
 
 // Bands returns the ordered slice of data/group bands on this page.
+// Singleton bands (PageHeader, PageFooter, ReportTitle, etc.) are NOT included;
+// use AllBands to iterate every band on the page.
 func (p *ReportPage) Bands() []report.Base { return p.bands }
+
+// AllBands returns every band on the page — singleton bands (PageHeader,
+// ReportTitle, etc.) followed by the ordered data/group bands.
+// Nil singleton slots are omitted.
+func (p *ReportPage) AllBands() []report.Base {
+	var all []report.Base
+	if p.reportTitle != nil {
+		all = append(all, p.reportTitle)
+	}
+	if p.pageHeader != nil {
+		all = append(all, p.pageHeader)
+	}
+	if p.columnHeader != nil {
+		all = append(all, p.columnHeader)
+	}
+	all = append(all, p.bands...)
+	if p.columnFooter != nil {
+		all = append(all, p.columnFooter)
+	}
+	if p.reportSummary != nil {
+		all = append(all, p.reportSummary)
+	}
+	if p.pageFooter != nil {
+		all = append(all, p.pageFooter)
+	}
+	if p.overlay != nil {
+		all = append(all, p.overlay)
+	}
+	return all
+}
 
 // AddBand appends a band to the page.
 func (p *ReportPage) AddBand(b report.Base) { p.bands = append(p.bands, b) }

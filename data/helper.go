@@ -9,14 +9,25 @@ type Relation struct {
 	Name string
 	// Alias is the human-friendly display name (defaults to Name).
 	Alias string
-	// ParentDataSource is the parent (master) data source.
+	// ParentDataSource is the parent (master) data source (resolved at prepare time).
 	ParentDataSource DataSource
-	// ChildDataSource is the child (detail) data source.
+	// ChildDataSource is the child (detail) data source (resolved at prepare time).
 	ChildDataSource DataSource
+	// ParentSourceName is the FRX-level data source name for the parent.
+	// The engine resolves this to ParentDataSource via the dictionary.
+	ParentSourceName string
+	// ChildSourceName is the FRX-level data source name for the child.
+	ChildSourceName string
 	// ParentColumns are the join column names in the parent data source.
+	// Populated from ParentColumnNames after dictionary resolution.
 	ParentColumns []string
 	// ChildColumns are the join column names in the child data source.
+	// Populated from ChildColumnNames after dictionary resolution.
 	ChildColumns []string
+	// ParentColumnNames holds the raw comma-split column names from FRX.
+	ParentColumnNames []string
+	// ChildColumnNames holds the raw comma-split column names from FRX.
+	ChildColumnNames []string
 }
 
 // Parameter represents a named report parameter with an optional nested
@@ -57,8 +68,16 @@ func FindParameterByName(params []*Parameter, name string) *Parameter {
 type Total struct {
 	// Name is the total's unique name.
 	Name string
-	// Value is the computed aggregate value.
+	// Value is the computed aggregate value (set at report run time).
 	Value any
+	// Expression is the value expression evaluated per row (empty for Count).
+	Expression string
+	// TotalType is the aggregate function (Sum, Min, Max, Avg, Count, etc.).
+	TotalType TotalType
+	// Evaluator is the name of the DataBand that drives this total.
+	Evaluator string
+	// PrintOn is the name of the band where the total is printed/reset.
+	PrintOn string
 }
 
 // DictionaryLookup is the minimal interface that DataHelper needs from the

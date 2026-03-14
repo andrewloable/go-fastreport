@@ -13,11 +13,13 @@ import (
 // countObjectsOfType counts objects of a given type across all band objects in r.
 func countObjectsOfType[T any](r *reportpkg.Report) int {
 	var count int
+	type hasObjects interface {
+		Objects() *report.ObjectCollection
+	}
 	for _, pg := range r.Pages() {
-		for _, b := range pg.Bands() {
-			type hasObjects interface {
-				Objects() *report.ObjectCollection
-			}
+		// AllBands includes singleton bands (ReportTitle, PageHeader, ReportSummary, etc.)
+		// in addition to the ordered data/group bands.
+		for _, b := range pg.AllBands() {
 			if h, ok := b.(hasObjects); ok {
 				objs := h.Objects()
 				for i := 0; i < objs.Len(); i++ {

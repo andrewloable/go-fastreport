@@ -505,3 +505,48 @@ func (d *DataBand) Deserialize(r report.Reader) error {
 	d.columns.Width = r.ReadFloat("Columns.Width", 0)
 	return nil
 }
+
+// DeserializeChild handles the <Sort> container element that holds child
+// <Sort Expression="..." Descending="true"/> sort-spec items in FastReport FRX files.
+func (d *DataBand) DeserializeChild(childType string, r report.Reader) bool {
+	if childType != "Sort" {
+		return false
+	}
+	// The outer <Sort> element is a list container; iterate its children.
+	for {
+		ct, ok := r.NextChild()
+		if !ok {
+			break
+		}
+		if ct == "Sort" {
+			expr := r.ReadStr("Expression", "")
+			descending := r.ReadBool("Descending", false)
+			if expr != "" {
+				spec := SortSpec{Column: expr}
+				if descending {
+					spec.Order = SortOrderDescending
+				}
+				d.sort = append(d.sort, spec)
+			}
+			// Drain any unexpected grandchildren.
+			for {
+				_, ok2 := r.NextChild()
+				if !ok2 {
+					break
+				}
+				_ = r.FinishChild()
+			}
+		} else {
+			// Drain unexpected element's children then finish it.
+			for {
+				_, ok2 := r.NextChild()
+				if !ok2 {
+					break
+				}
+				_ = r.FinishChild()
+			}
+		}
+		_ = r.FinishChild()
+	}
+	return true
+}

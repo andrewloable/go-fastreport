@@ -187,6 +187,16 @@ func (e *ReportEngine) buildPreparedObject(obj report.Base) *preview.PreparedObj
 		// AdvMatrix rendering is not yet implemented; emit an empty picture placeholder.
 		po.Kind = preview.ObjectTypePicture
 
+	case *object.DigitalSignatureObject:
+		// Render as a text placeholder showing the signature field.
+		po.Kind = preview.ObjectTypeText
+		po.TextColor = color.RGBA{A: 255}
+		po.Text = v.Placeholder()
+
+	case *object.MapObject:
+		// Map rendering is not yet implemented; emit an empty picture placeholder.
+		po.Kind = preview.ObjectTypePicture
+
 	case *object.MSChartObject:
 		// MSChart rendering is not yet implemented; emit an empty picture placeholder.
 		po.Kind = preview.ObjectTypePicture

@@ -69,6 +69,9 @@ func init() {
 		{"AdvMatrixObject", func() report.Base { return object.NewAdvMatrixObject() }},
 		{"MSChartObject", func() report.Base { return object.NewMSChartObject() }},
 		{"MSChartSeries", func() report.Base { return object.NewMSChartSeries() }},
+		{"DigitalSignatureObject", func() report.Base { return object.NewDigitalSignatureObject() }},
+		{"MapObject", func() report.Base { return object.NewMapObject() }},
+		{"MapLayer", func() report.Base { return object.NewMapLayer() }},
 
 		// Table object and its children
 		{"TableObject", func() report.Base { return table.NewTableObject() }},

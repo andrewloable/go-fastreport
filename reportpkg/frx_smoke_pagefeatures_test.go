@@ -42,7 +42,17 @@ func TestFRXSmoke_ShiftObjectPosition(t *testing.T) {
 }
 
 func TestFRXSmoke_Watermark(t *testing.T) {
-	loadFRXSmoke(t, "Watermark.frx")
+	r := loadFRXSmoke(t, "Watermark.frx")
+	pg := r.Pages()[0]
+	if pg.Watermark == nil {
+		t.Fatal("expected Watermark to be non-nil on page")
+	}
+	if !pg.Watermark.Enabled {
+		t.Errorf("expected Watermark.Enabled=true")
+	}
+	if pg.Watermark.Text != "CONFIDENTIAL" {
+		t.Errorf("expected Watermark.Text=%q, got %q", "CONFIDENTIAL", pg.Watermark.Text)
+	}
 }
 
 func TestFRXSmoke_Outline(t *testing.T) {

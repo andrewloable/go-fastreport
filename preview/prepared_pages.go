@@ -202,6 +202,13 @@ type PreparedObject struct {
 	Text string
 	// BlobIdx is the blob store index for image objects (-1 = no blob).
 	BlobIdx int
+	// ShapeKind identifies the geometric shape (for ObjectTypeShape).
+	// 0=Rectangle, 1=RoundRectangle, 2=Ellipse, 3=Triangle, 4=Diamond.
+	ShapeKind int
+	// ShapeCurve is the corner radius in pixels for RoundRectangle shapes.
+	ShapeCurve float32
+	// LineDiagonal indicates a diagonal line (for ObjectTypeLine).
+	LineDiagonal bool
 
 	// ── Style fields ────────────────────────────────────────────────────────
 	// Font describes the text font.

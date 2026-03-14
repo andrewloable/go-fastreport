@@ -11,6 +11,7 @@ import (
 	"github.com/andrewloable/go-fastreport/style"
 )
 
+
 // populateBandObjects converts the child report objects of a BandBase into
 // preview.PreparedObject snapshots and appends them to pb.
 // It evaluates [bracket] expressions in TextObject text via Report.Calc().
@@ -67,6 +68,11 @@ func (e *ReportEngine) buildPreparedObject(obj report.Base) *preview.PreparedObj
 	}
 
 	switch v := obj.(type) {
+	case *object.HtmlObject:
+		po.Kind = preview.ObjectTypeText
+		po.TextColor = color.RGBA{A: 255}
+		po.Text = e.evalText(v.Text())
+
 	case *object.TextObject:
 		po.Kind = preview.ObjectTypeText
 		po.Font = v.Font()
@@ -78,12 +84,26 @@ func (e *ReportEngine) buildPreparedObject(obj report.Base) *preview.PreparedObj
 
 	case *object.LineObject:
 		po.Kind = preview.ObjectTypeLine
+		po.LineDiagonal = v.Diagonal()
+		po.Border = v.Border()
+		if f, ok := v.Fill().(*style.SolidFill); ok {
+			po.FillColor = f.Color
+		}
 
 	case *object.ShapeObject:
 		po.Kind = preview.ObjectTypeShape
+		po.ShapeKind = int(v.Shape())
+		po.ShapeCurve = v.Curve()
+		po.Border = v.Border()
+		if f, ok := v.Fill().(*style.SolidFill); ok {
+			po.FillColor = f.Color
+		}
 
 	case *object.PictureObject:
 		po.Kind = preview.ObjectTypePicture
+		if data := v.ImageData(); len(data) > 0 {
+			po.BlobIdx = e.preparedPages.BlobStore.Add(v.Name(), data)
+		}
 
 	case *object.CheckBoxObject:
 		po.Kind = preview.ObjectTypeCheckBox

@@ -9,6 +9,11 @@ import (
 	"image/png"
 	"io"
 	"math"
+	"strings"
+
+	"golang.org/x/image/font"
+	"golang.org/x/image/font/basicfont"
+	"golang.org/x/image/math/fixed"
 
 	"github.com/andrewloable/go-fastreport/export"
 	"github.com/andrewloable/go-fastreport/preview"
@@ -43,6 +48,7 @@ type Exporter struct {
 	BandFillColor color.RGBA
 
 	w       io.Writer
+	pp      *preview.PreparedPages
 	curPage *image.RGBA
 }
 
@@ -60,6 +66,7 @@ func NewExporter() *Exporter {
 // Export writes each page of pp as a PNG image to w.
 func (e *Exporter) Export(pp *preview.PreparedPages, w io.Writer) error {
 	e.w = w
+	e.pp = pp
 	return e.ExportBase.Export(pp, w, e)
 }
 
@@ -84,8 +91,7 @@ func (e *Exporter) ExportPageBegin(pg *preview.PreparedPage) error {
 	return nil
 }
 
-// ExportBand draws the band as a labeled rectangle on the current page canvas.
-// Bands span the full page width; Top and Height come from the PreparedBand.
+// ExportBand draws the band background and renders child objects on the canvas.
 func (e *Exporter) ExportBand(b *preview.PreparedBand) error {
 	if e.curPage == nil {
 		return nil
@@ -106,13 +112,127 @@ func (e *Exporter) ExportBand(b *preview.PreparedBand) error {
 
 	r := image.Rect(x0, y0, x1, y1)
 
-	// Fill band rectangle.
+	// Fill band background.
 	draw.Draw(e.curPage, r, &image.Uniform{e.BandFillColor}, image.Point{}, draw.Src)
-
-	// Draw border (top + bottom + left + right lines).
+	// Draw band border.
 	e.drawRect(r, e.BandBorderColor)
 
+	// Render child objects.
+	for _, obj := range b.Objects {
+		e.renderObject(obj, b.Top)
+	}
+
 	return nil
+}
+
+// renderObject draws a single PreparedObject on the current page canvas.
+func (e *Exporter) renderObject(obj preview.PreparedObject, bandTop float32) {
+	if e.curPage == nil {
+		return
+	}
+	switch obj.Kind {
+	case preview.ObjectTypeText:
+		if obj.Text == "" {
+			return
+		}
+		x := e.scaled(int(obj.Left))
+		y := e.scaled(int(bandTop + obj.Top))
+		w := e.scaled(int(obj.Width))
+		h := e.scaled(int(obj.Height))
+
+		// Clip text rendering to object bounds.
+		bounds := image.Rect(x, y, x+w, y+h)
+		bounds = bounds.Intersect(e.curPage.Bounds())
+		if bounds.Empty() {
+			return
+		}
+
+		// Fill object background (white by default).
+		if obj.FillColor.A > 0 {
+			draw.Draw(e.curPage, bounds, &image.Uniform{obj.FillColor}, image.Point{}, draw.Over)
+		} else {
+			white := color.RGBA{R: 255, G: 255, B: 255, A: 255}
+			draw.Draw(e.curPage, bounds, &image.Uniform{white}, image.Point{}, draw.Over)
+		}
+
+		tc := obj.TextColor
+		if tc.A == 0 {
+			tc = color.RGBA{A: 255} // default black
+		}
+
+		face := basicfont.Face7x13
+		lineH := face.Metrics().Height.Ceil()
+		ascent := face.Metrics().Ascent.Ceil()
+
+		// Simple word-wrap: split by newline, then by width.
+		lines := e.wrapText(obj.Text, w, face)
+
+		// Vertical alignment: top=0, center=1, bottom=2.
+		textBlockH := len(lines) * lineH
+		startY := y + ascent
+		switch obj.VertAlign {
+		case 1: // center
+			startY = y + (h-textBlockH)/2 + ascent
+		case 2: // bottom
+			startY = y + h - textBlockH + ascent
+		}
+
+		d := &font.Drawer{
+			Dst:  e.curPage,
+			Src:  image.NewUniform(tc),
+			Face: face,
+		}
+		for _, line := range lines {
+			if startY > y+h {
+				break
+			}
+			// Horizontal alignment: left=0, center=1, right=2.
+			lineW := font.MeasureString(face, line).Ceil()
+			dotX := x + 2 // left padding
+			switch obj.HorzAlign {
+			case 1: // center
+				dotX = x + (w-lineW)/2
+			case 2: // right
+				dotX = x + w - lineW - 2
+			}
+			if dotX < x {
+				dotX = x
+			}
+			d.Dot = fixed.P(dotX, startY)
+			d.DrawString(line)
+			startY += lineH
+		}
+	}
+}
+
+// wrapText splits text into lines that fit within maxWidth pixels using face.
+func (e *Exporter) wrapText(text string, maxWidth int, face font.Face) []string {
+	// First split by explicit newlines.
+	rawLines := strings.Split(text, "\n")
+	var result []string
+	for _, raw := range rawLines {
+		if raw == "" {
+			result = append(result, "")
+			continue
+		}
+		words := strings.Fields(raw)
+		if len(words) == 0 {
+			result = append(result, "")
+			continue
+		}
+		current := words[0]
+		for _, w := range words[1:] {
+			candidate := current + " " + w
+			if font.MeasureString(face, candidate).Ceil() <= maxWidth {
+				current = candidate
+			} else {
+				result = append(result, current)
+				current = w
+			}
+		}
+		result = append(result, current)
+	}
+	return result
 }
 
 // ExportPageEnd encodes the current canvas as PNG and writes it to the output.

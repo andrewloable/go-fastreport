@@ -68,6 +68,9 @@ type ReportPage struct {
 	// Page-level columns.
 	Columns PageColumns
 
+	// Watermark is the optional page watermark (text or image).
+	Watermark *Watermark
+
 	// inherited marks this page as coming from a base (parent) report.
 	inherited bool
 }
@@ -87,6 +90,7 @@ func NewReportPage() *ReportPage {
 		BottomMargin: 10,
 	}
 	p.fill = &style.SolidFill{Color: style.ColorWhite}
+	p.Watermark = NewWatermark()
 	return p
 }
 
@@ -311,6 +315,11 @@ func (p *ReportPage) Serialize(w report.Writer) error {
 		w.WriteStr("ManualBuildEvent", p.ManualBuildEvent)
 	}
 
+	// Watermark properties are written as flat attributes on the page element.
+	if p.Watermark != nil {
+		p.Watermark.Serialize(w)
+	}
+
 	// Write bands in the same order as FastReport's GetChildObjects().
 	// Singleton bands use their declared FRX element name via TypeNamer.
 	if err := p.serializeBands(w); err != nil {
@@ -410,5 +419,9 @@ func (p *ReportPage) Deserialize(r report.Reader) error {
 	p.ManualBuildEvent = r.ReadStr("ManualBuildEvent", "")
 	p.Columns.Count = r.ReadInt("Columns.Count", 0)
 	p.Columns.Width = r.ReadFloat("Columns.Width", 0)
+	if p.Watermark == nil {
+		p.Watermark = NewWatermark()
+	}
+	p.Watermark.Deserialize(r)
 	return nil
 }

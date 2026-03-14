@@ -58,6 +58,7 @@ func init() {
 		{"SubreportObject", func() report.Base { return object.NewSubreportObject() }},
 		{"BarcodeObject", func() report.Base { return object.NewBarcodeObject() }},
 		{"ZipCodeObject", func() report.Base { return object.NewZipCodeObject() }},
+		{"HtmlObject", func() report.Base { return object.NewHtmlObject() }},
 	}
 
 	for _, reg := range regs {

@@ -1,6 +1,8 @@
 package engine
 
 import (
+	"fmt"
+
 	"github.com/andrewloable/go-fastreport/band"
 	"github.com/andrewloable/go-fastreport/data"
 	"github.com/andrewloable/go-fastreport/report"
@@ -113,6 +115,11 @@ func (e *ReportEngine) RunDataBandFull(db *band.DataBand) error {
 		return err
 	}
 
+	// If IdColumn and ParentIdColumn are both set, use hierarchical rendering.
+	if db.IDColumn() != "" && db.ParentIDColumn() != "" {
+		return e.runDataBandHierarchical(db, ds)
+	}
+
 	maxRows := db.MaxRows()
 	total := ds.RowCount()
 	if maxRows > 0 && total > maxRows {
@@ -191,6 +198,133 @@ func (e *ReportEngine) RunDataBandFull(db *band.DataBand) error {
 		e.ShowFullBand(&db.BandBase)
 	}
 
+	return nil
+}
+
+// runDataBandHierarchical renders a DataBand with IdColumn/ParentIdColumn set.
+// It builds a parent→children map and renders rows recursively from the roots.
+func (e *ReportEngine) runDataBandHierarchical(db *band.DataBand, ds band.DataSource) error {
+	idCol := db.IDColumn()
+	parentCol := db.ParentIDColumn()
+
+	// Snapshot all rows so we can build the tree.
+	type rowSnapshot struct {
+		idx      int
+		id       string
+		parentID string
+	}
+	var rows []rowSnapshot
+
+	fullDS, hasFull := ds.(data.DataSource)
+	if !hasFull {
+		return nil
+	}
+
+	for i := 0; !ds.EOF(); i++ {
+		idVal, _ := fullDS.GetValue(idCol)
+		parentVal, _ := fullDS.GetValue(parentCol)
+		rows = append(rows, rowSnapshot{
+			idx:      i,
+			id:       fmt.Sprintf("%v", idVal),
+			parentID: fmt.Sprintf("%v", parentVal),
+		})
+		if err := ds.Next(); err != nil {
+			break
+		}
+	}
+
+	// Build parent→children map.
+	children := make(map[string][]int) // parentID → slice of row indices
+	for i, row := range rows {
+		children[row.parentID] = append(children[row.parentID], i)
+	}
+
+	// Determine root rows: those whose parentID is "", "0", or not found in idSet.
+	idSet := make(map[string]bool, len(rows))
+	for _, row := range rows {
+		idSet[row.id] = true
+	}
+	var roots []int
+	for i, row := range rows {
+		if row.parentID == "" || row.parentID == "0" || !idSet[row.parentID] {
+			roots = append(roots, i)
+		}
+	}
+
+	// Reset data source to start.
+	if err := ds.First(); err != nil {
+		return err
+	}
+
+	headerShown := false
+	prevLevel := e.hierarchyLevel
+	prevRowNo := e.hierarchyRowNo
+
+	// Recursive renderer.
+	var renderRows func(indices []int, level int, prefix string) error
+	renderRows = func(indices []int, level int, prefix string) error {
+		for nth, idx := range indices {
+			row := rows[idx]
+
+			// Seek data source to this row.
+			if err := ds.First(); err != nil {
+				return err
+			}
+			for k := 0; k < row.idx; k++ {
+				if err := ds.Next(); err != nil {
+					break
+				}
+			}
+
+			// Set hierarchy state.
+			e.hierarchyLevel = level
+			rowLabel := fmt.Sprintf("%d", nth+1)
+			if prefix != "" {
+				rowLabel = prefix + "." + rowLabel
+			}
+			e.hierarchyRowNo = rowLabel
+
+			db.SetRowNo(row.idx + 1)
+			db.SetAbsRowNo(e.absRowNo)
+			e.absRowNo++
+
+			if e.report != nil {
+				e.report.SetCalcContext(fullDS)
+			}
+			e.accumulateTotals()
+
+			if !headerShown {
+				if hdr := db.Header(); hdr != nil {
+					e.ShowFullBand(&hdr.HeaderFooterBandBase.BandBase)
+				}
+				headerShown = true
+			}
+
+			e.ShowFullBand(&db.BandBase)
+
+			// Render children.
+			if kidIndices, ok := children[row.id]; ok {
+				if err := renderRows(kidIndices, level+1, rowLabel); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	}
+
+	if err := renderRows(roots, 0, ""); err != nil {
+		return err
+	}
+
+	// Restore hierarchy state.
+	e.hierarchyLevel = prevLevel
+	e.hierarchyRowNo = prevRowNo
+
+	if headerShown {
+		if ftr := db.Footer(); ftr != nil {
+			e.ShowFullBand(&ftr.HeaderFooterBandBase.BandBase)
+		}
+	}
 	return nil
 }
 

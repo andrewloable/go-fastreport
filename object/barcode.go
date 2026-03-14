@@ -98,35 +98,94 @@ func (b *BarcodeObject) Deserialize(r report.Reader) error {
 
 // ── ZipCodeObject ─────────────────────────────────────────────────────────────
 
-// ZipCodeObject renders a US POSTNET zip code barcode.
+// ZipCodeObject renders a Russian postal (GOST R 51506-99) or US POSTNET zip code.
 // It is the Go equivalent of FastReport.ZipCodeObject.
 type ZipCodeObject struct {
 	report.ReportComponentBase
 
-	// text is the zip code string to render.
+	// text is the zip code value.
 	text string
-	// allowExpressions enables bracket-expression evaluation in text.
-	allowExpressions bool
+	// dataColumn is the data source column bound to this object.
+	dataColumn string
+	// expression is an expression that evaluates to the zip code value.
+	expression string
+	// segmentWidth is the width of a single digit segment in pixels.
+	segmentWidth float32
+	// segmentHeight is the height of a single digit segment in pixels.
+	segmentHeight float32
+	// spacing is the spacing between segment origins in pixels.
+	spacing float32
+	// segmentCount is the number of zip code digit segments (default 6).
+	segmentCount int
+	// showMarkers controls whether reference markers are drawn (default true).
+	showMarkers bool
+	// showGrid controls whether the digit grid is drawn (default true).
+	showGrid bool
 }
 
-// NewZipCodeObject creates a ZipCodeObject with defaults.
+// NewZipCodeObject creates a ZipCodeObject with defaults matching FastReport .NET.
 func NewZipCodeObject() *ZipCodeObject {
 	return &ZipCodeObject{
 		ReportComponentBase: *report.NewReportComponentBase(),
+		segmentCount:        6,
+		showMarkers:         true,
+		showGrid:            true,
 	}
 }
 
-// Text returns the zip code data string.
+// Text returns the zip code string.
 func (z *ZipCodeObject) Text() string { return z.text }
 
-// SetText sets the zip code data string.
+// SetText sets the zip code string.
 func (z *ZipCodeObject) SetText(v string) { z.text = v }
 
-// AllowExpressions returns whether bracket expressions are evaluated.
-func (z *ZipCodeObject) AllowExpressions() bool { return z.allowExpressions }
+// DataColumn returns the data source column name.
+func (z *ZipCodeObject) DataColumn() string { return z.dataColumn }
 
-// SetAllowExpressions sets the AllowExpressions flag.
-func (z *ZipCodeObject) SetAllowExpressions(v bool) { z.allowExpressions = v }
+// SetDataColumn sets the data source column name.
+func (z *ZipCodeObject) SetDataColumn(v string) { z.dataColumn = v }
+
+// Expression returns the zip code expression.
+func (z *ZipCodeObject) Expression() string { return z.expression }
+
+// SetExpression sets the zip code expression.
+func (z *ZipCodeObject) SetExpression(v string) { z.expression = v }
+
+// SegmentWidth returns the width of one digit segment in pixels.
+func (z *ZipCodeObject) SegmentWidth() float32 { return z.segmentWidth }
+
+// SetSegmentWidth sets the segment width.
+func (z *ZipCodeObject) SetSegmentWidth(v float32) { z.segmentWidth = v }
+
+// SegmentHeight returns the height of one digit segment in pixels.
+func (z *ZipCodeObject) SegmentHeight() float32 { return z.segmentHeight }
+
+// SetSegmentHeight sets the segment height.
+func (z *ZipCodeObject) SetSegmentHeight(v float32) { z.segmentHeight = v }
+
+// Spacing returns the spacing between digit segment origins in pixels.
+func (z *ZipCodeObject) Spacing() float32 { return z.spacing }
+
+// SetSpacing sets the spacing.
+func (z *ZipCodeObject) SetSpacing(v float32) { z.spacing = v }
+
+// SegmentCount returns the number of digit segments (default 6).
+func (z *ZipCodeObject) SegmentCount() int { return z.segmentCount }
+
+// SetSegmentCount sets the number of digit segments.
+func (z *ZipCodeObject) SetSegmentCount(v int) { z.segmentCount = v }
+
+// ShowMarkers returns whether reference markers are drawn.
+func (z *ZipCodeObject) ShowMarkers() bool { return z.showMarkers }
+
+// SetShowMarkers sets the ShowMarkers flag.
+func (z *ZipCodeObject) SetShowMarkers(v bool) { z.showMarkers = v }
+
+// ShowGrid returns whether the digit grid is drawn.
+func (z *ZipCodeObject) ShowGrid() bool { return z.showGrid }
+
+// SetShowGrid sets the ShowGrid flag.
+func (z *ZipCodeObject) SetShowGrid(v bool) { z.showGrid = v }
 
 // Serialize writes ZipCodeObject properties that differ from defaults.
 func (z *ZipCodeObject) Serialize(w report.Writer) error {
@@ -136,8 +195,29 @@ func (z *ZipCodeObject) Serialize(w report.Writer) error {
 	if z.text != "" {
 		w.WriteStr("Text", z.text)
 	}
-	if z.allowExpressions {
-		w.WriteBool("AllowExpressions", true)
+	if z.dataColumn != "" {
+		w.WriteStr("DataColumn", z.dataColumn)
+	}
+	if z.expression != "" {
+		w.WriteStr("Expression", z.expression)
+	}
+	if z.segmentWidth != 0 {
+		w.WriteFloat("SegmentWidth", z.segmentWidth)
+	}
+	if z.segmentHeight != 0 {
+		w.WriteFloat("SegmentHeight", z.segmentHeight)
+	}
+	if z.spacing != 0 {
+		w.WriteFloat("Spacing", z.spacing)
+	}
+	if z.segmentCount != 6 {
+		w.WriteInt("SegmentCount", z.segmentCount)
+	}
+	if !z.showMarkers {
+		w.WriteBool("ShowMarkers", false)
+	}
+	if !z.showGrid {
+		w.WriteBool("ShowGrid", false)
 	}
 	return nil
 }
@@ -148,6 +228,13 @@ func (z *ZipCodeObject) Deserialize(r report.Reader) error {
 		return err
 	}
 	z.text = r.ReadStr("Text", "")
-	z.allowExpressions = r.ReadBool("AllowExpressions", false)
+	z.dataColumn = r.ReadStr("DataColumn", "")
+	z.expression = r.ReadStr("Expression", "")
+	z.segmentWidth = r.ReadFloat("SegmentWidth", 0)
+	z.segmentHeight = r.ReadFloat("SegmentHeight", 0)
+	z.spacing = r.ReadFloat("Spacing", 0)
+	z.segmentCount = r.ReadInt("SegmentCount", 6)
+	z.showMarkers = r.ReadBool("ShowMarkers", true)
+	z.showGrid = r.ReadBool("ShowGrid", true)
 	return nil
 }

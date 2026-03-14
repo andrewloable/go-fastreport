@@ -4,6 +4,7 @@
 package html
 
 import (
+	"encoding/base64"
 	"fmt"
 	"io"
 	"strings"
@@ -33,6 +34,7 @@ type Exporter struct {
 	Scale float32
 
 	w       io.Writer
+	pp      *preview.PreparedPages
 	sb      strings.Builder
 	pageIdx int
 }
@@ -50,6 +52,7 @@ func NewExporter() *Exporter {
 // Export writes the PreparedPages as an HTML document to w.
 func (e *Exporter) Export(pp *preview.PreparedPages, w io.Writer) error {
 	e.w = w
+	e.pp = pp
 	return e.ExportBase.Export(pp, w, e)
 }
 
@@ -174,9 +177,79 @@ func (e *Exporter) renderObject(obj preview.PreparedObject, scale float32) {
 
 		e.sb.WriteString(fmt.Sprintf(`<div style="%s">%s</div>`, css.String(), export.HTMLString(obj.Text)))
 
-	case preview.ObjectTypeLine, preview.ObjectTypeShape:
-		css.WriteString("border:1px solid #000;")
+	case preview.ObjectTypePicture:
+		if obj.BlobIdx >= 0 && e.pp != nil {
+			if data := e.pp.BlobStore.Get(obj.BlobIdx); len(data) > 0 {
+				mime := imageMIME(data)
+				encoded := base64.StdEncoding.EncodeToString(data)
+				e.sb.WriteString(fmt.Sprintf(
+					`<div style="%s"><img src="data:%s;base64,%s" style="width:100%%;height:100%%;object-fit:contain;" alt=""></div>`,
+					css.String(), mime, encoded,
+				))
+				break
+			}
+		}
+		// No image data — empty placeholder.
 		e.sb.WriteString(fmt.Sprintf(`<div style="%s"></div>`, css.String()))
+
+	case preview.ObjectTypeLine:
+		if obj.LineDiagonal {
+			// Render diagonal line as an inline SVG.
+			e.sb.WriteString(fmt.Sprintf(
+				`<div style="%s"><svg width="%.2f" height="%.2f" style="position:absolute;top:0;left:0;">`,
+				css.String(), w, h,
+			))
+			e.sb.WriteString(fmt.Sprintf(
+				`<line x1="0" y1="0" x2="%.2f" y2="%.2f" stroke="#000" stroke-width="1"/>`,
+				w, h,
+			))
+			e.sb.WriteString(`</svg></div>`)
+		} else {
+			// Horizontal or vertical: use border-bottom or border-left.
+			if h <= w {
+				css.WriteString("border-bottom:1px solid #000;height:1px;")
+			} else {
+				css.WriteString("border-left:1px solid #000;width:1px;")
+			}
+			e.sb.WriteString(fmt.Sprintf(`<div style="%s"></div>`, css.String()))
+		}
+
+	case preview.ObjectTypeShape:
+		switch obj.ShapeKind {
+		case 2: // Ellipse
+			css.WriteString("border:1px solid #000;border-radius:50%;")
+		case 1: // RoundRectangle
+			css.WriteString(fmt.Sprintf("border:1px solid #000;border-radius:%.2fpx;", obj.ShapeCurve*scale))
+		case 3: // Triangle — use inline SVG
+			e.sb.WriteString(fmt.Sprintf(`<div style="%s">`, css.String()))
+			e.sb.WriteString(fmt.Sprintf(
+				`<svg width="%.2f" height="%.2f" style="position:absolute;top:0;left:0;">`,
+				w, h,
+			))
+			e.sb.WriteString(fmt.Sprintf(
+				`<polygon points="%.2f,0 0,%.2f %.2f,%.2f" stroke="#000" stroke-width="1" fill="none"/>`,
+				w/2, h, w, h,
+			))
+			e.sb.WriteString(`</svg></div>`)
+			break
+		case 4: // Diamond — use inline SVG
+			e.sb.WriteString(fmt.Sprintf(`<div style="%s">`, css.String()))
+			e.sb.WriteString(fmt.Sprintf(
+				`<svg width="%.2f" height="%.2f" style="position:absolute;top:0;left:0;">`,
+				w, h,
+			))
+			e.sb.WriteString(fmt.Sprintf(
+				`<polygon points="%.2f,0 %.2f,%.2f %.2f,%.2f 0,%.2f" stroke="#000" stroke-width="1" fill="none"/>`,
+				w/2, w, h/2, w/2, h, h/2,
+			))
+			e.sb.WriteString(`</svg></div>`)
+			break
+		default: // Rectangle
+			css.WriteString("border:1px solid #000;")
+		}
+		if obj.ShapeKind != 3 && obj.ShapeKind != 4 {
+			e.sb.WriteString(fmt.Sprintf(`<div style="%s"></div>`, css.String()))
+		}
 
 	case preview.ObjectTypeCheckBox:
 		checked := ""
@@ -226,3 +299,31 @@ body { background: #e0e0e0; font-family: Arial, sans-serif; }
 func (e *Exporter) HTML() string {
 	return e.sb.String()
 }
+
+// imageMIME detects the MIME type from image magic bytes.
+// Falls back to "image/png" for unknown formats.
+func imageMIME(data []byte) string {
+	if len(data) >= 3 {
+		switch {
+		case data[0] == 0xFF && data[1] == 0xD8:
+			return "image/jpeg"
+		case data[0] == 0x47 && data[1] == 0x49 && data[2] == 0x46:
+			return "image/gif"
+		case len(data) >= 4 && data[0] == 0x42 && data[1] == 0x4D:
+			return "image/bmp"
+		case len(data) >= 4 && data[0] == 0x49 && data[1] == 0x49 && data[2] == 0x2A:
+			return "image/tiff"
+		case len(data) >= 4 && data[0] == 0x4D && data[1] == 0x4D && data[2] == 0x00:
+			return "image/tiff"
+		}
+	}
+	// Check for SVG (text-based).
+	if len(data) > 4 {
+		s := string(data[:min(len(data), 64)])
+		if strings.Contains(s, "<svg") || strings.Contains(s, "<?xml") {
+			return "image/svg+xml"
+		}
+	}
+	return "image/png" // default / PNG magic is 8 bytes, assume png
+}
+

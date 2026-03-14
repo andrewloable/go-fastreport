@@ -2,6 +2,7 @@ package engine
 
 import (
 	"github.com/andrewloable/go-fastreport/band"
+	"github.com/andrewloable/go-fastreport/data"
 	"github.com/andrewloable/go-fastreport/report"
 )
 
@@ -79,6 +80,20 @@ func (e *ReportEngine) RunDataBandFull(db *band.DataBand) error {
 		return nil
 	}
 
+	// Apply sort specs to in-memory data sources before iterating.
+	if sortSpecs := db.Sort(); len(sortSpecs) > 0 {
+		if sortable, ok := ds.(data.Sortable); ok {
+			specs := make([]data.SortSpec, len(sortSpecs))
+			for i, s := range sortSpecs {
+				specs[i] = data.SortSpec{
+					Column:     s.Column,
+					Descending: s.Order == band.SortOrderDescending,
+				}
+			}
+			sortable.SortRows(specs)
+		}
+	}
+
 	if err := ds.First(); err != nil {
 		return err
 	}
@@ -105,11 +120,22 @@ func (e *ReportEngine) RunDataBandFull(db *band.DataBand) error {
 		isLast := rowNo == total-1
 
 		rowNo++
+		e.rowNo = rowNo
 		db.SetRowNo(rowNo)
 		db.SetAbsRowNo(e.absRowNo)
 		e.absRowNo++
 		db.SetIsFirstRow(isFirst)
 		db.SetIsLastRow(isLast)
+		e.syncRowVariables()
+
+		// Inject the current data source row into the report's Calc evaluator.
+		// band.DataSource is a subset of data.DataSource; the concrete type
+		// (*data.BaseDataSource) satisfies data.DataSource.
+		if e.report != nil {
+			if fullDS, ok := ds.(data.DataSource); ok {
+				e.report.SetCalcContext(fullDS)
+			}
+		}
 
 		if isFirst && !headerShown {
 			if hdr := db.Header(); hdr != nil {

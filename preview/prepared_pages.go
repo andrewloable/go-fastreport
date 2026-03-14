@@ -5,6 +5,9 @@ package preview
 
 import (
 	"fmt"
+	"image/color"
+
+	"github.com/andrewloable/go-fastreport/style"
 )
 
 // AddPageAction controls behaviour when a new page is added.
@@ -169,16 +172,52 @@ type PreparedBand struct {
 	Objects []PreparedObject
 }
 
+// ObjectType distinguishes the kind of report object stored in PreparedObject.
+type ObjectType int
+
+const (
+	// ObjectTypeText is a TextObject or HtmlObject.
+	ObjectTypeText ObjectType = iota
+	// ObjectTypePicture is a PictureObject.
+	ObjectTypePicture
+	// ObjectTypeLine is a LineObject.
+	ObjectTypeLine
+	// ObjectTypeShape is a ShapeObject.
+	ObjectTypeShape
+	// ObjectTypeCheckBox is a CheckBoxObject.
+	ObjectTypeCheckBox
+	// ObjectTypeBarcode is a BarcodeObject.
+	ObjectTypeBarcode
+)
+
 // PreparedObject is a rendered report component snapshot.
 type PreparedObject struct {
 	// Name is the component name.
 	Name string
+	// ObjectType distinguishes text, picture, line, shape, checkbox, etc.
+	Kind ObjectType
 	// Left, Top, Width, Height are position and size in pixels.
 	Left, Top, Width, Height float32
 	// Text is the rendered text content (for text objects).
 	Text string
 	// BlobIdx is the blob store index for image objects (-1 = no blob).
 	BlobIdx int
+
+	// ── Style fields ────────────────────────────────────────────────────────
+	// Font describes the text font.
+	Font style.Font
+	// TextColor is the foreground colour for text.
+	TextColor color.RGBA
+	// FillColor is the background fill colour.
+	FillColor color.RGBA
+	// HorzAlign is the horizontal text alignment (0=Left,1=Center,2=Right,3=Justify).
+	HorzAlign int
+	// VertAlign is the vertical text alignment (0=Top,1=Center,2=Bottom).
+	VertAlign int
+	// Border holds the rendered border lines.
+	Border style.Border
+	// WordWrap indicates whether text wraps within the bounds.
+	WordWrap bool
 }
 
 // ── PreparedPage ──────────────────────────────────────────────────────────────

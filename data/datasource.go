@@ -2,7 +2,12 @@
 // It is the Go equivalent of FastReport.Data namespace.
 package data
 
-import "fmt"
+import (
+	"cmp"
+	"fmt"
+	"slices"
+	"strings"
+)
 
 // DataSource is the primary interface for all data providers.
 // It is the Go equivalent of DataSourceBase with a simplified Go-idiomatic API.
@@ -157,6 +162,71 @@ func (ds *BaseDataSource) Close() error {
 	ds.initialized = false
 	ds.currentRow = -1
 	return nil
+}
+
+// SortSpec describes one sort key for SortRows.
+type SortSpec struct {
+	Column     string
+	Descending bool
+}
+
+// SortRows reorders the internal rows slice according to specs.
+// Only string, int64, float64, and bool column values are compared;
+// other types fall back to fmt.Sprintf comparison.
+func (ds *BaseDataSource) SortRows(specs []SortSpec) {
+	if len(specs) == 0 {
+		return
+	}
+	slices.SortStableFunc(ds.rows, func(a, b map[string]any) int {
+		for _, spec := range specs {
+			av := a[spec.Column]
+			bv := b[spec.Column]
+			c := compareAny(av, bv)
+			if spec.Descending {
+				c = -c
+			}
+			if c != 0 {
+				return c
+			}
+		}
+		return 0
+	})
+}
+
+// Sortable is implemented by data sources that support in-memory row sorting.
+type Sortable interface {
+	SortRows(specs []SortSpec)
+}
+
+// compareAny compares two values of arbitrary type.
+func compareAny(a, b any) int {
+	switch av := a.(type) {
+	case int:
+		bv, _ := b.(int)
+		return cmp.Compare(av, bv)
+	case int64:
+		bv, _ := b.(int64)
+		return cmp.Compare(av, bv)
+	case float64:
+		bv, _ := b.(float64)
+		return cmp.Compare(av, bv)
+	case float32:
+		bv, _ := b.(float32)
+		return cmp.Compare(av, bv)
+	case string:
+		bv, _ := b.(string)
+		return strings.Compare(av, bv)
+	case bool:
+		if av == b.(bool) {
+			return 0
+		}
+		if !av {
+			return -1
+		}
+		return 1
+	default:
+		return strings.Compare(fmt.Sprintf("%v", a), fmt.Sprintf("%v", b))
+	}
 }
 
 // Verify BaseDataSource satisfies DataSource at compile time.

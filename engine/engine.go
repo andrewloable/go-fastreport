@@ -216,6 +216,9 @@ func (e *ReportEngine) runPhase1(resetDataState bool) error {
 	e.finalPass = false
 	e.startReportFired = false
 
+	// Seed system variables into the dictionary before data init.
+	e.ensureSystemVariables()
+
 	if resetDataState {
 		if err := e.initializeData(); err != nil {
 			return err

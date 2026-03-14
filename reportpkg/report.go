@@ -1,7 +1,10 @@
 package reportpkg
 
 import (
+	"github.com/andrewloable/go-fastreport/data"
+	"github.com/andrewloable/go-fastreport/preview"
 	"github.com/andrewloable/go-fastreport/report"
+	"github.com/andrewloable/go-fastreport/style"
 )
 
 // ReportInfo holds descriptive metadata about a report.
@@ -24,6 +27,12 @@ type Report struct {
 
 	// Pages is the ordered list of report page templates.
 	pages []*ReportPage
+
+	// Dictionary is the central registry for data sources, parameters, and totals.
+	dictionary *data.Dictionary
+
+	// Styles is the named-style registry for the report.
+	styles *style.StyleSheet
 
 	// Info holds descriptive metadata.
 	Info ReportInfo
@@ -50,15 +59,35 @@ type Report struct {
 	// When non-empty, the base report is loaded and merged into this report
 	// before the engine runs.
 	BaseReportPath string
+
+	// calcDS is the current-row data source set by SetCalcContext.
+	calcDS data.DataSource
+
+	// preparedPages holds the output from the last Prepare() call.
+	preparedPages *preview.PreparedPages
 }
 
 // NewReport creates a Report with defaults.
 func NewReport() *Report {
 	return &Report{
 		BaseObject:        *report.NewBaseObject(),
+		dictionary:        data.NewDictionary(),
+		styles:            style.NewStyleSheet(),
 		InitialPageNumber: 1,
 	}
 }
+
+// Dictionary returns the report's data dictionary.
+func (r *Report) Dictionary() *data.Dictionary { return r.dictionary }
+
+// SetDictionary replaces the report's data dictionary (useful for tests).
+func (r *Report) SetDictionary(d *data.Dictionary) { r.dictionary = d }
+
+// Styles returns the report's style sheet.
+func (r *Report) Styles() *style.StyleSheet { return r.styles }
+
+// SetStyles replaces the report's style sheet.
+func (r *Report) SetStyles(ss *style.StyleSheet) { r.styles = ss }
 
 // --- Pages ---
 

@@ -33,6 +33,9 @@ func (e *ReportEngine) startPage(pg *reportpkg.ReportPage, isFirst bool) {
 	e.totalPages++
 	e.pageNo++
 
+	// Keep system variables in sync.
+	e.syncPageVariables()
+
 	if e.preparedPages != nil {
 		e.preparedPages.AddPage(e.pageWidth, e.pageHeight, e.pageNo)
 	}

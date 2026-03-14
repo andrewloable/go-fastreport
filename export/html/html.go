@@ -10,6 +10,7 @@ import (
 
 	"github.com/andrewloable/go-fastreport/export"
 	"github.com/andrewloable/go-fastreport/preview"
+	"github.com/andrewloable/go-fastreport/style"
 )
 
 // Exporter produces HTML output from a PreparedPages collection.
@@ -94,16 +95,103 @@ func (e *Exporter) ExportBand(b *preview.PreparedBand) error {
 	label := export.HTMLString(b.Name)
 	e.sb.WriteString(fmt.Sprintf(
 		`<div class="band" data-name="%s" style="position:absolute;top:%.2fpx;`+
-			`left:0;right:0;height:%.2fpx;border-bottom:1px dotted #ccc;">`,
+			`left:0;right:0;height:%.2fpx;">`,
 		label, top, h,
 	))
-	if label != "" {
-		e.sb.WriteString(fmt.Sprintf(
-			`<span style="font-size:10px;color:#666;padding:2px;">%s</span>`, label,
-		))
+
+	// Render each child object.
+	for _, obj := range b.Objects {
+		e.renderObject(obj, scale)
 	}
+
 	e.sb.WriteString("</div>\n")
 	return nil
+}
+
+// renderObject writes an HTML element for a single PreparedObject.
+func (e *Exporter) renderObject(obj preview.PreparedObject, scale float32) {
+	left := obj.Left * scale
+	top := obj.Top * scale
+	w := obj.Width * scale
+	h := obj.Height * scale
+
+	// Build inline CSS.
+	var css strings.Builder
+	css.WriteString(fmt.Sprintf(
+		"position:absolute;left:%.2fpx;top:%.2fpx;width:%.2fpx;height:%.2fpx;overflow:hidden;",
+		left, top, w, h,
+	))
+
+	// Fill color.
+	if obj.FillColor.A > 0 {
+		css.WriteString(fmt.Sprintf(
+			"background-color:rgba(%d,%d,%d,%.2f);",
+			obj.FillColor.R, obj.FillColor.G, obj.FillColor.B,
+			float32(obj.FillColor.A)/255.0,
+		))
+	}
+
+	switch obj.Kind {
+	case preview.ObjectTypeText:
+		// Font styling.
+		font := obj.Font
+		css.WriteString(fmt.Sprintf("font-family:'%s';font-size:%.1fpt;", font.Name, font.Size))
+		if font.Style&style.FontStyleBold != 0 {
+			css.WriteString("font-weight:bold;")
+		}
+		if font.Style&style.FontStyleItalic != 0 {
+			css.WriteString("font-style:italic;")
+		}
+		if font.Style&style.FontStyleUnderline != 0 {
+			css.WriteString("text-decoration:underline;")
+		}
+		// Text color.
+		tc := obj.TextColor
+		css.WriteString(fmt.Sprintf("color:rgba(%d,%d,%d,%.2f);", tc.R, tc.G, tc.B, float32(tc.A)/255.0))
+		// Horizontal alignment.
+		switch obj.HorzAlign {
+		case 1:
+			css.WriteString("text-align:center;")
+		case 2:
+			css.WriteString("text-align:right;")
+		case 3:
+			css.WriteString("text-align:justify;")
+		default:
+			css.WriteString("text-align:left;")
+		}
+		// Vertical alignment via flex.
+		switch obj.VertAlign {
+		case 1:
+			css.WriteString("display:flex;align-items:center;")
+		case 2:
+			css.WriteString("display:flex;align-items:flex-end;")
+		}
+		if obj.WordWrap {
+			css.WriteString("word-wrap:break-word;white-space:normal;")
+		} else {
+			css.WriteString("white-space:nowrap;")
+		}
+
+		e.sb.WriteString(fmt.Sprintf(`<div style="%s">%s</div>`, css.String(), export.HTMLString(obj.Text)))
+
+	case preview.ObjectTypeLine, preview.ObjectTypeShape:
+		css.WriteString("border:1px solid #000;")
+		e.sb.WriteString(fmt.Sprintf(`<div style="%s"></div>`, css.String()))
+
+	case preview.ObjectTypeCheckBox:
+		checked := ""
+		if obj.Text == "true" {
+			checked = " checked"
+		}
+		e.sb.WriteString(fmt.Sprintf(
+			`<div style="%s"><input type="checkbox"%s disabled style="margin:auto;"></div>`,
+			css.String(), checked,
+		))
+
+	default:
+		// Unknown/unhandled type — render an empty placeholder.
+		e.sb.WriteString(fmt.Sprintf(`<div style="%s"></div>`, css.String()))
+	}
 }
 
 func (e *Exporter) ExportPageEnd(_ *preview.PreparedPage) error {

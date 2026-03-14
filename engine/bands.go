@@ -110,6 +110,7 @@ func (e *ReportEngine) AddBandToPreparedPages(b *band.BandBase) bool {
 		Top:    e.curY,
 		Height: height,
 	}
+	e.populateBandObjects(b, pb)
 	_ = e.preparedPages.AddBand(pb)
 	e.AdvanceY(height)
 	return true
@@ -176,6 +177,7 @@ func (e *ReportEngine) showFullBandOnce(b *band.BandBase) {
 			Top:    e.curY,
 			Height: height,
 		}
+		e.populateBandObjects(b, pb)
 		_ = e.preparedPages.AddBand(pb)
 	}
 	e.AdvanceY(height)

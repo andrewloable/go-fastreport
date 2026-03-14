@@ -1,6 +1,25 @@
 package band
 
-import "github.com/andrewloable/go-fastreport/report"
+import (
+	"fmt"
+	"strings"
+
+	"github.com/andrewloable/go-fastreport/report"
+)
+
+// ── Sort support ─────────────────────────────────────────────────────────────
+
+// SortSpec describes one sort column for a DataBand.
+// The Order field uses the same SortOrder enum as GroupHeaderBand:
+// SortOrderAscending (0), SortOrderDescending (1), SortOrderNone (2).
+type SortSpec struct {
+	// Column is the data-source column name.
+	Column string
+	// Order controls the direction of the sort (SortOrderAscending / SortOrderDescending).
+	Order SortOrder
+	// Expression is an optional expression (overrides Column when non-empty).
+	Expression string
+}
 
 // -----------------------------------------------------------------------
 // Thin band types that add no new fields
@@ -248,6 +267,8 @@ type DataBand struct {
 	dataSource DataSource
 	// maxRows limits printed rows (0 = unlimited).
 	maxRows int
+	// sort holds the ordered list of sort specifications.
+	sort []SortSpec
 }
 
 // NewDataBand creates a DataBand with defaults.
@@ -335,6 +356,15 @@ func (d *DataBand) Indent() float32 { return d.indent }
 // SetIndent sets the indentation.
 func (d *DataBand) SetIndent(v float32) { d.indent = v }
 
+// Sort returns the ordered list of sort specifications.
+func (d *DataBand) Sort() []SortSpec { return d.sort }
+
+// SetSort replaces the sort specification list.
+func (d *DataBand) SetSort(specs []SortSpec) { d.sort = specs }
+
+// AddSort appends a sort specification.
+func (d *DataBand) AddSort(spec SortSpec) { d.sort = append(d.sort, spec) }
+
 // KeepSummary returns whether the data band stays with its footer band.
 func (d *DataBand) KeepSummary() bool { return d.keepSummary }
 
@@ -348,6 +378,21 @@ func (d *DataBand) Serialize(w report.Writer) error {
 	}
 	if d.filter != "" {
 		w.WriteStr("Filter", d.filter)
+	}
+	if len(d.sort) > 0 {
+		parts := make([]string, 0, len(d.sort))
+		for _, s := range d.sort {
+			dir := "ASC"
+			if s.Order == SortOrderDescending {
+				dir = "DESC"
+			}
+			col := s.Column
+			if s.Expression != "" {
+				col = s.Expression
+			}
+			parts = append(parts, fmt.Sprintf("%s %s", col, dir))
+		}
+		w.WriteStr("Sort", strings.Join(parts, ";"))
 	}
 	if d.printIfDetailEmpty {
 		w.WriteBool("PrintIfDetailEmpty", true)
@@ -382,6 +427,21 @@ func (d *DataBand) Deserialize(r report.Reader) error {
 		return err
 	}
 	d.filter = r.ReadStr("Filter", "")
+	// Parse sort string "Col1 ASC;Col2 DESC"
+	if sortStr := r.ReadStr("Sort", ""); sortStr != "" {
+		for _, part := range strings.Split(sortStr, ";") {
+			part = strings.TrimSpace(part)
+			if part == "" {
+				continue
+			}
+			fields := strings.Fields(part)
+			spec := SortSpec{Column: fields[0]}
+			if len(fields) >= 2 && strings.EqualFold(fields[1], "DESC") {
+				spec.Order = SortOrderDescending
+			}
+			d.sort = append(d.sort, spec)
+		}
+	}
 	d.printIfDetailEmpty = r.ReadBool("PrintIfDetailEmpty", false)
 	d.printIfDSEmpty = r.ReadBool("PrintIfDatasourceEmpty", false)
 	d.keepTogether = r.ReadBool("KeepTogether", false)

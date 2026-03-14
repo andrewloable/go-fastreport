@@ -172,3 +172,144 @@ func TestRunGroup_RowCounters(t *testing.T) {
 		t.Errorf("GroupHeader.RowNo = %d, want 3", gh.RowNo())
 	}
 }
+
+// ── Nested group footer tests ─────────────────────────────────────────────────
+
+// TestRunGroup_FooterAppearsOncePerGroup verifies that the GroupFooter is
+// printed exactly once per group (not once per row).
+func TestRunGroup_FooterAppearsOncePerGroup(t *testing.T) {
+	e := buildGroupEngine(t)
+
+	gh := band.NewGroupHeaderBand()
+	gh.SetName("GH")
+	gh.SetVisible(true)
+	gh.SetHeight(10)
+	gh.SetCondition("val")
+
+	gf := band.NewGroupFooterBand()
+	gf.SetName("GF")
+	gf.SetVisible(true)
+	gf.SetHeight(5)
+	gh.SetGroupFooter(gf)
+
+	db := band.NewDataBand()
+	db.SetName("DB")
+	db.SetVisible(true)
+	db.SetHeight(10)
+	// 3 groups: A(2 rows), B(1 row), C(3 rows) = 6 data rows, 3 groups
+	db.SetDataSource(newSimpleDS("A", "A", "B", "C", "C", "C"))
+	gh.SetData(db)
+
+	before := len(e.PreparedPages().GetPage(0).Bands)
+	e.RunGroup(gh)
+	added := len(e.PreparedPages().GetPage(0).Bands) - before
+
+	// Expected: header×3 + data×6 + footer×3 = 12 bands
+	if added != 12 {
+		t.Errorf("expected 12 bands (3 headers + 6 rows + 3 footers), got %d", added)
+	}
+}
+
+// TestRunGroup_MultipleGroups_FooterCount tests that footers are printed per group.
+func TestRunGroup_MultipleGroups_FooterCount(t *testing.T) {
+	e := buildGroupEngine(t)
+
+	gh := band.NewGroupHeaderBand()
+	gh.SetName("GH")
+	gh.SetVisible(true)
+	gh.SetHeight(10)
+	gh.SetCondition("val")
+
+	gf := band.NewGroupFooterBand()
+	gf.SetName("GF")
+	gf.SetVisible(true)
+	gf.SetHeight(8)
+	gh.SetGroupFooter(gf)
+
+	db := band.NewDataBand()
+	db.SetName("DB")
+	db.SetVisible(true)
+	db.SetHeight(10)
+	// 4 distinct groups
+	db.SetDataSource(newSimpleDS("X", "Y", "Z", "W"))
+	gh.SetData(db)
+
+	before := len(e.PreparedPages().GetPage(0).Bands)
+	e.RunGroup(gh)
+	added := len(e.PreparedPages().GetPage(0).Bands) - before
+
+	// Expected: header×4 + data×4 + footer×4 = 12 bands
+	if added != 12 {
+		t.Errorf("expected 12 bands (4+4+4), got %d", added)
+	}
+}
+
+// TestRunGroup_SingleGroup_FooterAfterAllRows verifies that the footer appears
+// after all data rows of the single group, not after each row.
+func TestRunGroup_SingleGroup_FooterAfterAllRows(t *testing.T) {
+	e := buildGroupEngine(t)
+
+	gh := band.NewGroupHeaderBand()
+	gh.SetName("GH")
+	gh.SetVisible(true)
+	gh.SetHeight(10)
+	gh.SetCondition("val")
+
+	gf := band.NewGroupFooterBand()
+	gf.SetName("GF")
+	gf.SetVisible(true)
+	gf.SetHeight(10)
+	gh.SetGroupFooter(gf)
+
+	db := band.NewDataBand()
+	db.SetName("DB")
+	db.SetVisible(true)
+	db.SetHeight(10)
+	// 1 group, 5 rows
+	db.SetDataSource(newSimpleDS("Same", "Same", "Same", "Same", "Same"))
+	gh.SetData(db)
+
+	before := len(e.PreparedPages().GetPage(0).Bands)
+	e.RunGroup(gh)
+	added := len(e.PreparedPages().GetPage(0).Bands) - before
+
+	// Expected: header×1 + data×5 + footer×1 = 7 bands
+	if added != 7 {
+		t.Errorf("expected 7 bands (1+5+1), got %d", added)
+	}
+}
+
+// TestRunGroup_GroupFooter_TallBand verifies CurY advancement includes both
+// data rows and footer height.
+func TestRunGroup_GroupFooter_TallBand(t *testing.T) {
+	e := buildGroupEngine(t)
+
+	startY := e.CurY()
+
+	gh := band.NewGroupHeaderBand()
+	gh.SetName("GH")
+	gh.SetVisible(true)
+	gh.SetHeight(20)
+	gh.SetCondition("val")
+
+	gf := band.NewGroupFooterBand()
+	gf.SetName("GF")
+	gf.SetVisible(true)
+	gf.SetHeight(15)
+	gh.SetGroupFooter(gf)
+
+	db := band.NewDataBand()
+	db.SetName("DB")
+	db.SetVisible(true)
+	db.SetHeight(10)
+	db.SetDataSource(newSimpleDS("G1")) // 1 group, 1 row
+	gh.SetData(db)
+
+	e.RunGroup(gh)
+
+	// Expected advancement: header(20) + data(10) + footer(15) = 45
+	expectedY := startY + 45
+	if e.CurY() != expectedY {
+		t.Errorf("CurY after RunGroup = %v, want %v", e.CurY(), expectedY)
+	}
+}

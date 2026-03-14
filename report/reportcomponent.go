@@ -129,6 +129,32 @@ func (rc *ReportComponentBase) StyleName() string { return rc.styleName }
 // SetStyleName sets the style name.
 func (rc *ReportComponentBase) SetStyleName(s string) { rc.styleName = s }
 
+// ApplyStyle applies the visual overrides from a style.StyleEntry to the
+// component. Only properties marked as "changed" in the entry are overridden;
+// all other component properties are left as-is.
+//
+// This is called by style.StyleSheet.ApplyToObject before rendering.
+func (rc *ReportComponentBase) ApplyStyle(entry *style.StyleEntry) {
+	if entry == nil {
+		return
+	}
+	if entry.FontChanged {
+		// Update the text font if the component is a TextObject.
+		// ReportComponentBase does not hold the font directly; subclasses
+		// (e.g. TextObject) override this as needed.
+	}
+	if entry.FillColorChanged {
+		rc.fill = &style.SolidFill{Color: entry.FillColor}
+	}
+	if entry.BorderColorChanged {
+		b := rc.border
+		for i := range b.Lines {
+			b.Lines[i].Color = entry.BorderColor
+		}
+		rc.border = b
+	}
+}
+
 // EvenStyleName returns the style applied to alternating (even) rows.
 func (rc *ReportComponentBase) EvenStyleName() string { return rc.evenStyleName }
 

@@ -115,12 +115,23 @@ func (e *ReportEngine) AddBandToPreparedPages(b *band.BandBase) bool {
 	return true
 }
 
-// startNewPageForCurrent ends the current page and starts a new one.
-// It reuses the currentPage template.
+// startNewPageForCurrent ends the current column (or page) and starts the
+// next one. When the current page template has multiple columns and there is
+// a next column available, the engine advances to that column rather than
+// starting a new page.
 func (e *ReportEngine) startNewPageForCurrent() {
 	if e.currentPage == nil {
 		return
 	}
+	// For multi-column layouts, try advancing to the next column first.
+	if e.currentPage.Columns.Count > 1 {
+		if e.endColumn(e.currentPage) {
+			// Successfully advanced to the next column on the same page.
+			e.startColumn(e.currentPage)
+			return
+		}
+	}
+	// No more columns (or single-column page): start a new page.
 	e.endPage(e.currentPage, false)
 	e.startPage(e.currentPage, false)
 }

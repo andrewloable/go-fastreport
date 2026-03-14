@@ -93,6 +93,14 @@ func (e *ReportEngine) RunDataBandFull(db *band.DataBand) error {
 	rowNo := 0
 
 	for rowNo < total && !ds.EOF() {
+		// Evaluate filter expression; skip row when it evaluates to false.
+		if !e.evalBandFilter(db) {
+			if err := ds.Next(); err != nil {
+				break
+			}
+			continue
+		}
+
 		isFirst := rowNo == 0
 		isLast := rowNo == total-1
 

@@ -297,6 +297,9 @@ type DataBand struct {
 	indent               float32
 	keepSummary          bool
 
+	// dataSourceAlias is the name/alias from the FRX DataSource attribute.
+	// The engine resolves this to a live DataSource from the Dictionary at run time.
+	dataSourceAlias string
 	// dataSource is the data provider bound at runtime.
 	dataSource DataSource
 	// maxRows limits printed rows (0 = unlimited).
@@ -317,6 +320,10 @@ func NewDataBand() *DataBand {
 
 // TypeName returns the FRX element name for this band.
 func (*DataBand) TypeName() string { return "Data" }
+
+// DataSourceAlias returns the alias string from the FRX DataSource attribute.
+// The engine resolves this to a live DataSource from the report Dictionary.
+func (d *DataBand) DataSourceAlias() string { return d.dataSourceAlias }
 
 // DataSourceRef returns the bound data source (nil if not set).
 func (d *DataBand) DataSourceRef() DataSource { return d.dataSource }
@@ -467,6 +474,7 @@ func (d *DataBand) Deserialize(r report.Reader) error {
 	if err := d.BandBase.Deserialize(r); err != nil {
 		return err
 	}
+	d.dataSourceAlias = r.ReadStr("DataSource", "")
 	d.filter = r.ReadStr("Filter", "")
 	// Parse sort string "Col1 ASC;Col2 DESC"
 	if sortStr := r.ReadStr("Sort", ""); sortStr != "" {
@@ -491,5 +499,9 @@ func (d *DataBand) Deserialize(r report.Reader) error {
 	d.parentIDColumn = r.ReadStr("ParentIdColumn", "")
 	d.indent = r.ReadFloat("Indent", 0)
 	d.keepSummary = r.ReadBool("KeepSummary", false)
+	if n := r.ReadInt("Columns.Count", 0); n > 0 {
+		_ = d.columns.SetCount(n)
+	}
+	d.columns.Width = r.ReadFloat("Columns.Width", 0)
 	return nil
 }

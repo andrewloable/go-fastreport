@@ -9,9 +9,9 @@ import (
 	"os"
 
 	"github.com/andrewloable/go-fastreport/band"
+	jsondata "github.com/andrewloable/go-fastreport/data/json"
 	"github.com/andrewloable/go-fastreport/engine"
 	"github.com/andrewloable/go-fastreport/export/html"
-	jsondata "github.com/andrewloable/go-fastreport/data/json"
 	"github.com/andrewloable/go-fastreport/reportpkg"
 )
 
@@ -23,19 +23,10 @@ const sampleJSON = `[
   {"Name": "Eve",     "Department": "Engineering", "Salary": 88000}
 ]`
 
-// jsonBandDS adapts the JSON data source to the band.DataSource interface.
-type jsonBandDS struct {
-	ds *jsondata.JSONDataSource
-}
-
-func (d *jsonBandDS) RowCount() int { return d.ds.RowCount() }
-func (d *jsonBandDS) First() error  { return d.ds.First() }
-func (d *jsonBandDS) Next() error   { return d.ds.Next() }
-func (d *jsonBandDS) EOF() bool     { return d.ds.EOF() }
-func (d *jsonBandDS) GetValue(col string) (any, error) { return d.ds.GetValue(col) }
-
 func main() {
 	// 1. Load and initialise the JSON data source.
+	// JSONDataSource embeds data.BaseDataSource so it satisfies band.DataSource
+	// directly — no adapter wrapper needed.
 	ds := jsondata.New("employees")
 	ds.SetJSON(sampleJSON)
 	if err := ds.Init(); err != nil {
@@ -61,7 +52,7 @@ func main() {
 	db.SetName("EmployeeBand")
 	db.SetHeight(20)
 	db.SetVisible(true)
-	db.SetDataSource(&jsonBandDS{ds: ds})
+	db.SetDataSource(ds)
 	pg.AddBand(db)
 
 	pftr := band.NewPageFooterBand()

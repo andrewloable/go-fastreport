@@ -56,6 +56,8 @@ func init() {
 		{"CheckBoxObject", func() report.Base { return object.NewCheckBoxObject() }},
 		{"ContainerObject", func() report.Base { return object.NewContainerObject() }},
 		{"SubreportObject", func() report.Base { return object.NewSubreportObject() }},
+		{"BarcodeObject", func() report.Base { return object.NewBarcodeObject() }},
+		{"ZipCodeObject", func() report.Base { return object.NewZipCodeObject() }},
 	}
 
 	for _, reg := range regs {

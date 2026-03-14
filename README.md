@@ -55,43 +55,33 @@ go test -bench=. ./engine/...
 
 ## Quick Start
 
-Working examples are in the [`examples/`](examples/) directory:
+The most common workflow is to design a report in FastReport .NET, save it as an `.frx`
+file, then load it at runtime and bind a JSON data source. Here is a complete example:
 
-| Example | Description |
-|---------|-------------|
-| [`examples/simple_html_report`](examples/simple_html_report) | Build a report in code and export to HTML |
-| [`examples/json_datasource`](examples/json_datasource) | JSON data source with a DataBand |
-| [`examples/xml_datasource`](examples/xml_datasource) | XML data source |
-| [`examples/frx_json`](examples/frx_json) | Load an FRX file and bind a JSON data source |
-
-Run an example:
-
-```bash
-go run ./examples/simple_html_report/
-go run ./examples/frx_json/
-```
-
-### Load an FRX file with a JSON data source
-
-This example loads a report definition from an `.frx` file, binds employee JSON data
-to the DataBand at runtime, runs the engine, and exports the result to HTML.
-
-**`examples/frx_json/report.frx`** (the report template):
+**`report.frx`** — report template with parameters and data fields:
 
 ```xml
 <?xml version="1.0" encoding="utf-8"?>
 <Report ReportName="EmployeeList">
   <ReportPage Name="Page1" PaperWidth="210" PaperHeight="297"
               LeftMargin="10" TopMargin="10" RightMargin="10" BottomMargin="10">
-    <PageHeader Name="PageHeader1" Height="30" Visible="true">
-      <TextObject Name="Title" Left="0" Top="5" Width="190" Height="20"
-                  Text="Employee Directory" Font.Bold="true" HorzAlign="Center"/>
+
+    <PageHeader Name="PageHeader1" Height="40" Visible="true">
+      <!-- [ReportTitle] and [FilterDept] are report variables (parameters) -->
+      <TextObject Name="Title" Left="0" Top="2" Width="190" Height="14"
+                  Text="[ReportTitle]" Font.Bold="true" HorzAlign="Center"/>
+      <TextObject Name="Dept" Left="0" Top="20" Width="190" Height="12"
+                  Text="Department: [FilterDept]" HorzAlign="Center"/>
     </PageHeader>
-    <Data Name="DataBand1" Height="15" Visible="true">
+
+    <!-- DataSource="employees" matches the alias given to jsondata.New("employees") -->
+    <Data Name="DataBand1" Height="15" Visible="true" DataSource="employees">
+      <!-- [Name], [Department], [Salary] come from the JSON data source -->
       <TextObject Name="NameText"   Left="0"   Top="2" Width="80"  Height="11" Text="[Name]"/>
       <TextObject Name="DeptText"   Left="85"  Top="2" Width="60"  Height="11" Text="[Department]"/>
       <TextObject Name="SalaryText" Left="150" Top="2" Width="40"  Height="11" Text="[Salary]" HorzAlign="Right"/>
     </Data>
+
     <PageFooter Name="PageFooter1" Height="20" Visible="true">
       <TextObject Name="PageNo" Left="0" Top="5" Width="190" Height="11"
                   Text="Page [PageNumber]" HorzAlign="Right"/>
@@ -100,25 +90,7 @@ to the DataBand at runtime, runs the engine, and exports the result to HTML.
 </Report>
 ```
 
-**`examples/frx_json/report.frx`** (excerpt showing variable references):
-
-```xml
-<PageHeader Name="PageHeader1" Height="40" Visible="true">
-  <!-- [ReportTitle] and [FilterDept] are report variables (parameters) -->
-  <TextObject Name="Title" Left="0" Top="2" Width="190" Height="14"
-              Text="[ReportTitle]" Font.Bold="true" HorzAlign="Center"/>
-  <TextObject Name="Dept" Left="0" Top="20" Width="190" Height="12"
-              Text="Department: [FilterDept]" HorzAlign="Center"/>
-</PageHeader>
-<Data Name="DataBand1" Height="15" Visible="true">
-  <!-- [Name], [Department], [Salary] come from the JSON data source -->
-  <TextObject Name="NameText"   Left="0"   Width="80"  Height="11" Text="[Name]"/>
-  <TextObject Name="DeptText"   Left="85"  Width="60"  Height="11" Text="[Department]"/>
-  <TextObject Name="SalaryText" Left="150" Width="40"  Height="11" Text="[Salary]" HorzAlign="Right"/>
-</Data>
-```
-
-**`examples/frx_json/main.go`**:
+**`main.go`**:
 
 ```go
 package main
@@ -127,7 +99,6 @@ import (
     "fmt"
     "os"
 
-    "github.com/andrewloable/go-fastreport/band"
     "github.com/andrewloable/go-fastreport/data"
     jsondata "github.com/andrewloable/go-fastreport/data/json"
     "github.com/andrewloable/go-fastreport/engine"
@@ -144,47 +115,35 @@ const employeeJSON = `[
 func main() {
     // 1. Load the FRX report definition.
     r := reportpkg.NewReport()
-    if err := r.Load("examples/frx_json/report.frx"); err != nil {
+    if err := r.Load("report.frx"); err != nil {
         fmt.Fprintf(os.Stderr, "load FRX: %v\n", err)
         os.Exit(1)
     }
 
-    // 2. Set report variables (parameters).
-    // Parameters are referenced in the FRX with bracket syntax: [ParamName].
-    dict := data.NewDictionary()
-    dict.AddParameter(&data.Parameter{Name: "ReportTitle", Value: "Employee Directory"})
-    dict.AddParameter(&data.Parameter{Name: "FilterDept", Value: "All Departments"})
-    r.SetDictionary(dict)
-
-    // 3. Create and initialise the JSON data source.
-    // JSONDataSource embeds data.BaseDataSource so it satisfies both
-    // band.DataSource (iteration) and data.DataSource (expression evaluation).
-    // The engine calls SetCalcContext(ds) per row so [Name], [Department],
-    // [Salary] resolve to the current JSON row's field values.
-    ds := jsondata.New("employees")
+    // 2. Build the Dictionary: parameters (report variables) + data source.
+    // The engine resolves [ParamName] bracket expressions from parameters and
+    // resolves the DataBand's DataSource attribute by alias from the Dictionary —
+    // matching how FastReport .NET wires data at run time automatically.
+    ds := jsondata.New("employees") // alias must match DataSource="employees" in FRX
     ds.SetJSON(employeeJSON)
     if err := ds.Init(); err != nil {
         fmt.Fprintf(os.Stderr, "data source init: %v\n", err)
         os.Exit(1)
     }
 
-    // 4. Bind the data source to every DataBand in the report.
-    for _, pg := range r.Pages() {
-        for _, b := range pg.Bands() {
-            if db, ok := b.(*band.DataBand); ok {
-                db.SetDataSource(ds)
-            }
-        }
-    }
+    dict := r.Dictionary()
+    dict.AddParameter(&data.Parameter{Name: "ReportTitle", Value: "Employee Directory"})
+    dict.AddParameter(&data.Parameter{Name: "FilterDept", Value: "All Departments"})
+    dict.AddDataSource(ds) // engine binds this to DataBand by alias at run time
 
-    // 5. Run the engine.
+    // 3. Run the engine.
     e := engine.New(r)
     if err := e.Run(engine.DefaultRunOptions()); err != nil {
         fmt.Fprintf(os.Stderr, "engine run: %v\n", err)
         os.Exit(1)
     }
 
-    // 6. Export to HTML.
+    // 4. Export to HTML.
     exp := html.NewExporter()
     exp.Title = r.Info.Name
     if err := exp.Export(e.PreparedPages(), os.Stdout); err != nil {
@@ -194,82 +153,18 @@ func main() {
 }
 ```
 
-### Simple list report (in-memory data)
+A runnable version of this example lives in [`examples/frx_json/`](examples/frx_json).
+Other working examples:
 
-```go
-package main
+| Example | Description |
+|---------|-------------|
+| [`examples/frx_json`](examples/frx_json) | Load FRX + JSON data source + report variables |
+| [`examples/simple_html_report`](examples/simple_html_report) | Build a report entirely in code |
+| [`examples/json_datasource`](examples/json_datasource) | JSON data source standalone usage |
+| [`examples/xml_datasource`](examples/xml_datasource) | XML data source standalone usage |
 
-import (
-    "os"
-
-    "github.com/andrewloable/go-fastreport/band"
-    "github.com/andrewloable/go-fastreport/engine"
-    "github.com/andrewloable/go-fastreport/export/html"
-    "github.com/andrewloable/go-fastreport/reportpkg"
-)
-
-// salesDS is a minimal in-memory DataSource.
-type salesDS struct {
-    rows []map[string]any
-    pos  int
-}
-
-func (d *salesDS) RowCount() int { return len(d.rows) }
-func (d *salesDS) First() error  { d.pos = 0; return nil }
-func (d *salesDS) Next() error   { d.pos++; return nil }
-func (d *salesDS) EOF() bool     { return d.pos >= len(d.rows) }
-func (d *salesDS) GetValue(col string) (any, error) {
-    if d.pos < 0 || d.pos >= len(d.rows) {
-        return nil, nil
-    }
-    return d.rows[d.pos][col], nil
-}
-
-func main() {
-    // 1. Build report definition.
-    r := reportpkg.NewReport()
-    pg := reportpkg.NewReportPage()
-    r.AddPage(pg)
-
-    // Page header.
-    hdr := band.NewPageHeaderBand()
-    hdr.SetName("PageHeader")
-    hdr.SetHeight(40)
-    hdr.SetVisible(true)
-    pg.SetPageHeader(hdr)
-
-    // Data band.
-    db := band.NewDataBand()
-    db.SetName("DataBand")
-    db.SetHeight(20)
-    db.SetVisible(true)
-    db.SetDataSource(&salesDS{rows: []map[string]any{
-        {"Product": "Apple",  "Qty": 10},
-        {"Product": "Banana", "Qty": 5},
-        {"Product": "Cherry", "Qty": 20},
-    }})
-    pg.AddBand(db)
-
-    // Page footer.
-    ftr := band.NewPageFooterBand()
-    ftr.SetName("PageFooter")
-    ftr.SetHeight(30)
-    ftr.SetVisible(true)
-    pg.SetPageFooter(ftr)
-
-    // 2. Run the engine.
-    e := engine.New(r)
-    if err := e.Run(engine.DefaultRunOptions()); err != nil {
-        panic(err)
-    }
-
-    // 3. Export to HTML.
-    exp := html.NewExporter()
-    exp.Title = "Sales Report"
-    if err := exp.Export(e.PreparedPages(), os.Stdout); err != nil {
-        panic(err)
-    }
-}
+```bash
+go run ./examples/frx_json/
 ```
 
 ---
@@ -304,40 +199,56 @@ func main() {
 
 ## Data Sources
 
+All data source types (`JSONDataSource`, `XMLDataSource`, `CSVDataSource`, `SQLDataSource`) embed `data.BaseDataSource` and satisfy `band.DataSource` directly — no adapter wrapper is needed.
+
+### Binding to a report (FRX workflow)
+
+Register the data source in the report Dictionary. The engine matches it to DataBand elements by alias at run time:
+
+```go
+ds := jsondata.New("products") // alias matches DataSource="products" in the FRX DataBand
+ds.SetJSON(productsJSON)
+ds.Init()
+
+r.Dictionary().AddDataSource(ds)
+// engine resolves DataBand.DataSource="products" → ds automatically
+```
+
+### Binding programmatically (code-built reports)
+
+When building a report in code, assign the data source directly to the DataBand:
+
+```go
+db := band.NewDataBand()
+db.SetDataSource(ds) // ds is any type satisfying band.DataSource
+```
+
 ### JSON
 
 ```go
-import "github.com/andrewloable/go-fastreport/data/json"
+import jsondata "github.com/andrewloable/go-fastreport/data/json"
 
-ds := json.New("customers")
+ds := jsondata.New("customers")
 ds.SetJSON(`[{"Name":"Alice","Age":30},{"Name":"Bob","Age":25}]`)
 if err := ds.Init(); err != nil { ... }
-
-ds.First()
-for !ds.EOF() {
-    name, _ := ds.GetValue("Name")
-    fmt.Println(name)
-    ds.Next()
-}
 ```
 
 ### XML
 
 ```go
-import "github.com/andrewloable/go-fastreport/data/xml"
+import xmldata "github.com/andrewloable/go-fastreport/data/xml"
 
-ds := xml.New("orders")
+ds := xmldata.New("orders")
 ds.SetXML(`<Orders><Item Product="Apple" Qty="5"/><Item Product="Banana" Qty="3"/></Orders>`)
-ds.SetRootPath("") // root element is the container
 if err := ds.Init(); err != nil { ... }
 ```
 
 ### CSV
 
 ```go
-import "github.com/andrewloable/go-fastreport/data/csv"
+import csvdata "github.com/andrewloable/go-fastreport/data/csv"
 
-ds := csv.New("sales")
+ds := csvdata.New("sales")
 ds.SetFilePath("sales.csv")
 ds.HasHeader = true
 if err := ds.Init(); err != nil { ... }
@@ -513,12 +424,13 @@ This is an active port of FastReport .NET Open Source. The following are functio
 
 - Core engine: data iteration, band rendering, page breaks, multi-column layouts, groups
 - Data binding: JSON, XML, CSV, SQL, and custom in-memory data sources
+- Dictionary-based DataSource resolution: `DataSource="alias"` in FRX DataBand elements resolved automatically from the report Dictionary at run time — matching the FastReport .NET model
 - FRX serialization: read and write `.frx` files including real FastReport sample files
 - Export: HTML, PDF (structural), PNG image
 - Aggregate totals: Sum, Count, Average, Min, Max with per-group reset
 - CanGrow / CanShrink: dynamic band height based on text content
 - Expression evaluation: `[DataSource.Field]`, `[Parameter]`, `[SystemVariable]` syntax
-- Smoke tested against 35+ real FastReport `.frx` sample files
+- Smoke tested against 50+ real FastReport `.frx` sample files
 
 Features under development:
 - Full conditional formatting (HighlightCondition evaluation)

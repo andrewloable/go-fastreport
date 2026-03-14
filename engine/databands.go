@@ -73,7 +73,22 @@ func (e *ReportEngine) RunDataBandRows(db *band.DataBand, rows int) {
 //
 // This is the primary entry point used by RunBands when a DataBand has a DataSource.
 func (e *ReportEngine) RunDataBandFull(db *band.DataBand) error {
+	// Resolve data source from Dictionary by alias if not already bound directly.
+	// In FastReport .NET the FRX stores the DataSource attribute as an alias name
+	// and the engine resolves it from the Dictionary at run time automatically.
 	ds := db.DataSourceRef()
+	if ds == nil {
+		if alias := db.DataSourceAlias(); alias != "" {
+			if dict := e.report.Dictionary(); dict != nil {
+				if resolved := dict.FindDataSourceByAlias(alias); resolved != nil {
+					if bandDS, ok := resolved.(band.DataSource); ok {
+						db.SetDataSource(bandDS)
+						ds = bandDS
+					}
+				}
+			}
+		}
+	}
 	if ds == nil {
 		// No data source — render the band once as a static (no-iteration) band.
 		e.ShowFullBand(&db.BandBase)

@@ -5,7 +5,7 @@
       <TextObject Name="Title" Left="0" Top="2" Width="190" Height="14" Text="[ReportTitle]" Font.Bold="true" HorzAlign="Center"/>
       <TextObject Name="Dept" Left="0" Top="20" Width="190" Height="12" Text="Department: [FilterDept]" HorzAlign="Center"/>
     </PageHeader>
-    <Data Name="DataBand1" Height="15" Visible="true">
+    <Data Name="DataBand1" Height="15" Visible="true" DataSource="employees">
       <TextObject Name="NameText"   Left="0"   Top="2" Width="80"  Height="11" Text="[Name]"/>
       <TextObject Name="DeptText"   Left="85"  Top="2" Width="60"  Height="11" Text="[Department]"/>
       <TextObject Name="SalaryText" Left="150" Top="2" Width="40"  Height="11" Text="[Salary]" HorzAlign="Right"/>

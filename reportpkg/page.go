@@ -408,5 +408,7 @@ func (p *ReportPage) Deserialize(r report.Reader) error {
 	p.StartPageEvent = r.ReadStr("StartPageEvent", "")
 	p.FinishPageEvent = r.ReadStr("FinishPageEvent", "")
 	p.ManualBuildEvent = r.ReadStr("ManualBuildEvent", "")
+	p.Columns.Count = r.ReadInt("Columns.Count", 0)
+	p.Columns.Width = r.ReadFloat("Columns.Width", 0)
 	return nil
 }

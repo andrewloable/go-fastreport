@@ -9,9 +9,9 @@ import (
 	"os"
 
 	"github.com/andrewloable/go-fastreport/band"
+	xmldata "github.com/andrewloable/go-fastreport/data/xml"
 	"github.com/andrewloable/go-fastreport/engine"
 	"github.com/andrewloable/go-fastreport/export/html"
-	xmldata "github.com/andrewloable/go-fastreport/data/xml"
 	"github.com/andrewloable/go-fastreport/reportpkg"
 )
 
@@ -23,19 +23,10 @@ const catalogXML = `<?xml version="1.0" encoding="utf-8"?>
   <Book ISBN="978-1-593-27584-6" Title="The Linux Command Line"        Author="William Shotts"          Year="2012"/>
 </Catalog>`
 
-// xmlBandDS adapts the XML data source to the band.DataSource interface.
-type xmlBandDS struct {
-	ds *xmldata.XMLDataSource
-}
-
-func (d *xmlBandDS) RowCount() int                      { return d.ds.RowCount() }
-func (d *xmlBandDS) First() error                       { return d.ds.First() }
-func (d *xmlBandDS) Next() error                        { return d.ds.Next() }
-func (d *xmlBandDS) EOF() bool                          { return d.ds.EOF() }
-func (d *xmlBandDS) GetValue(col string) (any, error)   { return d.ds.GetValue(col) }
-
 func main() {
 	// 1. Load and initialise the XML data source.
+	// XMLDataSource embeds data.BaseDataSource so it satisfies band.DataSource
+	// directly — no adapter wrapper needed.
 	ds := xmldata.New("books")
 	ds.SetXML(catalogXML)
 	// The root element is <Catalog>; row elements are <Book>.
@@ -63,7 +54,7 @@ func main() {
 	db.SetName("BookBand")
 	db.SetHeight(20)
 	db.SetVisible(true)
-	db.SetDataSource(&xmlBandDS{ds: ds})
+	db.SetDataSource(ds)
 	pg.AddBand(db)
 
 	// 3. Run engine.

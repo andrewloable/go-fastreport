@@ -5,8 +5,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/loabletech/go-fastreport/report"
-	"github.com/loabletech/go-fastreport/serial"
+	"github.com/andrewloable/go-fastreport/report"
+	"github.com/andrewloable/go-fastreport/serial"
 )
 
 // --- stub report.Base implementation ---

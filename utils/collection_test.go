@@ -3,7 +3,7 @@ package utils_test
 import (
 	"testing"
 
-	"github.com/loabletech/go-fastreport/utils"
+	"github.com/andrewloable/go-fastreport/utils"
 )
 
 func eqInt(a, b int) bool { return a == b }

@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/loabletech/go-fastreport/utils"
+	"github.com/andrewloable/go-fastreport/utils"
 )
 
 func TestDuplicateNameError(t *testing.T) {

@@ -6,7 +6,7 @@ import (
 	"sort"
 	"sync"
 
-	"github.com/loabletech/go-fastreport/report"
+	"github.com/andrewloable/go-fastreport/report"
 )
 
 // Factory is a function that creates a new zero-value report object.

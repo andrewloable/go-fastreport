@@ -1,0 +1,214 @@
+package style
+
+import "image/color"
+
+// FillType identifies which concrete fill implementation is in use.
+type FillType string
+
+const (
+	// FillTypeSolid is a plain single-colour fill.
+	FillTypeSolid FillType = "Solid"
+	// FillTypeLinear is a linear gradient fill.
+	FillTypeLinear FillType = "Linear"
+	// FillTypeGlass is a glass-effect fill.
+	FillTypeGlass FillType = "Glass"
+	// FillTypeHatch is a hatch-pattern fill.
+	FillTypeHatch FillType = "Hatch"
+	// FillTypeNone represents no fill (fully transparent).
+	FillTypeNone FillType = "None"
+)
+
+// Fill is the base interface for all fill types.
+// It is the Go equivalent of FastReport.FillBase.
+type Fill interface {
+	// FillType returns the concrete fill variant.
+	FillType() FillType
+	// Clone returns a deep copy of the fill.
+	Clone() Fill
+	// IsTransparent reports whether the fill produces no visible colour.
+	IsTransparent() bool
+}
+
+// ---------------------------------------------------------------------------
+// SolidFill
+// ---------------------------------------------------------------------------
+
+// SolidFill fills a region with a single, uniform colour.
+// It is the Go equivalent of FastReport.SolidFill.
+type SolidFill struct {
+	// Color is the fill colour.
+	Color color.RGBA
+}
+
+// NewSolidFill returns a SolidFill with the given colour.
+func NewSolidFill(c color.RGBA) *SolidFill {
+	return &SolidFill{Color: c}
+}
+
+// FillType implements Fill.
+func (f *SolidFill) FillType() FillType { return FillTypeSolid }
+
+// Clone implements Fill.
+func (f *SolidFill) Clone() Fill { return &SolidFill{Color: f.Color} }
+
+// IsTransparent implements Fill; a SolidFill is transparent when alpha == 0.
+func (f *SolidFill) IsTransparent() bool { return f.Color.A == 0 }
+
+// ---------------------------------------------------------------------------
+// LinearGradientFill
+// ---------------------------------------------------------------------------
+
+// LinearGradientFill fills a region with a linear colour gradient.
+// It is the Go equivalent of FastReport.LinearGradientFill.
+type LinearGradientFill struct {
+	// StartColor is the gradient's start colour.
+	StartColor color.RGBA
+	// EndColor is the gradient's end colour.
+	EndColor color.RGBA
+	// Angle is the gradient direction in degrees (0 = left to right).
+	Angle int
+	// Focus is the normalised position of the gradient centre (0..1).
+	Focus float32
+	// Contrast controls how sharply the gradient transitions (0..1).
+	Contrast float32
+}
+
+// NewLinearGradientFill returns a LinearGradientFill from start to end colour
+// with all other settings at their FastReport defaults (angle 0, focus 0,
+// contrast 100 mapped to 1.0 here since we use a 0..1 scale).
+func NewLinearGradientFill(start, end color.RGBA) *LinearGradientFill {
+	return &LinearGradientFill{
+		StartColor: start,
+		EndColor:   end,
+		Angle:      0,
+		Focus:      0,
+		Contrast:   1,
+	}
+}
+
+// FillType implements Fill.
+func (f *LinearGradientFill) FillType() FillType { return FillTypeLinear }
+
+// Clone implements Fill.
+func (f *LinearGradientFill) Clone() Fill {
+	c := *f
+	return &c
+}
+
+// IsTransparent implements Fill; transparent only when both colours have
+// alpha == 0, matching FastReport.LinearGradientFill.IsTransparent.
+func (f *LinearGradientFill) IsTransparent() bool {
+	return f.StartColor.A == 0 && f.EndColor.A == 0
+}
+
+// ---------------------------------------------------------------------------
+// GlassFill
+// ---------------------------------------------------------------------------
+
+// GlassFill produces a glass-like sheen effect over a base colour.
+// It is the Go equivalent of FastReport.GlassFill.
+type GlassFill struct {
+	// Color is the base fill colour.
+	Color color.RGBA
+	// Blend controls the white highlight strength (0..1). Default 0.2.
+	Blend float32
+	// Hatch enables a diagonal hatch overlay. Default true.
+	Hatch bool
+}
+
+// NewGlassFill returns a GlassFill with FastReport defaults
+// (blend 0.2, hatch enabled).
+func NewGlassFill(c color.RGBA) *GlassFill {
+	return &GlassFill{
+		Color: c,
+		Blend: 0.2,
+		Hatch: true,
+	}
+}
+
+// FillType implements Fill.
+func (f *GlassFill) FillType() FillType { return FillTypeGlass }
+
+// Clone implements Fill.
+func (f *GlassFill) Clone() Fill {
+	c := *f
+	return &c
+}
+
+// IsTransparent implements Fill.
+func (f *GlassFill) IsTransparent() bool { return f.Color.A == 0 }
+
+// ---------------------------------------------------------------------------
+// HatchStyle
+// ---------------------------------------------------------------------------
+
+// HatchStyle enumerates the available hatch patterns.
+// The values mirror the most common System.Drawing.Drawing2D.HatchStyle entries
+// used by FastReport.
+type HatchStyle int
+
+const (
+	// HatchHorizontal draws horizontal lines.
+	HatchHorizontal HatchStyle = iota
+	// HatchVertical draws vertical lines.
+	HatchVertical
+	// HatchDiagonal1 draws forward-diagonal lines (/).
+	HatchDiagonal1
+	// HatchDiagonal2 draws backward-diagonal lines (\).
+	HatchDiagonal2
+	// HatchCross draws a cross (horizontal + vertical) pattern.
+	HatchCross
+	// HatchDiagonalCross draws a diagonal cross (X) pattern.
+	HatchDiagonalCross
+)
+
+// ---------------------------------------------------------------------------
+// HatchFill
+// ---------------------------------------------------------------------------
+
+// HatchFill fills a region with a repeating hatch pattern.
+// It is the Go equivalent of FastReport.HatchFill.
+type HatchFill struct {
+	// ForeColor is the foreground (line) colour.
+	ForeColor color.RGBA
+	// BackColor is the background colour between the lines.
+	BackColor color.RGBA
+	// Style selects the hatch pattern.
+	Style HatchStyle
+}
+
+// NewHatchFill returns a HatchFill with the given colours and pattern.
+func NewHatchFill(fore, back color.RGBA, style HatchStyle) *HatchFill {
+	return &HatchFill{ForeColor: fore, BackColor: back, Style: style}
+}
+
+// FillType implements Fill.
+func (f *HatchFill) FillType() FillType { return FillTypeHatch }
+
+// Clone implements Fill.
+func (f *HatchFill) Clone() Fill {
+	c := *f
+	return &c
+}
+
+// IsTransparent implements Fill; transparent when both colours have alpha == 0.
+func (f *HatchFill) IsTransparent() bool {
+	return f.ForeColor.A == 0 && f.BackColor.A == 0
+}
+
+// ---------------------------------------------------------------------------
+// NoneFill
+// ---------------------------------------------------------------------------
+
+// NoneFill represents the absence of any fill (fully transparent).
+// It is the Go equivalent of using no fill in FastReport.
+type NoneFill struct{}
+
+// FillType implements Fill.
+func (f *NoneFill) FillType() FillType { return FillTypeNone }
+
+// Clone implements Fill.
+func (f *NoneFill) Clone() Fill { return &NoneFill{} }
+
+// IsTransparent implements Fill; always true.
+func (f *NoneFill) IsTransparent() bool { return true }

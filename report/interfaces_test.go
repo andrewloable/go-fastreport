@@ -3,7 +3,7 @@ package report_test
 import (
 	"testing"
 
-	"github.com/loabletech/go-fastreport/report"
+	"github.com/andrewloable/go-fastreport/report"
 )
 
 // --- Mock implementations ---

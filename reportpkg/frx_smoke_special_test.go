@@ -7,11 +7,30 @@ import (
 	"testing"
 	"time"
 
+	"github.com/andrewloable/go-fastreport/object"
 	"github.com/andrewloable/go-fastreport/reportpkg"
 )
 
+func TestFRXSmoke_SVG(t *testing.T) {
+	r := loadFRXSmoke(t, "SVG.frx")
+	if n := countObjectsOfType[*object.SVGObject](r); n == 0 {
+		t.Error("expected at least one SVGObject in SVG.frx")
+	}
+}
+
+func TestFRXSmoke_RichText_Objects(t *testing.T) {
+	r := loadFRXSmoke(t, "RichText.frx")
+	if n := countObjectsOfType[*object.RichObject](r); n == 0 {
+		t.Error("expected at least one RichObject in RichText.frx")
+	}
+}
+
 func TestFRXSmoke_CellularText(t *testing.T) {
-	loadFRXSmoke(t, "CellularText.frx")
+	r := loadFRXSmoke(t, "CellularText.frx")
+	n := countObjectsOfType[*object.CellularTextObject](r)
+	if n == 0 {
+		t.Error("expected at least one CellularTextObject in CellularText.frx")
+	}
 }
 
 func TestFRXSmoke_RichText(t *testing.T) {

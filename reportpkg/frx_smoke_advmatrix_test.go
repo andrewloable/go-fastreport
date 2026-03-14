@@ -1,16 +1,20 @@
 package reportpkg_test
 
 // Smoke tests for Advanced Matrix FRX reports.
-// AdvMatrix reports use MatrixObject which is not yet registered in the serial
-// registry; these tests verify the files load without panic and have at least
-// one page.
+// AdvMatrixObject is registered in the serial registry and deserialized from FRX files.
+// These tests verify that the FRX files load without panic and have at least one page.
 
 import (
 	"testing"
+
+	"github.com/andrewloable/go-fastreport/object"
 )
 
 func TestFRXSmoke_AdvMatrixCollapseSort(t *testing.T) {
-	loadFRXSmoke(t, "AdvMatrix - Collapse + Sort.frx")
+	r := loadFRXSmoke(t, "AdvMatrix - Collapse + Sort.frx")
+	if n := countObjectsOfType[*object.AdvMatrixObject](r); n == 0 {
+		t.Error("expected at least one AdvMatrixObject in AdvMatrix - Collapse + Sort.frx")
+	}
 }
 
 func TestFRXSmoke_AdvMatrixItemsComparison(t *testing.T) {

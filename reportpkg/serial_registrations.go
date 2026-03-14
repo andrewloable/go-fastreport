@@ -2,9 +2,12 @@ package reportpkg
 
 import (
 	"github.com/andrewloable/go-fastreport/band"
+	"github.com/andrewloable/go-fastreport/gauge"
+	"github.com/andrewloable/go-fastreport/matrix"
 	"github.com/andrewloable/go-fastreport/object"
 	"github.com/andrewloable/go-fastreport/report"
 	"github.com/andrewloable/go-fastreport/serial"
+	"github.com/andrewloable/go-fastreport/table"
 )
 
 func init() {
@@ -59,6 +62,28 @@ func init() {
 		{"BarcodeObject", func() report.Base { return object.NewBarcodeObject() }},
 		{"ZipCodeObject", func() report.Base { return object.NewZipCodeObject() }},
 		{"HtmlObject", func() report.Base { return object.NewHtmlObject() }},
+		{"CellularTextObject", func() report.Base { return object.NewCellularTextObject() }},
+		{"SVGObject", func() report.Base { return object.NewSVGObject() }},
+		{"RichObject", func() report.Base { return object.NewRichObject() }},
+		{"SparklineObject", func() report.Base { return object.NewSparklineObject() }},
+		{"AdvMatrixObject", func() report.Base { return object.NewAdvMatrixObject() }},
+		{"MSChartObject", func() report.Base { return object.NewMSChartObject() }},
+		{"MSChartSeries", func() report.Base { return object.NewMSChartSeries() }},
+
+		// Table object and its children
+		{"TableObject", func() report.Base { return table.NewTableObject() }},
+		{"TableColumn", func() report.Base { return table.NewTableColumn() }},
+		{"TableRow", func() report.Base { return table.NewTableRow() }},
+		{"TableCell", func() report.Base { return table.NewTableCell() }},
+
+		// Matrix object
+		{"MatrixObject", func() report.Base { return matrix.New() }},
+
+		// Gauge objects
+		{"LinearGauge", func() report.Base { return gauge.NewLinearGauge() }},
+		{"RadialGauge", func() report.Base { return gauge.NewRadialGauge() }},
+		{"SimpleGauge", func() report.Base { return gauge.NewSimpleGauge() }},
+		{"SimpleProgressGauge", func() report.Base { return gauge.NewSimpleProgressGauge() }},
 	}
 
 	for _, reg := range regs {

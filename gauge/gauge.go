@@ -5,9 +5,14 @@
 //   - LinearGauge: horizontal or vertical progress-bar style gauge
 //   - RadialGauge: circular dial with a rotating pointer
 //   - SimpleGauge: minimal single-value indicator
+//   - SimpleProgressGauge: simplified progress indicator
 package gauge
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/andrewloable/go-fastreport/report"
+)
 
 // ── Scale ─────────────────────────────────────────────────────────────────────
 
@@ -59,8 +64,11 @@ func NewPointer() *Pointer {
 // ── GaugeObject (base) ────────────────────────────────────────────────────────
 
 // GaugeObject is the base type for all gauge variants.
-// It holds the value range and the current value.
+// It embeds ReportComponentBase to satisfy report.Base, and holds the value
+// range and the current value.
 type GaugeObject struct {
+	report.ReportComponentBase
+
 	// Minimum is the lower bound of the gauge range (default: 0).
 	Minimum float64
 	// Maximum is the upper bound of the gauge range (default: 100).
@@ -75,17 +83,16 @@ type GaugeObject struct {
 
 	// Expression is a report expression whose value drives the gauge.
 	Expression string
-	// Style is the named style (e.g. "Red", "Green").
-	Style string
 }
 
 // NewGaugeObject creates a GaugeObject with defaults (0–100, value=0).
 func NewGaugeObject() *GaugeObject {
 	return &GaugeObject{
-		Minimum: 0,
-		Maximum: 100,
-		Scale:   NewScale(),
-		Pointer: NewPointer(),
+		ReportComponentBase: *report.NewReportComponentBase(),
+		Minimum:             0,
+		Maximum:             100,
+		Scale:               NewScale(),
+		Pointer:             NewPointer(),
 	}
 }
 
@@ -111,6 +118,52 @@ func (g *GaugeObject) Percent() float64 {
 		return 0
 	}
 	return (g.value - g.Minimum) / span
+}
+
+// Serialize writes GaugeObject properties that differ from defaults.
+func (g *GaugeObject) Serialize(w report.Writer) error {
+	if err := g.ReportComponentBase.Serialize(w); err != nil {
+		return err
+	}
+	if g.Minimum != 0 {
+		w.WriteFloat("Minimum", float32(g.Minimum))
+	}
+	if g.Maximum != 100 {
+		w.WriteFloat("Maximum", float32(g.Maximum))
+	}
+	if g.value != 0 {
+		w.WriteFloat("Value", float32(g.value))
+	}
+	if g.Expression != "" {
+		w.WriteStr("Expression", g.Expression)
+	}
+	return nil
+}
+
+// Deserialize reads GaugeObject properties.
+func (g *GaugeObject) Deserialize(r report.Reader) error {
+	if err := g.ReportComponentBase.Deserialize(r); err != nil {
+		return err
+	}
+	g.Minimum = float64(r.ReadFloat("Minimum", 0))
+	g.Maximum = float64(r.ReadFloat("Maximum", 100))
+	g.value = float64(r.ReadFloat("Value", 0))
+	g.Expression = r.ReadStr("Expression", "")
+	// Read common Scale/Pointer dot-notation properties from FRX.
+	// (These are informational for future rendering; not all are used.)
+	_ = r.ReadStr("Scale.Font", "")
+	_ = r.ReadFloat("Scale.MajorTicks.Width", 0)
+	_ = r.ReadStr("Scale.MajorTicks.Color", "")
+	_ = r.ReadFloat("Scale.MinorTicks.Width", 0)
+	_ = r.ReadStr("Scale.MinorTicks.Color", "")
+	_ = r.ReadFloat("Scale.MajorTicks.Length", 0)
+	_ = r.ReadFloat("Scale.MinorTicks.Length", 0)
+	_ = r.ReadFloat("Pointer.Width", 0)
+	_ = r.ReadFloat("Pointer.Height", 0)
+	_ = r.ReadStr("Pointer.Color", "")
+	_ = r.ReadStr("Label.Font", "")
+	_ = r.ReadStr("Label.Text", "")
+	return nil
 }
 
 // ── LinearGauge ───────────────────────────────────────────────────────────────
@@ -141,6 +194,9 @@ func NewLinearGauge() *LinearGauge {
 	}
 }
 
+// BaseName returns the base name prefix for auto-generated names.
+func (g *LinearGauge) BaseName() string { return "LinearGauge" }
+
 // TypeName returns "LinearGauge".
 func (g *LinearGauge) TypeName() string { return "LinearGauge" }
 
@@ -152,6 +208,30 @@ func (g *LinearGauge) FillPercent() float64 {
 		return 1 - p
 	}
 	return p
+}
+
+// Serialize writes LinearGauge properties.
+func (g *LinearGauge) Serialize(w report.Writer) error {
+	if err := g.GaugeObject.Serialize(w); err != nil {
+		return err
+	}
+	if g.Orientation != OrientationHorizontal {
+		w.WriteInt("Orientation", int(g.Orientation))
+	}
+	if g.Inverted {
+		w.WriteBool("Inverted", true)
+	}
+	return nil
+}
+
+// Deserialize reads LinearGauge properties.
+func (g *LinearGauge) Deserialize(r report.Reader) error {
+	if err := g.GaugeObject.Deserialize(r); err != nil {
+		return err
+	}
+	g.Orientation = Orientation(r.ReadInt("Orientation", 0))
+	g.Inverted = r.ReadBool("Inverted", false)
+	return nil
 }
 
 // ── RadialGauge ───────────────────────────────────────────────────────────────
@@ -175,6 +255,9 @@ func NewRadialGauge() *RadialGauge {
 	}
 }
 
+// BaseName returns the base name prefix for auto-generated names.
+func (g *RadialGauge) BaseName() string { return "RadialGauge" }
+
 // TypeName returns "RadialGauge".
 func (g *RadialGauge) TypeName() string { return "RadialGauge" }
 
@@ -183,6 +266,30 @@ func (g *RadialGauge) TypeName() string { return "RadialGauge" }
 func (g *RadialGauge) NeedleAngle() float64 {
 	sweep := g.EndAngle - g.StartAngle
 	return g.StartAngle + sweep*g.Percent()
+}
+
+// Serialize writes RadialGauge properties.
+func (g *RadialGauge) Serialize(w report.Writer) error {
+	if err := g.GaugeObject.Serialize(w); err != nil {
+		return err
+	}
+	if g.StartAngle != -135 {
+		w.WriteFloat("StartAngle", float32(g.StartAngle))
+	}
+	if g.EndAngle != 135 {
+		w.WriteFloat("EndAngle", float32(g.EndAngle))
+	}
+	return nil
+}
+
+// Deserialize reads RadialGauge properties.
+func (g *RadialGauge) Deserialize(r report.Reader) error {
+	if err := g.GaugeObject.Deserialize(r); err != nil {
+		return err
+	}
+	g.StartAngle = float64(r.ReadFloat("StartAngle", -135))
+	g.EndAngle = float64(r.ReadFloat("EndAngle", 135))
+	return nil
 }
 
 // ── SimpleGauge ───────────────────────────────────────────────────────────────
@@ -218,6 +325,9 @@ func NewSimpleGauge() *SimpleGauge {
 	}
 }
 
+// BaseName returns the base name prefix for auto-generated names.
+func (g *SimpleGauge) BaseName() string { return "SimpleGauge" }
+
 // TypeName returns "SimpleGauge".
 func (g *SimpleGauge) TypeName() string { return "SimpleGauge" }
 
@@ -227,4 +337,77 @@ func (g *SimpleGauge) Text() string {
 		return fmt.Sprintf("%g%%", g.Percent()*100)
 	}
 	return fmt.Sprintf(g.TextFormat, g.Percent()*100)
+}
+
+// Serialize writes SimpleGauge properties.
+func (g *SimpleGauge) Serialize(w report.Writer) error {
+	if err := g.GaugeObject.Serialize(w); err != nil {
+		return err
+	}
+	if g.Shape != SimpleGaugeShapeRectangle {
+		w.WriteInt("Shape", int(g.Shape))
+	}
+	if !g.ShowText {
+		w.WriteBool("ShowText", false)
+	}
+	if g.TextFormat != "%g%%" {
+		w.WriteStr("TextFormat", g.TextFormat)
+	}
+	return nil
+}
+
+// Deserialize reads SimpleGauge properties.
+func (g *SimpleGauge) Deserialize(r report.Reader) error {
+	if err := g.GaugeObject.Deserialize(r); err != nil {
+		return err
+	}
+	g.Shape = SimpleGaugeShape(r.ReadInt("Shape", 0))
+	g.ShowText = r.ReadBool("ShowText", true)
+	g.TextFormat = r.ReadStr("TextFormat", "%g%%")
+	return nil
+}
+
+// ── SimpleProgressGauge ───────────────────────────────────────────────────────
+
+// SimpleProgressGauge is a simplified horizontal progress bar gauge.
+// It is the Go equivalent of FastReport.Gauge.SimpleProgressGauge.
+type SimpleProgressGauge struct {
+	GaugeObject
+
+	// ShowText controls whether the percentage text is displayed.
+	ShowText bool
+}
+
+// NewSimpleProgressGauge creates a SimpleProgressGauge with defaults.
+func NewSimpleProgressGauge() *SimpleProgressGauge {
+	return &SimpleProgressGauge{
+		GaugeObject: *NewGaugeObject(),
+		ShowText:    true,
+	}
+}
+
+// BaseName returns the base name prefix for auto-generated names.
+func (g *SimpleProgressGauge) BaseName() string { return "SimpleProgressGauge" }
+
+// TypeName returns "SimpleProgressGauge".
+func (g *SimpleProgressGauge) TypeName() string { return "SimpleProgressGauge" }
+
+// Serialize writes SimpleProgressGauge properties.
+func (g *SimpleProgressGauge) Serialize(w report.Writer) error {
+	if err := g.GaugeObject.Serialize(w); err != nil {
+		return err
+	}
+	if !g.ShowText {
+		w.WriteBool("ShowText", false)
+	}
+	return nil
+}
+
+// Deserialize reads SimpleProgressGauge properties.
+func (g *SimpleProgressGauge) Deserialize(r report.Reader) error {
+	if err := g.GaugeObject.Deserialize(r); err != nil {
+		return err
+	}
+	g.ShowText = r.ReadBool("ShowText", true)
+	return nil
 }

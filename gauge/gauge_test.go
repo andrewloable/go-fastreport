@@ -303,9 +303,9 @@ func TestSimpleGauge_Shapes(t *testing.T) {
 
 func TestGaugeObject_Style(t *testing.T) {
 	g := gauge.NewGaugeObject()
-	g.Style = "Red"
-	if g.Style != "Red" {
-		t.Errorf("Style = %q, want Red", g.Style)
+	g.SetStyleName("Red")
+	if g.StyleName() != "Red" {
+		t.Errorf("StyleName = %q, want Red", g.StyleName())
 	}
 }
 

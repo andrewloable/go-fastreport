@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/andrewloable/go-fastreport/data"
+	"github.com/andrewloable/go-fastreport/report"
 	"github.com/andrewloable/go-fastreport/table"
 )
 
@@ -310,6 +311,92 @@ func (m *MatrixObject) BuildTemplate() {
 		}
 		m.TableBase.AddRow(row)
 	}
+}
+
+// Serialize writes MatrixObject properties that differ from defaults.
+func (m *MatrixObject) Serialize(w report.Writer) error {
+	if err := m.TableBase.Serialize(w); err != nil {
+		return err
+	}
+	if m.AutoSize {
+		w.WriteBool("AutoSize", true)
+	}
+	if m.CellsSideBySide {
+		w.WriteBool("CellsSideBySide", true)
+	}
+	if m.EvenStylePriority != EvenStylePriorityRows {
+		w.WriteInt("EvenStylePriority", int(m.EvenStylePriority))
+	}
+	if m.Style != "" {
+		w.WriteStr("Style", m.Style)
+	}
+	return nil
+}
+
+// Deserialize reads MatrixObject properties.
+func (m *MatrixObject) Deserialize(r report.Reader) error {
+	if err := m.TableBase.Deserialize(r); err != nil {
+		return err
+	}
+	m.AutoSize = r.ReadBool("AutoSize", false)
+	m.CellsSideBySide = r.ReadBool("CellsSideBySide", false)
+	m.EvenStylePriority = EvenStylePriority(r.ReadInt("EvenStylePriority", 0))
+	m.Style = r.ReadStr("Style", "")
+	// DataSource is a string alias resolved at engine run time.
+	_ = r.ReadStr("DataSource", "")
+	return nil
+}
+
+// DeserializeChild handles matrix-specific child elements (MatrixRows, MatrixColumns, MatrixCells).
+func (m *MatrixObject) DeserializeChild(childType string, r report.Reader) bool {
+	switch childType {
+	case "MatrixRows":
+		for {
+			ct, ok := r.NextChild()
+			if !ok {
+				break
+			}
+			if ct == "Header" {
+				hd := &HeaderDescriptor{}
+				hd.Expression = r.ReadStr("Expression", "")
+				hd.Sort = r.ReadStr("Sort", "")
+				m.Data.Rows = append(m.Data.Rows, hd)
+			}
+			_ = r.FinishChild()
+		}
+		return true
+	case "MatrixColumns":
+		for {
+			ct, ok := r.NextChild()
+			if !ok {
+				break
+			}
+			if ct == "Header" {
+				hd := &HeaderDescriptor{}
+				hd.Expression = r.ReadStr("Expression", "")
+				hd.Sort = r.ReadStr("Sort", "")
+				m.Data.Columns = append(m.Data.Columns, hd)
+			}
+			_ = r.FinishChild()
+		}
+		return true
+	case "MatrixCells":
+		for {
+			ct, ok := r.NextChild()
+			if !ok {
+				break
+			}
+			if ct == "Cell" {
+				cd := &CellDescriptor{}
+				cd.Expression = r.ReadStr("Expression", "")
+				cd.Function = AggregateFunction(r.ReadInt("Function", 0))
+				m.Data.Cells = append(m.Data.Cells, cd)
+			}
+			_ = r.FinishChild()
+		}
+		return true
+	}
+	return false
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────

@@ -72,6 +72,9 @@ type ReportPage struct {
 	inherited bool
 }
 
+// TypeName returns the FRX element name used during serialization.
+func (*ReportPage) TypeName() string { return "ReportPage" }
+
 // NewReportPage creates a ReportPage with A4 defaults.
 func NewReportPage() *ReportPage {
 	p := &ReportPage{
@@ -136,6 +139,45 @@ func (p *ReportPage) Bands() []report.Base { return p.bands }
 
 // AddBand appends a band to the page.
 func (p *ReportPage) AddBand(b report.Base) { p.bands = append(p.bands, b) }
+
+// AddBandByTypeName routes a deserialized band to the appropriate page slot
+// based on its FRX type name. Singleton bands (PageHeader, PageFooter, etc.)
+// are placed in their dedicated fields; all other bands go into the ordered list.
+// Both short names ("PageHeader") and full FastReport names ("PageHeaderBand") are accepted.
+func (p *ReportPage) AddBandByTypeName(typeName string, b report.Base) {
+	switch typeName {
+	case "PageHeader", "PageHeaderBand":
+		if pb, ok := b.(*band.PageHeaderBand); ok {
+			p.pageHeader = pb
+		}
+	case "PageFooter", "PageFooterBand":
+		if pb, ok := b.(*band.PageFooterBand); ok {
+			p.pageFooter = pb
+		}
+	case "ReportTitle", "ReportTitleBand":
+		if pb, ok := b.(*band.ReportTitleBand); ok {
+			p.reportTitle = pb
+		}
+	case "ReportSummary", "ReportSummaryBand":
+		if pb, ok := b.(*band.ReportSummaryBand); ok {
+			p.reportSummary = pb
+		}
+	case "ColumnHeader", "ColumnHeaderBand":
+		if pb, ok := b.(*band.ColumnHeaderBand); ok {
+			p.columnHeader = pb
+		}
+	case "ColumnFooter", "ColumnFooterBand":
+		if pb, ok := b.(*band.ColumnFooterBand); ok {
+			p.columnFooter = pb
+		}
+	case "Overlay", "OverlayBand":
+		if pb, ok := b.(*band.OverlayBand); ok {
+			p.overlay = pb
+		}
+	default:
+		p.bands = append(p.bands, b)
+	}
+}
 
 // --- Style ---
 
@@ -211,7 +253,8 @@ func (p *ReportPage) mergeFromBase(base *ReportPage) {
 
 // --- Serialization ---
 
-// Serialize writes ReportPage properties that differ from defaults.
+// Serialize writes ReportPage properties that differ from defaults,
+// then writes all non-nil band slots as child elements.
 func (p *ReportPage) Serialize(w report.Writer) error {
 	if err := p.BaseObject.Serialize(w); err != nil {
 		return err
@@ -266,6 +309,79 @@ func (p *ReportPage) Serialize(w report.Writer) error {
 	}
 	if p.ManualBuildEvent != "" {
 		w.WriteStr("ManualBuildEvent", p.ManualBuildEvent)
+	}
+
+	// Write bands in the same order as FastReport's GetChildObjects().
+	// Singleton bands use their declared FRX element name via TypeNamer.
+	if err := p.serializeBands(w); err != nil {
+		return err
+	}
+	return nil
+}
+
+// serializeBands writes all non-nil band slots as child XML elements.
+// Order mirrors FastReport's ReportPage.GetChildObjects().
+func (p *ReportPage) serializeBands(w report.Writer) error {
+	// Header bands.
+	if p.TitleBeforeHeader {
+		if p.reportTitle != nil {
+			if err := w.WriteObject(p.reportTitle); err != nil {
+				return err
+			}
+		}
+		if p.pageHeader != nil {
+			if err := w.WriteObject(p.pageHeader); err != nil {
+				return err
+			}
+		}
+	} else {
+		if p.pageHeader != nil {
+			if err := w.WriteObject(p.pageHeader); err != nil {
+				return err
+			}
+		}
+		if p.reportTitle != nil {
+			if err := w.WriteObject(p.reportTitle); err != nil {
+				return err
+			}
+		}
+	}
+	if p.columnHeader != nil {
+		if err := w.WriteObject(p.columnHeader); err != nil {
+			return err
+		}
+	}
+
+	// Dynamic bands (DataBand, GroupHeaderBand, etc.).
+	for _, b := range p.bands {
+		if b == nil {
+			continue
+		}
+		if err := w.WriteObject(b); err != nil {
+			return err
+		}
+	}
+
+	// Footer bands.
+	if p.reportSummary != nil {
+		if err := w.WriteObject(p.reportSummary); err != nil {
+			return err
+		}
+	}
+	if p.columnFooter != nil {
+		if err := w.WriteObject(p.columnFooter); err != nil {
+			return err
+		}
+	}
+	if p.pageFooter != nil {
+		if err := w.WriteObject(p.pageFooter); err != nil {
+			return err
+		}
+	}
+	if p.overlay != nil {
+		if err := w.WriteObject(p.overlay); err != nil {
+			return err
+		}
 	}
 	return nil
 }

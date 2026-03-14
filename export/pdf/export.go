@@ -6,6 +6,7 @@ import (
 
 	"github.com/andrewloable/go-fastreport/export"
 	"github.com/andrewloable/go-fastreport/preview"
+	"github.com/andrewloable/go-fastreport/style"
 )
 
 // Exporter is a simple PDF export filter.
@@ -67,25 +68,67 @@ func (e *Exporter) ExportPageBegin(pg *preview.PreparedPage) error {
 }
 
 // ExportBand renders a single band onto the current PDF page.
-// In this skeleton implementation it writes a simple text marker; a full
-// implementation would render text objects, images, borders, etc.
+// It iterates PreparedBand.Objects and renders text objects as PDF text streams.
 func (e *Exporter) ExportBand(b *preview.PreparedBand) error {
 	if e.curPage == nil {
 		return nil
 	}
 	contents := e.curPage.Contents()
-	// Approximate Y position in PDF space (PDF Y increases upward).
-	pdfY := e.curPage.Height - float64(export.PixelsToPoints(b.Top+b.Height))
 
-	// Write a simple text label for the band.
-	// BT = Begin Text; ET = End Text; Tf = set font; Td = move to position; Tj = show text.
-	if b.Name != "" {
-		contents.WriteString(fmt.Sprintf(
-			"BT /F1 8 Tf %.2f %.2f Td (%s) Tj ET\n",
-			float64(export.PixelsToPoints(b.Top)), pdfY, pdfEscape(b.Name),
-		))
+	for _, obj := range b.Objects {
+		switch obj.Kind {
+		case preview.ObjectTypeText:
+			if obj.Text == "" {
+				continue
+			}
+			e.renderTextObject(contents, b, obj)
+		// Line and Shape rendered as rectangle outlines.
+		case preview.ObjectTypeLine, preview.ObjectTypeShape:
+			e.renderRectObject(contents, b, obj)
+		}
 	}
 	return nil
+}
+
+// renderTextObject writes PDF operators for a TextObject.
+func (e *Exporter) renderTextObject(c *Contents, b *preview.PreparedBand, obj preview.PreparedObject) {
+	// PDF coordinate system: Y increases upward, origin at bottom-left.
+	// Convert pixel positions to PDF points.
+	objTopPx := b.Top + obj.Top
+	objHeightPx := obj.Height
+
+	xPt := float64(export.PixelsToPoints(obj.Left))
+	// Align text to the top of the object box.
+	yPt := e.curPage.Height - float64(export.PixelsToPoints(objTopPx+objHeightPx))
+
+	// Choose font name and size.
+	fontName := obj.Font.Name
+	if fontName == "" {
+		fontName = style.DefaultFont().Name
+	}
+	fontSize := obj.Font.Size
+	if fontSize <= 0 {
+		fontSize = style.DefaultFont().Size
+	}
+
+	// PDF uses /F1 as the standard font reference (Helvetica in the writer).
+	// A full implementation would embed the exact font; here we use the built-in.
+	c.WriteString(fmt.Sprintf(
+		"BT /F1 %.2f Tf %.2f %.2f Td (%s) Tj ET\n",
+		fontSize, xPt, yPt, pdfEscape(obj.Text),
+	))
+}
+
+// renderRectObject draws a filled or stroked rectangle for Line/Shape objects.
+func (e *Exporter) renderRectObject(c *Contents, b *preview.PreparedBand, obj preview.PreparedObject) {
+	xPt := float64(export.PixelsToPoints(obj.Left))
+	yPt := e.curPage.Height - float64(export.PixelsToPoints(b.Top+obj.Top+obj.Height))
+	wPt := float64(export.PixelsToPoints(obj.Width))
+	hPt := float64(export.PixelsToPoints(obj.Height))
+
+	c.WriteString(fmt.Sprintf(
+		"%.2f %.2f %.2f %.2f re S\n", xPt, yPt, wPt, hPt,
+	))
 }
 
 // ExportPageEnd finalises the current PDF page.

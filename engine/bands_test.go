@@ -286,3 +286,37 @@ func TestShowDataBandRow_SetsRowNo(t *testing.T) {
 		t.Errorf("CurY = %v, want %v", e.CurY(), beforeY+25)
 	}
 }
+
+// ── CalcBandHeight with CanGrow/CanShrink ────────────────────────────────────
+
+func TestCalcBandHeight_NoGrowShrink(t *testing.T) {
+	e := engine.New(reportpkg.NewReport())
+	bb := band.NewBandBase()
+	bb.SetHeight(40)
+	// No CanGrow, no CanShrink → declared height returned.
+	if h := e.CalcBandHeight(bb); h != 40 {
+		t.Errorf("CalcBandHeight = %v, want 40", h)
+	}
+}
+
+func TestCalcBandHeight_CanGrow_NoContent(t *testing.T) {
+	e := engine.New(reportpkg.NewReport())
+	bb := band.NewBandBase()
+	bb.SetHeight(40)
+	bb.SetCanGrow(true)
+	// No children → height stays at declared value.
+	if h := e.CalcBandHeight(bb); h != 40 {
+		t.Errorf("CalcBandHeight = %v, want 40 (no children)", h)
+	}
+}
+
+func TestCalcBandHeight_CanShrink_NoContent(t *testing.T) {
+	e := engine.New(reportpkg.NewReport())
+	bb := band.NewBandBase()
+	bb.SetHeight(40)
+	bb.SetCanShrink(true)
+	// No children → height stays at declared value (nothing to shrink).
+	if h := e.CalcBandHeight(bb); h != 40 {
+		t.Errorf("CalcBandHeight = %v, want 40 (no children)", h)
+	}
+}

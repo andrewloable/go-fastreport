@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?><Report ReportName="GroupedReport" ReportAuthor="Test">
+  <ReportPage Name="Page1" PaperWidth="210" PaperHeight="297">
+    <PageHeader Name="PageHeader1" Height="25">
+      <TextObject Name="ReportTitle" Left="0" Top="5" Width="500" Height="18" Text="Grouped Report"/>
+    </PageHeader>
+    <GroupHeader Name="GroupHeader1" Height="22" Condition="[Category]">
+      <TextObject Name="GroupLabel" Left="0" Top="2" Width="300" Height="18" Text="Category: [Category]"/>
+    </GroupHeader>
+    <Data Name="DataBand1" Height="18">
+      <TextObject Name="ItemText" Left="20" Top="0" Width="280" Height="16" Text="[Item]"/>
+    </Data>
+    <GroupFooter Name="GroupFooter1" Height="18">
+      <TextObject Name="GroupTotal" Left="0" Top="0" Width="300" Height="16" Text="Subtotal: [Total]"/>
+    </GroupFooter>
+    <ReportSummary Name="ReportSummary1" Height="25">
+      <TextObject Name="GrandTotal" Left="0" Top="5" Width="300" Height="18" Text="Grand Total: [GrandTotal]"/>
+    </ReportSummary>
+    <PageFooter Name="PageFooter1" Height="20">
+      <TextObject Name="PageNum" Left="400" Top="2" Width="100" Height="16" Text="[PageNumber] of [TotalPages]"/>
+    </PageFooter>
+  </ReportPage>
+</Report>

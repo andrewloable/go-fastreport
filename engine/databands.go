@@ -136,6 +136,8 @@ func (e *ReportEngine) RunDataBandFull(db *band.DataBand) error {
 				e.report.SetCalcContext(fullDS)
 			}
 		}
+		// Accumulate aggregate totals for this row.
+		e.accumulateTotals()
 
 		if isFirst && !headerShown {
 			if hdr := db.Header(); hdr != nil {

@@ -78,6 +78,11 @@ type ReportEngine struct {
 	// dataSources is the flat list of data sources registered for this run.
 	dataSources []*data.BaseDataSource
 
+	// aggregateTotals holds the aggregate total accumulators for this run.
+	// They are populated from the report Dictionary at engine start and
+	// accumulated per-row during data band execution.
+	aggregateTotals []*data.AggregateTotal
+
 	// startReportFired tracks whether the OnStartReport event has already been fired.
 	startReportFired bool
 
@@ -218,6 +223,8 @@ func (e *ReportEngine) runPhase1(resetDataState bool) error {
 
 	// Seed system variables into the dictionary before data init.
 	e.ensureSystemVariables()
+	// Initialise aggregate total accumulators from the Dictionary.
+	e.initTotals()
 
 	if resetDataState {
 		if err := e.initializeData(); err != nil {

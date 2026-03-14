@@ -11,6 +11,8 @@ type Dictionary struct {
 	parameters      []*Parameter
 	systemVariables []*Parameter
 	totals          []*Total
+	// aggregateTotals holds the richer aggregate-total definitions used by the engine.
+	aggregateTotals []*AggregateTotal
 }
 
 // NewDictionary creates an empty Dictionary.
@@ -165,6 +167,23 @@ func (d *Dictionary) RemoveTotal(t *Total) {
 
 // Totals returns all registered totals.
 func (d *Dictionary) Totals() []*Total { return d.totals }
+
+// AggregateTotals returns all aggregate total definitions.
+func (d *Dictionary) AggregateTotals() []*AggregateTotal { return d.aggregateTotals }
+
+// AddAggregateTotal registers an aggregate total definition.
+// It also ensures a corresponding simple Total entry exists in Totals() so that
+// the expression evaluator can reference the current accumulated value by name.
+func (d *Dictionary) AddAggregateTotal(at *AggregateTotal) {
+	d.aggregateTotals = append(d.aggregateTotals, at)
+	// Ensure a matching simple Total placeholder exists.
+	for _, t := range d.totals {
+		if strings.EqualFold(t.Name, at.Name) {
+			return
+		}
+	}
+	d.totals = append(d.totals, &Total{Name: at.Name})
+}
 
 // FindTotal returns the total with the given name, or nil.
 func (d *Dictionary) FindTotal(name string) *Total {

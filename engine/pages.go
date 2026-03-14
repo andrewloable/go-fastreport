@@ -126,6 +126,13 @@ func (e *ReportEngine) showBand(b report.Base) {
 			Top:    e.curY,
 			Height: height,
 		}
+		// Populate child objects from any band type that exposes Objects().
+		type hasObjects interface {
+			Objects() *report.ObjectCollection
+		}
+		if ho, ok := b.(hasObjects); ok {
+			e.populateBandObjects2(ho.Objects(), pb)
+		}
 		_ = e.preparedPages.AddBand(pb)
 	}
 

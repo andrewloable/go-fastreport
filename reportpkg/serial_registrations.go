@@ -1,22 +1,22 @@
-package serial
+package reportpkg
 
 import (
 	"github.com/andrewloable/go-fastreport/band"
 	"github.com/andrewloable/go-fastreport/object"
 	"github.com/andrewloable/go-fastreport/report"
-	"github.com/andrewloable/go-fastreport/reportpkg"
+	"github.com/andrewloable/go-fastreport/serial"
 )
 
 func init() {
 	regs := []struct {
 		name    string
-		factory Factory
+		factory serial.Factory
 	}{
 		// Report-level containers
-		{"Report", func() report.Base { return reportpkg.NewReport() }},
-		{"ReportPage", func() report.Base { return reportpkg.NewReportPage() }},
+		{"Report", func() report.Base { return NewReport() }},
+		{"ReportPage", func() report.Base { return NewReportPage() }},
 
-		// Band types
+		// Band types — short names (used by our custom FRX files and serializer)
 		{"ReportTitle", func() report.Base { return band.NewReportTitleBand() }},
 		{"ReportSummary", func() report.Base { return band.NewReportSummaryBand() }},
 		{"PageHeader", func() report.Base { return band.NewPageHeaderBand() }},
@@ -31,6 +31,21 @@ func init() {
 		{"Child", func() report.Base { return band.NewChildBand() }},
 		{"Overlay", func() report.Base { return band.NewOverlayBand() }},
 
+		// Band types — full names used by FastReport .NET FRX files (with "Band" suffix)
+		{"ReportTitleBand", func() report.Base { return band.NewReportTitleBand() }},
+		{"ReportSummaryBand", func() report.Base { return band.NewReportSummaryBand() }},
+		{"PageHeaderBand", func() report.Base { return band.NewPageHeaderBand() }},
+		{"PageFooterBand", func() report.Base { return band.NewPageFooterBand() }},
+		{"ColumnHeaderBand", func() report.Base { return band.NewColumnHeaderBand() }},
+		{"ColumnFooterBand", func() report.Base { return band.NewColumnFooterBand() }},
+		{"DataHeaderBand", func() report.Base { return band.NewDataHeaderBand() }},
+		{"DataFooterBand", func() report.Base { return band.NewDataFooterBand() }},
+		{"DataBand", func() report.Base { return band.NewDataBand() }},
+		{"GroupHeaderBand", func() report.Base { return band.NewGroupHeaderBand() }},
+		{"GroupFooterBand", func() report.Base { return band.NewGroupFooterBand() }},
+		{"ChildBand", func() report.Base { return band.NewChildBand() }},
+		{"OverlayBand", func() report.Base { return band.NewOverlayBand() }},
+
 		// Object types
 		{"TextObject", func() report.Base { return object.NewTextObject() }},
 		{"PictureObject", func() report.Base { return object.NewPictureObject() }},
@@ -44,6 +59,7 @@ func init() {
 	}
 
 	for _, reg := range regs {
-		DefaultRegistry.MustRegister(reg.name, reg.factory)
+		// Ignore double-registration errors (e.g. if init runs multiple times in tests).
+		_ = serial.DefaultRegistry.Register(reg.name, reg.factory)
 	}
 }

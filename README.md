@@ -27,7 +27,172 @@ Requires **Go 1.23+**.
 
 ---
 
+## Build & Test
+
+```bash
+# Clone the repository
+git clone https://github.com/andrewloable/go-fastreport.git
+cd go-fastreport
+
+# Build all packages
+go build ./...
+
+# Run the full test suite
+go test ./...
+
+# Run tests for a specific package
+go test ./engine/...
+go test ./reportpkg/...
+
+# Run with verbose output
+go test -v ./reportpkg/... -run TestFRXSmoke_
+
+# Run benchmarks
+go test -bench=. ./engine/...
+```
+
+---
+
 ## Quick Start
+
+Working examples are in the [`examples/`](examples/) directory:
+
+| Example | Description |
+|---------|-------------|
+| [`examples/simple_html_report`](examples/simple_html_report) | Build a report in code and export to HTML |
+| [`examples/json_datasource`](examples/json_datasource) | JSON data source with a DataBand |
+| [`examples/xml_datasource`](examples/xml_datasource) | XML data source |
+| [`examples/frx_json`](examples/frx_json) | Load an FRX file and bind a JSON data source |
+
+Run an example:
+
+```bash
+go run ./examples/simple_html_report/
+go run ./examples/frx_json/
+```
+
+### Load an FRX file with a JSON data source
+
+This example loads a report definition from an `.frx` file, binds employee JSON data
+to the DataBand at runtime, runs the engine, and exports the result to HTML.
+
+**`examples/frx_json/report.frx`** (the report template):
+
+```xml
+<?xml version="1.0" encoding="utf-8"?>
+<Report ReportName="EmployeeList">
+  <ReportPage Name="Page1" PaperWidth="210" PaperHeight="297"
+              LeftMargin="10" TopMargin="10" RightMargin="10" BottomMargin="10">
+    <PageHeader Name="PageHeader1" Height="30" Visible="true">
+      <TextObject Name="Title" Left="0" Top="5" Width="190" Height="20"
+                  Text="Employee Directory" Font.Bold="true" HorzAlign="Center"/>
+    </PageHeader>
+    <Data Name="DataBand1" Height="15" Visible="true">
+      <TextObject Name="NameText"   Left="0"   Top="2" Width="80"  Height="11" Text="[Name]"/>
+      <TextObject Name="DeptText"   Left="85"  Top="2" Width="60"  Height="11" Text="[Department]"/>
+      <TextObject Name="SalaryText" Left="150" Top="2" Width="40"  Height="11" Text="[Salary]" HorzAlign="Right"/>
+    </Data>
+    <PageFooter Name="PageFooter1" Height="20" Visible="true">
+      <TextObject Name="PageNo" Left="0" Top="5" Width="190" Height="11"
+                  Text="Page [PageNumber]" HorzAlign="Right"/>
+    </PageFooter>
+  </ReportPage>
+</Report>
+```
+
+**`examples/frx_json/report.frx`** (excerpt showing variable references):
+
+```xml
+<PageHeader Name="PageHeader1" Height="40" Visible="true">
+  <!-- [ReportTitle] and [FilterDept] are report variables (parameters) -->
+  <TextObject Name="Title" Left="0" Top="2" Width="190" Height="14"
+              Text="[ReportTitle]" Font.Bold="true" HorzAlign="Center"/>
+  <TextObject Name="Dept" Left="0" Top="20" Width="190" Height="12"
+              Text="Department: [FilterDept]" HorzAlign="Center"/>
+</PageHeader>
+<Data Name="DataBand1" Height="15" Visible="true">
+  <!-- [Name], [Department], [Salary] come from the JSON data source -->
+  <TextObject Name="NameText"   Left="0"   Width="80"  Height="11" Text="[Name]"/>
+  <TextObject Name="DeptText"   Left="85"  Width="60"  Height="11" Text="[Department]"/>
+  <TextObject Name="SalaryText" Left="150" Width="40"  Height="11" Text="[Salary]" HorzAlign="Right"/>
+</Data>
+```
+
+**`examples/frx_json/main.go`**:
+
+```go
+package main
+
+import (
+    "fmt"
+    "os"
+
+    "github.com/andrewloable/go-fastreport/band"
+    "github.com/andrewloable/go-fastreport/data"
+    jsondata "github.com/andrewloable/go-fastreport/data/json"
+    "github.com/andrewloable/go-fastreport/engine"
+    "github.com/andrewloable/go-fastreport/export/html"
+    "github.com/andrewloable/go-fastreport/reportpkg"
+)
+
+const employeeJSON = `[
+  {"Name": "Alice",   "Department": "Engineering", "Salary": 95000},
+  {"Name": "Bob",     "Department": "Marketing",   "Salary": 72000},
+  {"Name": "Carol",   "Department": "Engineering", "Salary": 105000}
+]`
+
+func main() {
+    // 1. Load the FRX report definition.
+    r := reportpkg.NewReport()
+    if err := r.Load("examples/frx_json/report.frx"); err != nil {
+        fmt.Fprintf(os.Stderr, "load FRX: %v\n", err)
+        os.Exit(1)
+    }
+
+    // 2. Set report variables (parameters).
+    // Parameters are referenced in the FRX with bracket syntax: [ParamName].
+    dict := data.NewDictionary()
+    dict.AddParameter(&data.Parameter{Name: "ReportTitle", Value: "Employee Directory"})
+    dict.AddParameter(&data.Parameter{Name: "FilterDept", Value: "All Departments"})
+    r.SetDictionary(dict)
+
+    // 3. Create and initialise the JSON data source.
+    // JSONDataSource embeds data.BaseDataSource so it satisfies both
+    // band.DataSource (iteration) and data.DataSource (expression evaluation).
+    // The engine calls SetCalcContext(ds) per row so [Name], [Department],
+    // [Salary] resolve to the current JSON row's field values.
+    ds := jsondata.New("employees")
+    ds.SetJSON(employeeJSON)
+    if err := ds.Init(); err != nil {
+        fmt.Fprintf(os.Stderr, "data source init: %v\n", err)
+        os.Exit(1)
+    }
+
+    // 4. Bind the data source to every DataBand in the report.
+    for _, pg := range r.Pages() {
+        for _, b := range pg.Bands() {
+            if db, ok := b.(*band.DataBand); ok {
+                db.SetDataSource(ds)
+            }
+        }
+    }
+
+    // 5. Run the engine.
+    e := engine.New(r)
+    if err := e.Run(engine.DefaultRunOptions()); err != nil {
+        fmt.Fprintf(os.Stderr, "engine run: %v\n", err)
+        os.Exit(1)
+    }
+
+    // 6. Export to HTML.
+    exp := html.NewExporter()
+    exp.Title = r.Info.Name
+    if err := exp.Export(e.PreparedPages(), os.Stdout); err != nil {
+        fmt.Fprintf(os.Stderr, "export: %v\n", err)
+        os.Exit(1)
+    }
+}
+```
 
 ### Simple list report (in-memory data)
 
@@ -344,7 +509,22 @@ go-fastreport/
 
 ## Status
 
-This is an active port of FastReport .NET Open Source. The core engine, data binding, serialization, and export layers are functional. Advanced features (full expression evaluation with data context, conditional formatting, auto-grow text) are under development.
+This is an active port of FastReport .NET Open Source. The following are functional:
+
+- Core engine: data iteration, band rendering, page breaks, multi-column layouts, groups
+- Data binding: JSON, XML, CSV, SQL, and custom in-memory data sources
+- FRX serialization: read and write `.frx` files including real FastReport sample files
+- Export: HTML, PDF (structural), PNG image
+- Aggregate totals: Sum, Count, Average, Min, Max with per-group reset
+- CanGrow / CanShrink: dynamic band height based on text content
+- Expression evaluation: `[DataSource.Field]`, `[Parameter]`, `[SystemVariable]` syntax
+- Smoke tested against 35+ real FastReport `.frx` sample files
+
+Features under development:
+- Full conditional formatting (HighlightCondition evaluation)
+- Master-detail relation traversal at engine runtime
+- FRX compression (gzip)
+- HTML export of images and vector shapes
 
 See [porting-plan.md](porting-plan.md) for the detailed implementation roadmap.
 

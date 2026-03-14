@@ -160,6 +160,13 @@ func (r *Report) Serialize(w report.Writer) error {
 	if r.FinishReportEvent != "" {
 		w.WriteStr("FinishReportEvent", r.FinishReportEvent)
 	}
+	// Write pages as child elements — mirrors FastReport's Base.Serialize()
+	// iterating ChildObjects and calling writer.Write(child) for each.
+	for _, pg := range r.pages {
+		if err := w.WriteObject(pg); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 

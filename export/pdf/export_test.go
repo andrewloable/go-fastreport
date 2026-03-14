@@ -11,17 +11,30 @@ import (
 )
 
 // buildTestPages creates a PreparedPages with nPages pages, each containing
-// the given band names.
+// the given band names. Each band has a single text PreparedObject whose
+// Text is the band name, so it appears in the PDF content stream.
 func buildTestPages(nPages int, bandNames []string) *preview.PreparedPages {
 	pp := preview.New()
 	for i := 0; i < nPages; i++ {
 		pp.AddPage(595, 842, i+1)
 		for j, name := range bandNames {
-			_ = pp.AddBand(&preview.PreparedBand{
+			b := &preview.PreparedBand{
 				Name:   name,
 				Top:    float32(j * 30),
 				Height: 30,
-			})
+			}
+			b.Objects = []preview.PreparedObject{
+				{
+					Name:   name + "Obj",
+					Kind:   preview.ObjectTypeText,
+					Left:   0,
+					Top:    0,
+					Width:  200,
+					Height: 20,
+					Text:   name,
+				},
+			}
+			_ = pp.AddBand(b)
 		}
 	}
 	return pp

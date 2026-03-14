@@ -190,9 +190,12 @@ func (r *Reader) FinishChild() error {
 	if len(r.stateStack) == 0 {
 		return fmt.Errorf("serial: FinishChild called without matching NextChild")
 	}
-	// Skip any unread content inside the child, unless SkipElement already
-	// consumed the entire element (including its end tag).
-	if !r.skipped {
+	// Skip any unread content inside the child, unless:
+	//   - SkipElement already consumed the entire element (skipped=true), or
+	//   - NextChild already consumed the parent's end element (done=true).
+	// In the done=true case the end tag was consumed by the last NextChild
+	// call that returned ("", false), so there is nothing left to skip.
+	if !r.skipped && !r.done {
 		if err := r.skipRemainingContent(); err != nil {
 			return err
 		}

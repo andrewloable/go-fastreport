@@ -513,6 +513,157 @@ func TestRoundTrip_DeltaSerialization_OnlyNonDefaults(t *testing.T) {
 	}
 }
 
+// ── SaveToString / LoadFromString round-trip ──────────────────────────────────
+
+// TestRoundTrip_SaveLoad_Page_With_Band_And_Object verifies that a full
+// Report → ReportPage → DataBand → TextObject hierarchy survives a
+// SaveToString / LoadFromString round-trip with all properties intact.
+func TestRoundTrip_SaveLoad_Page_With_Band_And_Object(t *testing.T) {
+	// Build the report.
+	r := reportpkg.NewReport()
+	r.Info.Name = "SalesReport"
+
+	pg := reportpkg.NewReportPage()
+	pg.SetName("Page1")
+	pg.PaperWidth = 297
+	pg.Landscape = true
+
+	db := band.NewDataBand()
+	db.SetName("Data1")
+	db.SetHeight(56)
+	db.SetFilter("[Amount] > 0")
+
+	txt := object.NewTextObject()
+	txt.SetName("Text1")
+	txt.SetLeft(10)
+	txt.SetTop(5)
+	txt.SetWidth(200)
+	txt.SetHeight(30)
+	txt.SetText("Hello [Name]")
+
+	db.AddChild(txt)
+	pg.AddBand(db)
+	r.AddPage(pg)
+
+	// Serialize.
+	xmlStr, err := r.SaveToString()
+	if err != nil {
+		t.Fatalf("SaveToString: %v", err)
+	}
+
+	// Verify expected elements appear in the XML.
+	for _, want := range []string{
+		"<Report", "SalesReport",
+		"<ReportPage", "Page1",
+		"<Data ", "<TextObject", "Hello [Name]",
+	} {
+		if !strings.Contains(xmlStr, want) {
+			t.Errorf("SaveToString: XML missing %q:\n%s", want, xmlStr)
+		}
+	}
+
+	// Deserialize.
+	r2 := reportpkg.NewReport()
+	if err := r2.LoadFromString(xmlStr); err != nil {
+		t.Fatalf("LoadFromString: %v", err)
+	}
+
+	// Verify page.
+	pages := r2.Pages()
+	if len(pages) != 1 {
+		t.Fatalf("Pages: got %d, want 1", len(pages))
+	}
+	p2 := pages[0]
+	if p2.PaperWidth != 297 {
+		t.Errorf("Page PaperWidth: got %v, want 297", p2.PaperWidth)
+	}
+	if !p2.Landscape {
+		t.Error("Page Landscape: should be true")
+	}
+
+	// Verify band.
+	bands := p2.Bands()
+	if len(bands) != 1 {
+		t.Fatalf("Bands: got %d, want 1", len(bands))
+	}
+	db2, ok := bands[0].(*band.DataBand)
+	if !ok {
+		t.Fatalf("Band type: got %T, want *band.DataBand", bands[0])
+	}
+	if db2.Name() != "Data1" {
+		t.Errorf("Band Name: got %q, want Data1", db2.Name())
+	}
+	if db2.Filter() != "[Amount] > 0" {
+		t.Errorf("Band Filter: got %q", db2.Filter())
+	}
+
+	// Verify text object inside band.
+	if db2.Objects().Len() != 1 {
+		t.Fatalf("Band objects: got %d, want 1", db2.Objects().Len())
+	}
+	txt2, ok := db2.Objects().Get(0).(*object.TextObject)
+	if !ok {
+		t.Fatalf("Object type: got %T, want *object.TextObject", db2.Objects().Get(0))
+	}
+	if txt2.Text() != "Hello [Name]" {
+		t.Errorf("TextObject.Text: got %q, want 'Hello [Name]'", txt2.Text())
+	}
+	if txt2.Left() != 10 {
+		t.Errorf("TextObject.Left: got %v, want 10", txt2.Left())
+	}
+}
+
+// TestRoundTrip_SaveLoad_PageHeaderFooter verifies that singleton band slots
+// (PageHeader, PageFooter) survive a SaveToString / LoadFromString round-trip.
+func TestRoundTrip_SaveLoad_PageHeaderFooter(t *testing.T) {
+	r := reportpkg.NewReport()
+	pg := reportpkg.NewReportPage()
+	pg.SetName("Page1")
+
+	ph := band.NewPageHeaderBand()
+	ph.SetName("PageHeader1")
+	ph.SetHeight(40)
+
+	pf := band.NewPageFooterBand()
+	pf.SetName("PageFooter1")
+	pf.SetHeight(30)
+
+	pg.SetPageHeader(ph)
+	pg.SetPageFooter(pf)
+	r.AddPage(pg)
+
+	xmlStr, err := r.SaveToString()
+	if err != nil {
+		t.Fatalf("SaveToString: %v", err)
+	}
+
+	for _, want := range []string{"<PageHeader ", "<PageFooter "} {
+		if !strings.Contains(xmlStr, want) {
+			t.Errorf("XML missing %q:\n%s", want, xmlStr)
+		}
+	}
+
+	r2 := reportpkg.NewReport()
+	if err := r2.LoadFromString(xmlStr); err != nil {
+		t.Fatalf("LoadFromString: %v", err)
+	}
+
+	pages := r2.Pages()
+	if len(pages) != 1 {
+		t.Fatalf("Pages: got %d, want 1", len(pages))
+	}
+	p2 := pages[0]
+	if p2.PageHeader() == nil {
+		t.Fatal("PageHeader should not be nil after round-trip")
+	}
+	if p2.PageHeader().Name() != "PageHeader1" {
+		t.Errorf("PageHeader Name: got %q, want PageHeader1", p2.PageHeader().Name())
+	}
+	if p2.PageFooter() == nil {
+		t.Fatal("PageFooter should not be nil after round-trip")
+	}
+}
+
 // ── min helper (Go 1.25 has built-in min, but keep local for safety) ──────────
 
 func min(a, b int) int {

@@ -283,8 +283,11 @@ func (b *BandBase) UpdateLayout(dx, dy float32) {
 
 // --- Serialization ---
 
-// Serialize writes BandBase properties that differ from defaults.
-func (b *BandBase) Serialize(w report.Writer) error {
+// serializeAttrs writes BandBase XML attributes only (no child elements).
+// This is called by derived band types that need to add their own attributes
+// before the child elements are written, because XML attributes must precede
+// nested child elements in a streaming encoder.
+func (b *BandBase) serializeAttrs(w report.Writer) error {
 	if err := b.BreakableComponent.Serialize(w); err != nil {
 		return err
 	}
@@ -312,13 +315,27 @@ func (b *BandBase) Serialize(w report.Writer) error {
 	if b.afterLayoutEvent != "" {
 		w.WriteStr("AfterLayoutEvent", b.afterLayoutEvent)
 	}
-	// Write child objects.
+	return nil
+}
+
+// serializeChildren writes the BandBase child object elements.
+// Must be called after all attributes have been written.
+func (b *BandBase) serializeChildren(w report.Writer) error {
 	for i := 0; i < b.objects.Len(); i++ {
 		if err := w.WriteObject(b.objects.Get(i)); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// Serialize writes BandBase properties that differ from defaults,
+// followed by child object elements.
+func (b *BandBase) Serialize(w report.Writer) error {
+	if err := b.serializeAttrs(w); err != nil {
+		return err
+	}
+	return b.serializeChildren(w)
 }
 
 // Deserialize reads BandBase properties.
@@ -347,3 +364,6 @@ type ChildBand struct {
 func NewChildBand() *ChildBand {
 	return &ChildBand{BandBase: *NewBandBase()}
 }
+
+// TypeName returns the FRX element name for this band.
+func (*ChildBand) TypeName() string { return "Child" }

@@ -11,6 +11,7 @@ import (
 	"github.com/andrewloable/go-fastreport/export"
 	"github.com/andrewloable/go-fastreport/export/html"
 	"github.com/andrewloable/go-fastreport/export/pdf"
+	"github.com/andrewloable/go-fastreport/object"
 	"github.com/andrewloable/go-fastreport/preview"
 	"github.com/andrewloable/go-fastreport/reportpkg"
 )
@@ -321,6 +322,13 @@ func TestPDFExport_MultiPage_BandNames(t *testing.T) {
 		db.SetName("DataBand")
 		db.SetVisible(true)
 		db.SetHeight(100)
+		// Add a text label so its content appears in the PDF content stream.
+		lbl := object.NewTextObject()
+		lbl.SetName("Label")
+		lbl.SetWidth(200)
+		lbl.SetHeight(20)
+		lbl.SetText("DataBand")
+		db.AddChild(lbl)
 		rows := make([]string, 15)
 		for i := range rows {
 			rows[i] = "row"
@@ -403,12 +411,24 @@ func TestPDFExport_PageHeaderFooter(t *testing.T) {
 		hdr.SetName("Header")
 		hdr.SetVisible(true)
 		hdr.SetHeight(20)
+		hdrLabel := object.NewTextObject()
+		hdrLabel.SetName("HdrLabel")
+		hdrLabel.SetWidth(200)
+		hdrLabel.SetHeight(15)
+		hdrLabel.SetText("Header")
+		hdr.AddChild(hdrLabel)
 		pg.SetPageHeader(hdr)
 
 		ftr := band.NewPageFooterBand()
 		ftr.SetName("Footer")
 		ftr.SetVisible(true)
 		ftr.SetHeight(15)
+		ftrLabel := object.NewTextObject()
+		ftrLabel.SetName("FtrLabel")
+		ftrLabel.SetWidth(200)
+		ftrLabel.SetHeight(10)
+		ftrLabel.SetText("Footer")
+		ftr.AddChild(ftrLabel)
 		pg.SetPageFooter(ftr)
 	})
 

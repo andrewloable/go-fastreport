@@ -2,8 +2,10 @@ package engine
 
 import (
 	"github.com/andrewloable/go-fastreport/band"
+	"github.com/andrewloable/go-fastreport/object"
 	"github.com/andrewloable/go-fastreport/preview"
 	"github.com/andrewloable/go-fastreport/report"
+	"github.com/andrewloable/go-fastreport/utils"
 )
 
 // ── CanPrint ──────────────────────────────────────────────────────────────────
@@ -55,22 +57,91 @@ func (e *ReportEngine) CanPrint(obj *report.ReportComponentBase, pageIndex, tota
 // ── CalcBandHeight ────────────────────────────────────────────────────────────
 
 // CalcBandHeight returns the rendered height of a band in pixels.
-// For bands that implement CalcHeight (BreakableComponent), it calls that
-// method; otherwise it uses the declared Height.
+// If the band has CanGrow or CanShrink set, child TextObjects are measured
+// and the height is adjusted to fit their content.
 func (e *ReportEngine) CalcBandHeight(b report.Base) float32 {
-	type hasCalcHeight interface {
-		CalcHeight() float32
+	bb, ok := b.(*band.BandBase)
+	if !ok {
+		type hasHeight interface{ Height() float32 }
+		if h, ok2 := b.(hasHeight); ok2 {
+			return h.Height()
+		}
+		return 0
 	}
-	if ch, ok := b.(hasCalcHeight); ok {
-		return ch.CalcHeight()
+
+	baseHeight := bb.Height()
+	canGrow := bb.CanGrow()
+	canShrink := bb.CanShrink()
+
+	if !canGrow && !canShrink {
+		return baseHeight
 	}
-	type hasHeight interface {
-		Height() float32
+
+	// Measure TextObject children to compute the required height.
+	requiredHeight := calcBandRequiredHeight(bb, baseHeight)
+
+	if canGrow && requiredHeight > baseHeight {
+		return requiredHeight
 	}
-	if h, ok := b.(hasHeight); ok {
-		return h.Height()
+	if canShrink && requiredHeight < baseHeight {
+		return requiredHeight
 	}
-	return 0
+	return baseHeight
+}
+
+// calcBandRequiredHeight measures all TextObject children of the band and
+// returns the minimum height needed to display all content without clipping.
+// baseHeight is used as the starting lower bound.
+func calcBandRequiredHeight(bb *band.BandBase, baseHeight float32) float32 {
+	objs := bb.Objects()
+	if objs == nil || objs.Len() == 0 {
+		return baseHeight
+	}
+
+	// We need the maximum bottom edge of all expanded text objects.
+	maxBottom := float32(0)
+
+	for i := 0; i < objs.Len(); i++ {
+		obj := objs.Get(i)
+		txt, ok := obj.(*object.TextObject)
+		if !ok {
+			// Non-text objects use their declared bottom edge.
+			type hasDims interface {
+				Top() float32
+				Height() float32
+			}
+			if d, ok2 := obj.(hasDims); ok2 {
+				bottom := d.Top() + d.Height()
+				if bottom > maxBottom {
+					maxBottom = bottom
+				}
+			}
+			continue
+		}
+
+		// Measure the text content.
+		objWidth := txt.Width()
+		if objWidth <= 0 {
+			objWidth = bb.Width()
+		}
+		_, textH := utils.MeasureText(txt.Text(), txt.Font(), objWidth)
+
+		declaredH := txt.Height()
+		usedH := textH
+		if usedH < declaredH {
+			usedH = declaredH
+		}
+
+		bottom := txt.Top() + usedH
+		if bottom > maxBottom {
+			maxBottom = bottom
+		}
+	}
+
+	if maxBottom < baseHeight {
+		return baseHeight
+	}
+	return maxBottom
 }
 
 // ── AddBandToPreparedPages ────────────────────────────────────────────────────

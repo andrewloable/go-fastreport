@@ -15,11 +15,17 @@ import (
 // preview.PreparedObject snapshots and appends them to pb.
 // It evaluates [bracket] expressions in TextObject text via Report.Calc().
 func (e *ReportEngine) populateBandObjects(bb *band.BandBase, pb *preview.PreparedBand) {
-	objs := bb.Objects()
+	if bb == nil {
+		return
+	}
+	e.populateBandObjects2(bb.Objects(), pb)
+}
+
+// populateBandObjects2 converts objects from any ObjectCollection into PreparedObjects.
+func (e *ReportEngine) populateBandObjects2(objs *report.ObjectCollection, pb *preview.PreparedBand) {
 	if objs == nil {
 		return
 	}
-
 	for i := 0; i < objs.Len(); i++ {
 		obj := objs.Get(i)
 		if po := e.buildPreparedObject(obj); po != nil {

@@ -38,8 +38,9 @@ func (h *HeaderFooterBandBase) RepeatOnEveryPage() bool { return h.repeatOnEvery
 func (h *HeaderFooterBandBase) SetRepeatOnEveryPage(v bool) { h.repeatOnEveryPage = v }
 
 // Serialize writes HeaderFooterBandBase properties that differ from defaults.
-func (h *HeaderFooterBandBase) Serialize(w report.Writer) error {
-	if err := h.BandBase.Serialize(w); err != nil {
+// serializeAttrs writes HeaderFooterBandBase attributes only (no children).
+func (h *HeaderFooterBandBase) serializeAttrs(w report.Writer) error {
+	if err := h.BandBase.serializeAttrs(w); err != nil {
 		return err
 	}
 	if h.keepWithData {
@@ -49,6 +50,13 @@ func (h *HeaderFooterBandBase) Serialize(w report.Writer) error {
 		w.WriteBool("RepeatOnEveryPage", true)
 	}
 	return nil
+}
+
+func (h *HeaderFooterBandBase) Serialize(w report.Writer) error {
+	if err := h.serializeAttrs(w); err != nil {
+		return err
+	}
+	return h.BandBase.serializeChildren(w)
 }
 
 // Deserialize reads HeaderFooterBandBase properties.

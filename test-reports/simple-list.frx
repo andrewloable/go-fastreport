@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?><Report ReportName="SimpleList" ReportAuthor="Test">
+  <ReportPage Name="Page1">
+    <PageHeader Name="PageHeader1" Height="30">
+      <TextObject Name="TitleText" Left="0" Top="5" Width="400" Height="20" Text="Simple List Report"/>
+    </PageHeader>
+    <Data Name="DataBand1" Height="20" Filter="[Value] != &#34;&#34;">
+      <TextObject Name="ValueText" Left="0" Top="0" Width="300" Height="18" Text="[Value]"/>
+    </Data>
+    <PageFooter Name="PageFooter1" Height="20">
+      <TextObject Name="PageNumText" Left="300" Top="2" Width="100" Height="16" Text="Page [PageNumber]"/>
+    </PageFooter>
+  </ReportPage>
+</Report>

@@ -34,6 +34,9 @@ func NewReportTitleBand() *ReportTitleBand {
 	return &ReportTitleBand{BandBase: *NewBandBase()}
 }
 
+// TypeName returns the FRX element name for this band.
+func (*ReportTitleBand) TypeName() string { return "ReportTitle" }
+
 // ReportSummaryBand prints once at the end of a report.
 // It is the Go equivalent of FastReport.ReportSummaryBand.
 type ReportSummaryBand struct{ HeaderFooterBandBase }
@@ -42,6 +45,9 @@ type ReportSummaryBand struct{ HeaderFooterBandBase }
 func NewReportSummaryBand() *ReportSummaryBand {
 	return &ReportSummaryBand{HeaderFooterBandBase: *NewHeaderFooterBandBase()}
 }
+
+// TypeName returns the FRX element name for this band.
+func (*ReportSummaryBand) TypeName() string { return "ReportSummary" }
 
 // PageHeaderBand prints at the top of each report page.
 // It is the Go equivalent of FastReport.PageHeaderBand.
@@ -52,6 +58,9 @@ func NewPageHeaderBand() *PageHeaderBand {
 	return &PageHeaderBand{BandBase: *NewBandBase()}
 }
 
+// TypeName returns the FRX element name for this band.
+func (*PageHeaderBand) TypeName() string { return "PageHeader" }
+
 // PageFooterBand prints at the bottom of each report page.
 // It is the Go equivalent of FastReport.PageFooterBand.
 type PageFooterBand struct{ BandBase }
@@ -60,6 +69,9 @@ type PageFooterBand struct{ BandBase }
 func NewPageFooterBand() *PageFooterBand {
 	return &PageFooterBand{BandBase: *NewBandBase()}
 }
+
+// TypeName returns the FRX element name for this band.
+func (*PageFooterBand) TypeName() string { return "PageFooter" }
 
 // ColumnHeaderBand prints at the top of each column in a multi-column layout.
 // It is the Go equivalent of FastReport.ColumnHeaderBand.
@@ -70,6 +82,9 @@ func NewColumnHeaderBand() *ColumnHeaderBand {
 	return &ColumnHeaderBand{BandBase: *NewBandBase()}
 }
 
+// TypeName returns the FRX element name for this band.
+func (*ColumnHeaderBand) TypeName() string { return "ColumnHeader" }
+
 // ColumnFooterBand prints at the bottom of each column.
 // It is the Go equivalent of FastReport.ColumnFooterBand.
 type ColumnFooterBand struct{ BandBase }
@@ -78,6 +93,9 @@ type ColumnFooterBand struct{ BandBase }
 func NewColumnFooterBand() *ColumnFooterBand {
 	return &ColumnFooterBand{BandBase: *NewBandBase()}
 }
+
+// TypeName returns the FRX element name for this band.
+func (*ColumnFooterBand) TypeName() string { return "ColumnFooter" }
 
 // DataHeaderBand prints before the data rows of a DataBand.
 // It is the Go equivalent of FastReport.DataHeaderBand.
@@ -88,6 +106,9 @@ func NewDataHeaderBand() *DataHeaderBand {
 	return &DataHeaderBand{HeaderFooterBandBase: *NewHeaderFooterBandBase()}
 }
 
+// TypeName returns the FRX element name for this band.
+func (*DataHeaderBand) TypeName() string { return "DataHeader" }
+
 // DataFooterBand prints after the data rows of a DataBand.
 // It is the Go equivalent of FastReport.DataFooterBand.
 type DataFooterBand struct{ HeaderFooterBandBase }
@@ -96,6 +117,9 @@ type DataFooterBand struct{ HeaderFooterBandBase }
 func NewDataFooterBand() *DataFooterBand {
 	return &DataFooterBand{HeaderFooterBandBase: *NewHeaderFooterBandBase()}
 }
+
+// TypeName returns the FRX element name for this band.
+func (*DataFooterBand) TypeName() string { return "DataFooter" }
 
 // GroupFooterBand prints at the end of a group.
 // It is the Go equivalent of FastReport.GroupFooterBand.
@@ -106,6 +130,9 @@ func NewGroupFooterBand() *GroupFooterBand {
 	return &GroupFooterBand{HeaderFooterBandBase: *NewHeaderFooterBandBase()}
 }
 
+// TypeName returns the FRX element name for this band.
+func (*GroupFooterBand) TypeName() string { return "GroupFooter" }
+
 // OverlayBand prints on top of all other band content on a page.
 // It is the Go equivalent of FastReport.OverlayBand.
 type OverlayBand struct{ BandBase }
@@ -114,6 +141,9 @@ type OverlayBand struct{ BandBase }
 func NewOverlayBand() *OverlayBand {
 	return &OverlayBand{BandBase: *NewBandBase()}
 }
+
+// TypeName returns the FRX element name for this band.
+func (*OverlayBand) TypeName() string { return "Overlay" }
 
 // -----------------------------------------------------------------------
 // SortOrder enum (used by GroupHeaderBand)
@@ -156,6 +186,9 @@ func NewGroupHeaderBand() *GroupHeaderBand {
 		sortOrder:            SortOrderAscending,
 	}
 }
+
+// TypeName returns the FRX element name for this band.
+func (*GroupHeaderBand) TypeName() string { return "GroupHeader" }
 
 // NestedGroup returns the inner (nested) group header band.
 func (g *GroupHeaderBand) NestedGroup() *GroupHeaderBand { return g.nestedGroup }
@@ -200,8 +233,9 @@ func (g *GroupHeaderBand) ResetPageNumber() bool { return g.resetPageNumber }
 func (g *GroupHeaderBand) SetResetPageNumber(v bool) { g.resetPageNumber = v }
 
 // Serialize writes GroupHeaderBand properties that differ from defaults.
+// Attributes are written before child objects.
 func (g *GroupHeaderBand) Serialize(w report.Writer) error {
-	if err := g.HeaderFooterBandBase.Serialize(w); err != nil {
+	if err := g.HeaderFooterBandBase.serializeAttrs(w); err != nil {
 		return err
 	}
 	if g.condition != "" {
@@ -216,7 +250,7 @@ func (g *GroupHeaderBand) Serialize(w report.Writer) error {
 	if g.resetPageNumber {
 		w.WriteBool("ResetPageNumber", true)
 	}
-	return nil
+	return g.BandBase.serializeChildren(w)
 }
 
 // Deserialize reads GroupHeaderBand properties.
@@ -280,6 +314,9 @@ func NewDataBand() *DataBand {
 		columns:  NewBandColumns(),
 	}
 }
+
+// TypeName returns the FRX element name for this band.
+func (*DataBand) TypeName() string { return "Data" }
 
 // DataSourceRef returns the bound data source (nil if not set).
 func (d *DataBand) DataSourceRef() DataSource { return d.dataSource }
@@ -372,10 +409,13 @@ func (d *DataBand) KeepSummary() bool { return d.keepSummary }
 func (d *DataBand) SetKeepSummary(v bool) { d.keepSummary = v }
 
 // Serialize writes DataBand properties that differ from defaults.
+// Attributes are written before child objects (required by the streaming XML encoder).
 func (d *DataBand) Serialize(w report.Writer) error {
-	if err := d.BandBase.Serialize(w); err != nil {
+	// Write BandBase + parent attrs first (no children yet).
+	if err := d.BandBase.serializeAttrs(w); err != nil {
 		return err
 	}
+	// DataBand-specific attrs.
 	if d.filter != "" {
 		w.WriteStr("Filter", d.filter)
 	}
@@ -418,7 +458,8 @@ func (d *DataBand) Serialize(w report.Writer) error {
 	if d.keepSummary {
 		w.WriteBool("KeepSummary", true)
 	}
-	return nil
+	// Write child objects after all attrs.
+	return d.BandBase.serializeChildren(w)
 }
 
 // Deserialize reads DataBand properties.

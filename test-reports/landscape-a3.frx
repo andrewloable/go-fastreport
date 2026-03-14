@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?><Report ReportName="LandscapeA3" ReportAuthor="Test" DoublePass="true">
+  <ReportPage Name="Page1" PaperWidth="420" PaperHeight="297" Landscape="true" LeftMargin="15" TopMargin="15" RightMargin="15" BottomMargin="15">
+    <ReportTitle Name="ReportTitle1" Height="40">
+      <TextObject Name="TitleText" Left="0" Top="10" Width="600" Height="28" Text="Landscape A3 Report"/>
+    </ReportTitle>
+    <ColumnHeader Name="ColumnHeader1" Height="25">
+      <TextObject Name="ColA" Left="0" Top="2" Width="200" Height="20" Text="Column A"/>
+      <TextObject Name="ColB" Left="210" Top="2" Width="200" Height="20" Text="Column B"/>
+    </ColumnHeader>
+    <Data Name="DataBand1" Height="20">
+      <TextObject Name="ValA" Left="0" Top="0" Width="200" Height="18" Text="[ColA]"/>
+      <TextObject Name="ValB" Left="210" Top="0" Width="200" Height="18" Text="[ColB]"/>
+    </Data>
+    <ColumnFooter Name="ColumnFooter1" Height="20">
+      <TextObject Name="ColFooter" Left="0" Top="2" Width="400" Height="16" Text="End of columns"/>
+    </ColumnFooter>
+  </ReportPage>
+</Report>

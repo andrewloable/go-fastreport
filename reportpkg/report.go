@@ -45,6 +45,11 @@ type Report struct {
 	// Script event names.
 	StartReportEvent  string
 	FinishReportEvent string
+
+	// BaseReportPath is the path to the base (parent) report file.
+	// When non-empty, the base report is loaded and merged into this report
+	// before the engine runs.
+	BaseReportPath string
 }
 
 // NewReport creates a Report with defaults.

@@ -67,6 +67,9 @@ type ReportPage struct {
 
 	// Page-level columns.
 	Columns PageColumns
+
+	// inherited marks this page as coming from a base (parent) report.
+	inherited bool
 }
 
 // NewReportPage creates a ReportPage with A4 defaults.
@@ -147,6 +150,64 @@ func (p *ReportPage) Fill() style.Fill { return p.fill }
 
 // SetFill sets the page background fill.
 func (p *ReportPage) SetFill(f style.Fill) { p.fill = f }
+
+// Inherited returns true if this page originates from a base report.
+func (p *ReportPage) Inherited() bool { return p.inherited }
+
+// SetInherited marks the page as inherited.
+func (p *ReportPage) SetInherited(v bool) { p.inherited = v }
+
+// Clone returns a shallow copy of the page (pointer fields shared).
+func (p *ReportPage) Clone() *ReportPage {
+	cp := *p
+	// Copy band slice so appends don't affect original.
+	cp.bands = make([]report.Base, len(p.bands))
+	copy(cp.bands, p.bands)
+	return &cp
+}
+
+// mergeFromBase adds bands from base page that are not already present
+// in p (matched by Name).
+func (p *ReportPage) mergeFromBase(base *ReportPage) {
+	childNames := make(map[string]bool, len(p.bands))
+	for _, b := range p.bands {
+		childNames[b.Name()] = true
+	}
+
+	// Inherit slot-bands from base if child doesn't have them.
+	if p.pageHeader == nil && base.pageHeader != nil {
+		p.pageHeader = base.pageHeader
+	}
+	if p.reportTitle == nil && base.reportTitle != nil {
+		p.reportTitle = base.reportTitle
+	}
+	if p.columnHeader == nil && base.columnHeader != nil {
+		p.columnHeader = base.columnHeader
+	}
+	if p.reportSummary == nil && base.reportSummary != nil {
+		p.reportSummary = base.reportSummary
+	}
+	if p.columnFooter == nil && base.columnFooter != nil {
+		p.columnFooter = base.columnFooter
+	}
+	if p.pageFooter == nil && base.pageFooter != nil {
+		p.pageFooter = base.pageFooter
+	}
+	if p.overlay == nil && base.overlay != nil {
+		p.overlay = base.overlay
+	}
+
+	// Prepend ordered base bands that the child doesn't have.
+	var inherited []report.Base
+	for _, b := range base.bands {
+		if !childNames[b.Name()] {
+			inherited = append(inherited, b)
+		}
+	}
+	if len(inherited) > 0 {
+		p.bands = append(inherited, p.bands...)
+	}
+}
 
 // --- Serialization ---
 

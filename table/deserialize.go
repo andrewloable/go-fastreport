@@ -32,11 +32,11 @@ func (t *TableBase) DeserializeChild(childType string, r report.Reader) bool {
 					if !moreKids {
 						break
 					}
-					_ = r.FinishChild()
+					if r.FinishChild() != nil { break }
 				}
 				row.AddCell(cell)
 			}
-			_ = r.FinishChild()
+			if r.FinishChild() != nil { break }
 		}
 		t.rows = append(t.rows, row)
 		return true

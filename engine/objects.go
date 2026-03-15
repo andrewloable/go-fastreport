@@ -16,8 +16,10 @@ import (
 	"github.com/andrewloable/go-fastreport/object"
 	"github.com/andrewloable/go-fastreport/preview"
 	"github.com/andrewloable/go-fastreport/report"
+	"github.com/andrewloable/go-fastreport/sparkline"
 	"github.com/andrewloable/go-fastreport/style"
 	"github.com/andrewloable/go-fastreport/table"
+	"github.com/andrewloable/go-fastreport/utils"
 )
 
 
@@ -455,10 +457,10 @@ func (e *ReportEngine) buildPreparedObject(obj report.Base) *preview.PreparedObj
 		po.BlobIdx = e.renderGaugeBlob(v.Name(), gauge.RenderSimpleProgress(v, int(geom.Width()), int(geom.Height())))
 
 	case *object.RichObject:
-		// Render RTF text as plain text; full RTF rendering is handled at export time.
+		// Strip RTF control words to get plain text, then evaluate bracket expressions.
 		po.Kind = preview.ObjectTypeText
 		po.TextColor = color.RGBA{A: 255}
-		po.Text = e.evalText(v.Text())
+		po.Text = e.evalText(utils.StripRTF(v.Text()))
 
 	case *object.SVGObject:
 		// Store the raw SVG XML in BlobStore.  HTML exporters embed it inline;
@@ -472,8 +474,13 @@ func (e *ReportEngine) buildPreparedObject(obj report.Base) *preview.PreparedObj
 		}
 
 	case *object.SparklineObject:
-		// Sparkline chart rendered as a picture blob at export time.
 		po.Kind = preview.ObjectTypePicture
+		if series := sparkline.DecodeChartData(v.ChartData); series != nil {
+			img := sparkline.Render(series, int(geom.Width()), int(geom.Height()))
+			if img != nil {
+				po.BlobIdx = e.renderGaugeBlob(v.Name(), img)
+			}
+		}
 
 	case *object.AdvMatrixObject:
 		// Render the physical table layout as a grid of text PreparedObjects.

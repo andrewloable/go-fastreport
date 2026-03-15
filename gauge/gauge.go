@@ -89,6 +89,23 @@ type GaugeLabel struct {
 	Text string
 }
 
+// ── SimpleSubScale ────────────────────────────────────────────────────────────
+
+// SimpleSubScale controls one of the two subscales on a SimpleGauge/SimpleScale.
+// The first subscale appears above (or left of) the pointer; the second below
+// (or right of) it.
+type SimpleSubScale struct {
+	// Enabled controls whether this subscale is drawn (default: true).
+	Enabled bool
+	// ShowCaption controls whether tick labels are drawn (default: true).
+	ShowCaption bool
+}
+
+// NewSimpleSubScale creates a SimpleSubScale with defaults (both enabled).
+func NewSimpleSubScale() SimpleSubScale {
+	return SimpleSubScale{Enabled: true, ShowCaption: true}
+}
+
 // ── GaugeObject (base) ────────────────────────────────────────────────────────
 
 // GaugeObject is the base type for all gauge variants.
@@ -397,15 +414,21 @@ type SimpleGauge struct {
 	ShowText bool
 	// TextFormat is a fmt.Sprintf format string for the value text.
 	TextFormat string
+	// FirstSubScale controls the top/left subscale on the scale track.
+	FirstSubScale SimpleSubScale
+	// SecondSubScale controls the bottom/right subscale on the scale track.
+	SecondSubScale SimpleSubScale
 }
 
 // NewSimpleGauge creates a SimpleGauge with defaults.
 func NewSimpleGauge() *SimpleGauge {
 	return &SimpleGauge{
-		GaugeObject: *NewGaugeObject(),
-		Shape:       SimpleGaugeShapeRectangle,
-		ShowText:    true,
-		TextFormat:  "%g%%",
+		GaugeObject:    *NewGaugeObject(),
+		Shape:          SimpleGaugeShapeRectangle,
+		ShowText:       true,
+		TextFormat:     "%g%%",
+		FirstSubScale:  NewSimpleSubScale(),
+		SecondSubScale: NewSimpleSubScale(),
 	}
 }
 
@@ -437,6 +460,20 @@ func (g *SimpleGauge) Serialize(w report.Writer) error {
 	if g.TextFormat != "%g%%" {
 		w.WriteStr("TextFormat", g.TextFormat)
 	}
+	// FirstSubScale (defaults: Enabled=true, ShowCaption=true).
+	if !g.FirstSubScale.Enabled {
+		w.WriteBool("Scale.FirstSubScale.Enabled", false)
+	}
+	if !g.FirstSubScale.ShowCaption {
+		w.WriteBool("Scale.FirstSubScale.ShowCaption", false)
+	}
+	// SecondSubScale.
+	if !g.SecondSubScale.Enabled {
+		w.WriteBool("Scale.SecondSubScale.Enabled", false)
+	}
+	if !g.SecondSubScale.ShowCaption {
+		w.WriteBool("Scale.SecondSubScale.ShowCaption", false)
+	}
 	return nil
 }
 
@@ -448,6 +485,12 @@ func (g *SimpleGauge) Deserialize(r report.Reader) error {
 	g.Shape = SimpleGaugeShape(r.ReadInt("Shape", 0))
 	g.ShowText = r.ReadBool("ShowText", true)
 	g.TextFormat = r.ReadStr("TextFormat", "%g%%")
+	// FirstSubScale.
+	g.FirstSubScale.Enabled = r.ReadBool("Scale.FirstSubScale.Enabled", true)
+	g.FirstSubScale.ShowCaption = r.ReadBool("Scale.FirstSubScale.ShowCaption", true)
+	// SecondSubScale.
+	g.SecondSubScale.Enabled = r.ReadBool("Scale.SecondSubScale.Enabled", true)
+	g.SecondSubScale.ShowCaption = r.ReadBool("Scale.SecondSubScale.ShowCaption", true)
 	return nil
 }
 

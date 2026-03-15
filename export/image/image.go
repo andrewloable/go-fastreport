@@ -242,7 +242,14 @@ func (e *Exporter) renderObject(obj preview.PreparedObject, bandTop float32) {
 			e.drawLine(x+w, y+h/2, x+w/2, y+h, shapeColor)
 			e.drawLine(x+w/2, y+h, x, y+h/2, shapeColor)
 			e.drawLine(x, y+h/2, x+w/2, y, shapeColor)
-		default: // Rectangle (0) and RoundRectangle (1) — simplified to plain rect
+		case 1: // RoundRectangle — use ShapeCurve as corner radius.
+			radius := int(math.Round(float64(obj.ShapeCurve)))
+			if radius <= 0 {
+				e.drawRect(bounds, shapeColor)
+			} else {
+				e.drawRoundRect(x, y, w, h, radius, shapeColor)
+			}
+		default: // Rectangle (0).
 			e.drawRect(bounds, shapeColor)
 		}
 		e.drawBorderLines(obj.Border, x, y, w, h)
@@ -398,6 +405,57 @@ func (e *Exporter) drawEllipse(x, y, w, h int, c color.RGBA) {
 		if px >= bounds.Min.X && px < bounds.Max.X && py >= bounds.Min.Y && py < bounds.Max.Y {
 			e.curPage.SetRGBA(px, py, c)
 		}
+	}
+}
+
+// drawRoundRect draws the 1-pixel outline of a rounded rectangle.
+// The corners are quarter-circle arcs of the given radius.
+func (e *Exporter) drawRoundRect(x, y, w, h, radius int, c color.RGBA) {
+	if radius*2 > w {
+		radius = w / 2
+	}
+	if radius*2 > h {
+		radius = h / 2
+	}
+	if radius <= 0 {
+		e.drawRect(image.Rect(x, y, x+w, y+h), c)
+		return
+	}
+	r := float64(radius)
+	bounds := e.curPage.Bounds()
+	setPixel := func(px, py int) {
+		if px >= bounds.Min.X && px < bounds.Max.X && py >= bounds.Min.Y && py < bounds.Max.Y {
+			e.curPage.SetRGBA(px, py, c)
+		}
+	}
+	// Straight edges.
+	// Top and bottom between corner arcs.
+	for px := x + radius; px <= x+w-radius; px++ {
+		setPixel(px, y)
+		setPixel(px, y+h-1)
+	}
+	// Left and right between corner arcs.
+	for py := y + radius; py <= y+h-radius; py++ {
+		setPixel(x, py)
+		setPixel(x+w-1, py)
+	}
+	// Quarter-circle arcs at each corner.
+	steps := int(math.Pi * r / 2)
+	if steps < 8 {
+		steps = 8
+	}
+	for i := 0; i <= steps; i++ {
+		t := math.Pi / 2 * float64(i) / float64(steps)
+		dx := int(math.Round(r * math.Cos(t)))
+		dy := int(math.Round(r * math.Sin(t)))
+		// Top-right corner.
+		setPixel(x+w-1-radius+dx, y+radius-dy)
+		// Top-left corner.
+		setPixel(x+radius-dx, y+radius-dy)
+		// Bottom-right corner.
+		setPixel(x+w-1-radius+dx, y+h-1-radius+dy)
+		// Bottom-left corner.
+		setPixel(x+radius-dx, y+h-1-radius+dy)
 	}
 }
 

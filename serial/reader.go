@@ -6,6 +6,8 @@ import (
 	"io"
 	"strconv"
 	"strings"
+
+	"github.com/andrewloable/go-fastreport/utils"
 )
 
 // Reader implements report.Reader and decodes objects from FRX XML.
@@ -65,6 +67,18 @@ func NewReader(r io.Reader) *Reader {
 		dec:   xml.NewDecoder(r),
 		attrs: make(map[string]string),
 	}
+}
+
+// NewReaderWithPassword creates a Reader that transparently decrypts the
+// stream if it begins with the FastReport "rij" encryption signature.
+// If the stream is not encrypted the password is ignored.
+// Returns an error only if the stream cannot be read or decryption fails.
+func NewReaderWithPassword(r io.Reader, password string) (*Reader, bool, error) {
+	plain, encrypted, err := utils.PeekAndDecrypt(r, password)
+	if err != nil {
+		return nil, false, err
+	}
+	return NewReader(plain), encrypted, nil
 }
 
 // ReadObjectHeader reads the next XML start element and returns its type name.

@@ -19,6 +19,34 @@ const (
 	CellDuplicatesMergeNonEmpty
 )
 
+// cellDuplicatesName returns the FRX enum name string for CellDuplicates.
+func cellDuplicatesName(d CellDuplicates) string {
+	switch d {
+	case CellDuplicatesClear:
+		return "Clear"
+	case CellDuplicatesMerge:
+		return "Merge"
+	case CellDuplicatesMergeNonEmpty:
+		return "MergeNonEmpty"
+	default:
+		return "Show"
+	}
+}
+
+// parseCellDuplicates parses the FRX enum name string into a CellDuplicates value.
+func parseCellDuplicates(s string) CellDuplicates {
+	switch s {
+	case "Clear":
+		return CellDuplicatesClear
+	case "Merge":
+		return CellDuplicatesMerge
+	case "MergeNonEmpty":
+		return CellDuplicatesMergeNonEmpty
+	default:
+		return CellDuplicatesShow
+	}
+}
+
 // TableCell represents a single cell in a TableObject.
 // It embeds TextObject for text rendering and adds ColSpan, RowSpan and a
 // nested objects collection.
@@ -101,8 +129,9 @@ func (c *TableCell) Serialize(w report.Writer) error {
 	if c.rowSpan != 1 {
 		w.WriteInt("RowSpan", c.rowSpan)
 	}
+	// CellDuplicates is written as an enum name string (C# WriteValue convention).
 	if c.duplicates != CellDuplicatesShow {
-		w.WriteInt("Duplicates", int(c.duplicates))
+		w.WriteStr("CellDuplicates", cellDuplicatesName(c.duplicates))
 	}
 	for _, obj := range c.objects {
 		if err := w.WriteObject(obj); err != nil {
@@ -119,7 +148,7 @@ func (c *TableCell) Deserialize(r report.Reader) error {
 	}
 	c.colSpan = r.ReadInt("ColSpan", 1)
 	c.rowSpan = r.ReadInt("RowSpan", 1)
-	c.duplicates = CellDuplicates(r.ReadInt("Duplicates", 0))
+	c.duplicates = parseCellDuplicates(r.ReadStr("CellDuplicates", "Show"))
 	if c.colSpan < 1 {
 		c.colSpan = 1
 	}

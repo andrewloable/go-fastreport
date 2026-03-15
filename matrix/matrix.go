@@ -10,9 +10,10 @@ import (
 	"github.com/andrewloable/go-fastreport/table"
 )
 
-// ── Aggregate function ────────────────────────────────────────────────────────
+// ── Enumerations ──────────────────────────────────────────────────────────────
 
 // AggregateFunction determines how cell values are aggregated.
+// Matches FastReport.Matrix.MatrixAggregateFunction.
 type AggregateFunction int
 
 const (
@@ -23,54 +24,83 @@ const (
 	AggregateFunctionAvg                              // Average value.
 	AggregateFunctionCount                            // Count of rows.
 	AggregateFunctionCountDistinct                    // Count distinct values.
+	AggregateFunctionCustom                           // Custom (script-driven) aggregation.
 )
 
-// ── EvenStylePriority ─────────────────────────────────────────────────────────
-
-// EvenStylePriority controls which axis the even/odd style alternates on.
-type EvenStylePriority int
+// MatrixPercent controls how a cell value is expressed as a percentage.
+// Matches FastReport.Matrix.MatrixPercent.
+type MatrixPercent int
 
 const (
-	EvenStylePriorityRows    EvenStylePriority = iota // alternate on rows
-	EvenStylePriorityColumns                          // alternate on columns
+	MatrixPercentNone        MatrixPercent = iota // Raw value (no percentage).
+	MatrixPercentColumnTotal                      // As % of column total.
+	MatrixPercentRowTotal                         // As % of row total.
+	MatrixPercentGrandTotal                       // As % of grand total.
+)
+
+// SortOrder controls sort direction for header descriptors.
+// Matches FastReport.SortOrder.
+type SortOrder int
+
+const (
+	SortOrderNone       SortOrder = iota
+	SortOrderAscending            // Sort ascending (default).
+	SortOrderDescending           // Sort descending.
+)
+
+// MatrixEvenStylePriority controls which axis the even/odd style alternates on.
+// Matches FastReport.Matrix.MatrixEvenStylePriority.
+type MatrixEvenStylePriority int
+
+const (
+	MatrixEvenStylePriorityRows    MatrixEvenStylePriority = iota // alternate on rows (default)
+	MatrixEvenStylePriorityColumns                                // alternate on columns
 )
 
 // ── Descriptors ───────────────────────────────────────────────────────────────
 
 // Descriptor is the base for column/row/cell descriptors.
+// Matches FastReport.Matrix.MatrixDescriptor.
 type Descriptor struct {
 	// Expression is a report expression (e.g. "[DataSource.Field]").
 	Expression string
 }
 
 // HeaderDescriptor describes a column or row header group.
+// Matches FastReport.Matrix.MatrixHeaderDescriptor.
 type HeaderDescriptor struct {
 	Descriptor
 
-	// Sort controls sort direction ("" = none, "asc", "desc").
-	Sort string
-	// ShowTotal adds a total column/row for this header level.
-	ShowTotal bool
-	// TotalText is the caption for the total cell.
-	TotalText string
-	// InterleaveRows interlays rows between this header.
-	InterleaveRows bool
+	// Sort controls sort direction (default: Ascending).
+	Sort SortOrder
+	// Totals adds a total column/row for this header level (default: true).
+	Totals bool
+	// TotalsFirst places the total before data rows/columns (default: false).
+	TotalsFirst bool
+	// PageBreak inserts a page break after each group value (default: false).
+	PageBreak bool
+	// SuppressTotals suppresses the total when there is only one value (default: false).
+	SuppressTotals bool
 }
 
-// NewHeaderDescriptor creates a HeaderDescriptor with the given expression.
+// NewHeaderDescriptor creates a HeaderDescriptor with the given expression and C# defaults.
 func NewHeaderDescriptor(expr string) *HeaderDescriptor {
 	return &HeaderDescriptor{
 		Descriptor: Descriptor{Expression: expr},
-		TotalText:  "Total",
+		Sort:       SortOrderAscending,
+		Totals:     true,
 	}
 }
 
 // CellDescriptor describes a data cell with an aggregate function.
+// Matches FastReport.Matrix.MatrixCellDescriptor.
 type CellDescriptor struct {
 	Descriptor
 
-	// Function is the aggregate function applied to the cell values.
+	// Function is the aggregate function applied to the cell values (default: Sum).
 	Function AggregateFunction
+	// Percent controls percentage display (default: None).
+	Percent MatrixPercent
 }
 
 // NewCellDescriptor creates a CellDescriptor with the given expression and function.
@@ -84,6 +114,7 @@ func NewCellDescriptor(expr string, fn AggregateFunction) *CellDescriptor {
 // ── MatrixData ────────────────────────────────────────────────────────────────
 
 // MatrixData holds the descriptor collections for columns, rows and cells.
+// Matches FastReport.Matrix.MatrixData (container only, not serialized directly).
 type MatrixData struct {
 	// Columns are the column header descriptors (from outermost to innermost).
 	Columns []*HeaderDescriptor
@@ -186,14 +217,30 @@ type MatrixObject struct {
 	// from the FRX and used to resolve DataSource at engine run time.
 	DataSourceName string
 
-	// AutoSize enables automatic column/row sizing from content.
+	// Filter is a boolean expression for filtering data rows (default: "").
+	Filter string
+
+	// AutoSize enables automatic column/row sizing from content (default: true).
 	AutoSize bool
-	// CellsSideBySide renders multiple cell descriptors side by side.
+	// CellsSideBySide renders multiple cell descriptors side by side (default: false).
 	CellsSideBySide bool
-	// EvenStylePriority controls even-style alternation axis.
-	EvenStylePriority EvenStylePriority
-	// Style is the named style to apply (e.g. "Green").
+	// KeepCellsSideBySide keeps side-by-side cells together on page breaks (default: false).
+	KeepCellsSideBySide bool
+	// MatrixEvenStylePriority controls even-style alternation axis (default: Rows).
+	MatrixEvenStylePriority MatrixEvenStylePriority
+	// Style is the named built-in style to apply (e.g. "Green").
 	Style string
+	// ShowTitle shows the data source title row (default: false).
+	ShowTitle bool
+	// SplitRows allows data rows to split across pages (default: false).
+	SplitRows bool
+	// PrintIfEmpty prints the matrix even when there is no data (default: true).
+	PrintIfEmpty bool
+
+	// Event names for script hooks.
+	ManualBuildEvent  string
+	ModifyResultEvent string
+	AfterTotalsEvent  string
 
 	// accumulators holds aggregate state per cell key.
 	accumulators map[cellKey]*accumulator
@@ -207,10 +254,12 @@ type MatrixObject struct {
 	colIndex map[string]int
 }
 
-// New creates a MatrixObject with defaults.
+// New creates a MatrixObject with defaults matching the C# constructor.
 func New() *MatrixObject {
 	return &MatrixObject{
 		TableBase:    *table.NewTableBase(),
+		AutoSize:     true,
+		PrintIfEmpty: true,
 		accumulators: make(map[cellKey]*accumulator),
 		rowIndex:     make(map[string]int),
 		colIndex:     make(map[string]int),
@@ -344,17 +393,22 @@ func (hw *headerDescriptorWriter) Serialize(w report.Writer) error {
 	if hw.h.Expression != "" {
 		w.WriteStr("Expression", hw.h.Expression)
 	}
-	if hw.h.Sort != "" {
-		w.WriteStr("Sort", hw.h.Sort)
+	// Sort default is Ascending (1); only write when != Ascending.
+	if hw.h.Sort != SortOrderAscending {
+		w.WriteInt("Sort", int(hw.h.Sort))
 	}
-	if hw.h.ShowTotal {
-		w.WriteBool("ShowTotal", true)
+	// Totals default is true; write when false.
+	if !hw.h.Totals {
+		w.WriteBool("Totals", false)
 	}
-	if hw.h.TotalText != "" && hw.h.TotalText != "Total" {
-		w.WriteStr("TotalText", hw.h.TotalText)
+	if hw.h.TotalsFirst {
+		w.WriteBool("TotalsFirst", true)
 	}
-	if hw.h.InterleaveRows {
-		w.WriteBool("InterleaveRows", true)
+	if hw.h.PageBreak {
+		w.WriteBool("PageBreak", true)
+	}
+	if hw.h.SuppressTotals {
+		w.WriteBool("SuppressTotals", true)
 	}
 	return nil
 }
@@ -384,8 +438,12 @@ func (cw *cellDescriptorWriter) Serialize(w report.Writer) error {
 	if cw.c.Expression != "" {
 		w.WriteStr("Expression", cw.c.Expression)
 	}
-	if cw.c.Function != AggregateFunctionNone {
+	// Function default is Sum (1); write when != Sum.
+	if cw.c.Function != AggregateFunctionSum {
 		w.WriteInt("Function", int(cw.c.Function))
+	}
+	if cw.c.Percent != MatrixPercentNone {
+		w.WriteInt("Percent", int(cw.c.Percent))
 	}
 	return nil
 }
@@ -403,17 +461,43 @@ func (m *MatrixObject) Serialize(w report.Writer) error {
 	if m.DataSourceName != "" {
 		w.WriteStr("DataSource", m.DataSourceName)
 	}
-	if m.AutoSize {
-		w.WriteBool("AutoSize", true)
+	if m.Filter != "" {
+		w.WriteStr("Filter", m.Filter)
+	}
+	// AutoSize default is true; write when false.
+	if !m.AutoSize {
+		w.WriteBool("AutoSize", false)
 	}
 	if m.CellsSideBySide {
 		w.WriteBool("CellsSideBySide", true)
 	}
-	if m.EvenStylePriority != EvenStylePriorityRows {
-		w.WriteInt("EvenStylePriority", int(m.EvenStylePriority))
+	if m.KeepCellsSideBySide {
+		w.WriteBool("KeepCellsSideBySide", true)
+	}
+	if m.MatrixEvenStylePriority != MatrixEvenStylePriorityRows {
+		w.WriteInt("MatrixEvenStylePriority", int(m.MatrixEvenStylePriority))
 	}
 	if m.Style != "" {
 		w.WriteStr("Style", m.Style)
+	}
+	if m.ShowTitle {
+		w.WriteBool("ShowTitle", true)
+	}
+	if m.SplitRows {
+		w.WriteBool("SplitRows", true)
+	}
+	// PrintIfEmpty default is true; write when false.
+	if !m.PrintIfEmpty {
+		w.WriteBool("PrintIfEmpty", false)
+	}
+	if m.ManualBuildEvent != "" {
+		w.WriteStr("ManualBuildEvent", m.ManualBuildEvent)
+	}
+	if m.ModifyResultEvent != "" {
+		w.WriteStr("ModifyResultEvent", m.ModifyResultEvent)
+	}
+	if m.AfterTotalsEvent != "" {
+		w.WriteStr("AfterTotalsEvent", m.AfterTotalsEvent)
 	}
 	// Write descriptor child blocks.
 	if len(m.Data.Rows) > 0 {
@@ -440,15 +524,33 @@ func (m *MatrixObject) Deserialize(r report.Reader) error {
 		return err
 	}
 	m.DataSourceName = r.ReadStr("DataSource", "")
-	m.AutoSize = r.ReadBool("AutoSize", false)
+	m.Filter = r.ReadStr("Filter", "")
+	m.AutoSize = r.ReadBool("AutoSize", true)
 	m.CellsSideBySide = r.ReadBool("CellsSideBySide", false)
-	m.EvenStylePriority = EvenStylePriority(r.ReadInt("EvenStylePriority", 0))
+	m.KeepCellsSideBySide = r.ReadBool("KeepCellsSideBySide", false)
+	m.MatrixEvenStylePriority = MatrixEvenStylePriority(r.ReadInt("MatrixEvenStylePriority", 0))
 	m.Style = r.ReadStr("Style", "")
+	m.ShowTitle = r.ReadBool("ShowTitle", false)
+	m.SplitRows = r.ReadBool("SplitRows", false)
+	m.PrintIfEmpty = r.ReadBool("PrintIfEmpty", true)
+	m.ManualBuildEvent = r.ReadStr("ManualBuildEvent", "")
+	m.ModifyResultEvent = r.ReadStr("ModifyResultEvent", "")
+	m.AfterTotalsEvent = r.ReadStr("AfterTotalsEvent", "")
 	return nil
 }
 
 // DeserializeChild handles matrix-specific child elements (MatrixRows, MatrixColumns, MatrixCells).
 func (m *MatrixObject) DeserializeChild(childType string, r report.Reader) bool {
+	readHeader := func() *HeaderDescriptor {
+		return &HeaderDescriptor{
+			Descriptor:     Descriptor{Expression: r.ReadStr("Expression", "")},
+			Sort:           SortOrder(r.ReadInt("Sort", int(SortOrderAscending))),
+			Totals:         r.ReadBool("Totals", true),
+			TotalsFirst:    r.ReadBool("TotalsFirst", false),
+			PageBreak:      r.ReadBool("PageBreak", false),
+			SuppressTotals: r.ReadBool("SuppressTotals", false),
+		}
+	}
 	switch childType {
 	case "MatrixRows":
 		for {
@@ -457,16 +559,9 @@ func (m *MatrixObject) DeserializeChild(childType string, r report.Reader) bool 
 				break
 			}
 			if ct == "Header" {
-				hd := &HeaderDescriptor{
-					Descriptor:     Descriptor{Expression: r.ReadStr("Expression", "")},
-					Sort:           r.ReadStr("Sort", ""),
-					ShowTotal:      r.ReadBool("ShowTotal", false),
-					TotalText:      r.ReadStr("TotalText", "Total"),
-					InterleaveRows: r.ReadBool("InterleaveRows", false),
-				}
-				m.Data.Rows = append(m.Data.Rows, hd)
+				m.Data.Rows = append(m.Data.Rows, readHeader())
 			}
-			_ = r.FinishChild()
+			if r.FinishChild() != nil { break }
 		}
 		return true
 	case "MatrixColumns":
@@ -476,16 +571,9 @@ func (m *MatrixObject) DeserializeChild(childType string, r report.Reader) bool 
 				break
 			}
 			if ct == "Header" {
-				hd := &HeaderDescriptor{
-					Descriptor:     Descriptor{Expression: r.ReadStr("Expression", "")},
-					Sort:           r.ReadStr("Sort", ""),
-					ShowTotal:      r.ReadBool("ShowTotal", false),
-					TotalText:      r.ReadStr("TotalText", "Total"),
-					InterleaveRows: r.ReadBool("InterleaveRows", false),
-				}
-				m.Data.Columns = append(m.Data.Columns, hd)
+				m.Data.Columns = append(m.Data.Columns, readHeader())
 			}
-			_ = r.FinishChild()
+			if r.FinishChild() != nil { break }
 		}
 		return true
 	case "MatrixCells":
@@ -497,11 +585,12 @@ func (m *MatrixObject) DeserializeChild(childType string, r report.Reader) bool 
 			if ct == "Cell" {
 				cd := &CellDescriptor{
 					Descriptor: Descriptor{Expression: r.ReadStr("Expression", "")},
-					Function:   AggregateFunction(r.ReadInt("Function", 0)),
+					Function:   AggregateFunction(r.ReadInt("Function", int(AggregateFunctionSum))),
+					Percent:    MatrixPercent(r.ReadInt("Percent", 0)),
 				}
 				m.Data.Cells = append(m.Data.Cells, cd)
 			}
-			_ = r.FinishChild()
+			if r.FinishChild() != nil { break }
 		}
 		return true
 	}

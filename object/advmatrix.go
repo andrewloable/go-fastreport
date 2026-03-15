@@ -342,14 +342,14 @@ func (a *AdvMatrixObject) DeserializeChild(childType string, r report.Reader) bo
 					}
 					// Drain any grandchildren of the button (none expected in practice).
 					drainAdvChildren(r)
-					_ = r.FinishChild()
+					if r.FinishChild() != nil { break }
 				}
 				row.Cells = append(row.Cells, cell)
 			} else {
 				// Drain unexpected row children.
 				drainAdvChildren(r)
 			}
-			_ = r.FinishChild()
+			if r.FinishChild() != nil { break }
 		}
 		a.TableRows = append(a.TableRows, row)
 		return true
@@ -366,7 +366,7 @@ func (a *AdvMatrixObject) DeserializeChild(childType string, r report.Reader) bo
 			} else {
 				drainAdvChildren(r)
 			}
-			_ = r.FinishChild()
+			if r.FinishChild() != nil { break }
 		}
 		return true
 
@@ -382,7 +382,7 @@ func (a *AdvMatrixObject) DeserializeChild(childType string, r report.Reader) bo
 			} else {
 				drainAdvChildren(r)
 			}
-			_ = r.FinishChild()
+			if r.FinishChild() != nil { break }
 		}
 		return true
 
@@ -402,7 +402,7 @@ func drainAdvChildren(r report.Reader) {
 			break
 		}
 		drainAdvChildren(r)
-		_ = r.FinishChild()
+		if r.FinishChild() != nil { break }
 	}
 }
 
@@ -424,7 +424,7 @@ func readAdvDescriptor(r report.Reader) *AdvMatrixDescriptor {
 		} else {
 			drainAdvChildren(r)
 		}
-		_ = r.FinishChild()
+		if r.FinishChild() != nil { break }
 	}
 	return d
 }

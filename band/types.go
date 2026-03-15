@@ -534,7 +534,7 @@ func (d *DataBand) DeserializeChild(childType string, r report.Reader) bool {
 				if !ok2 {
 					break
 				}
-				_ = r.FinishChild()
+				if r.FinishChild() != nil { break }
 			}
 		} else {
 			// Drain unexpected element's children then finish it.
@@ -543,10 +543,10 @@ func (d *DataBand) DeserializeChild(childType string, r report.Reader) bool {
 				if !ok2 {
 					break
 				}
-				_ = r.FinishChild()
+				if r.FinishChild() != nil { break }
 			}
 		}
-		_ = r.FinishChild()
+		if r.FinishChild() != nil { break }
 	}
 	return true
 }

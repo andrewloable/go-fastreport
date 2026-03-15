@@ -556,9 +556,9 @@ func (t *TextObject) DeserializeChild(childType string, r report.Reader) bool {
 				if !ok2 {
 					break
 				}
-				_ = r.FinishChild()
+				if r.FinishChild() != nil { break }
 			}
-			_ = r.FinishChild()
+			if r.FinishChild() != nil { break }
 		}
 		return true
 	}
@@ -594,7 +594,7 @@ func (t *TextObject) DeserializeChild(childType string, r report.Reader) bool {
 			}
 			t.highlights = append(t.highlights, c)
 		}
-		_ = r.FinishChild()
+		if r.FinishChild() != nil { break }
 	}
 	return true
 }

@@ -512,8 +512,10 @@ func (p *PDF417Barcode) DefaultValue() string { return "PDF417" }
 // Returns a Code128Barcode for unknown types.
 func NewBarcodeByType(t BarcodeType) BarcodeBase {
 	switch t {
-	case BarcodeTypeCode128, BarcodeTypeGS1_128:
+	case BarcodeTypeCode128:
 		return NewCode128Barcode()
+	case BarcodeTypeGS1_128:
+		return NewGS1Barcode()
 	case BarcodeTypeCode39:
 		return NewCode39Barcode()
 	case BarcodeTypeQR:
@@ -524,6 +526,20 @@ func NewBarcodeByType(t BarcodeType) BarcodeBase {
 		return NewAztecBarcode()
 	case BarcodeTypePDF417:
 		return NewPDF417Barcode()
+	case BarcodeTypeMSI:
+		return NewMSIBarcode()
+	case BarcodeTypeMaxiCode:
+		return NewMaxiCodeBarcode()
+	case BarcodeTypeIntelligentMail:
+		return NewIntelligentMailBarcode()
+	case BarcodeTypePharmacode:
+		return NewPharmacodeBarcode()
+	case BarcodeTypePlessey:
+		return NewPlesseyBarcode()
+	case BarcodeTypePostNet:
+		return NewPostNetBarcode()
+	case BarcodeTypeSwissQR:
+		return NewSwissQRBarcode()
 	default:
 		return NewCode128Barcode()
 	}

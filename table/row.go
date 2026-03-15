@@ -26,11 +26,11 @@ type TableRow struct {
 	keepRows int
 }
 
-// NewTableRow creates a TableRow with sensible defaults.
+// NewTableRow creates a TableRow with defaults matching the C# constructor.
 func NewTableRow() *TableRow {
 	r := &TableRow{
 		ComponentBase: *report.NewComponentBase(),
-		maxHeight:     500, // reasonable default
+		maxHeight:     1000, // matches C# DefaultValue(1000)
 	}
 	r.SetHeight(30) // default row height
 	return r
@@ -99,7 +99,7 @@ func (r *TableRow) Serialize(w report.Writer) error {
 	if r.minHeight != 0 {
 		w.WriteFloat("MinHeight", r.minHeight)
 	}
-	if r.maxHeight != 500 {
+	if r.maxHeight != 1000 {
 		w.WriteFloat("MaxHeight", r.maxHeight)
 	}
 	if r.autoSize {
@@ -129,7 +129,7 @@ func (r *TableRow) Deserialize(rd report.Reader) error {
 		return err
 	}
 	r.minHeight = rd.ReadFloat("MinHeight", 0)
-	r.maxHeight = rd.ReadFloat("MaxHeight", 500)
+	r.maxHeight = rd.ReadFloat("MaxHeight", 1000)
 	r.autoSize = rd.ReadBool("AutoSize", false)
 	r.canBreak = rd.ReadBool("CanBreak", false)
 	r.pageBreak = rd.ReadBool("PageBreak", false)

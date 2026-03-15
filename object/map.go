@@ -163,7 +163,7 @@ func (m *MapObject) DeserializeChild(childType string, r report.Reader) bool {
 			if !ok {
 				break
 			}
-			_ = r.FinishChild()
+			if r.FinishChild() != nil { break }
 		}
 		m.Layers = append(m.Layers, layer)
 		return true

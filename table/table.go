@@ -51,10 +51,11 @@ type TableBase struct {
 	ManualBuildEvent string
 }
 
-// NewTableBase creates a TableBase with defaults.
+// NewTableBase creates a TableBase with defaults matching the C# constructor.
 func NewTableBase() *TableBase {
 	return &TableBase{
 		BreakableComponent: *report.NewBreakableComponent(),
+		repeatHeaders:      true, // C# default is true
 	}
 }
 
@@ -213,8 +214,9 @@ func (t *TableBase) Serialize(w report.Writer) error {
 	if t.wrappedGap != 0 {
 		w.WriteFloat("WrappedGap", t.wrappedGap)
 	}
-	if t.repeatHeaders {
-		w.WriteBool("RepeatHeaders", true)
+	// RepeatHeaders default is true; write when false.
+	if !t.repeatHeaders {
+		w.WriteBool("RepeatHeaders", false)
 	}
 	if t.repeatRowHeaders {
 		w.WriteBool("RepeatRowHeaders", true)
@@ -253,7 +255,7 @@ func (t *TableBase) Deserialize(r report.Reader) error {
 	t.layout = TableLayout(r.ReadInt("Layout", 0))
 	t.printOnParent = r.ReadBool("PrintOnParent", false)
 	t.wrappedGap = r.ReadFloat("WrappedGap", 0)
-	t.repeatHeaders = r.ReadBool("RepeatHeaders", false)
+	t.repeatHeaders = r.ReadBool("RepeatHeaders", true) // C# default is true
 	t.repeatRowHeaders = r.ReadBool("RepeatRowHeaders", false)
 	t.repeatColumnHeaders = r.ReadBool("RepeatColumnHeaders", false)
 	t.adjustSpannedCellsWidth = r.ReadBool("AdjustSpannedCellsWidth", false)
@@ -267,6 +269,10 @@ func (t *TableBase) Deserialize(r report.Reader) error {
 // It is the Go equivalent of FastReport.Table.TableObject.
 type TableObject struct {
 	TableBase
+
+	// ManualBuildAutoSpans propagates ColSpan/RowSpan automatically
+	// during a ManualBuild event (default: true).
+	ManualBuildAutoSpans bool
 }
 
 // TypeName returns the FRX element name.
@@ -274,15 +280,29 @@ func (t *TableObject) TypeName() string { return "TableObject" }
 
 // NewTableObject creates a TableObject with defaults.
 func NewTableObject() *TableObject {
-	return &TableObject{TableBase: *NewTableBase()}
+	return &TableObject{
+		TableBase:            *NewTableBase(),
+		ManualBuildAutoSpans: true, // C# default is true
+	}
 }
 
 // Serialize writes TableObject properties.
 func (t *TableObject) Serialize(w report.Writer) error {
-	return t.TableBase.Serialize(w)
+	if err := t.TableBase.Serialize(w); err != nil {
+		return err
+	}
+	// ManualBuildAutoSpans default is true; write when false.
+	if !t.ManualBuildAutoSpans {
+		w.WriteBool("ManualBuildAutoSpans", false)
+	}
+	return nil
 }
 
 // Deserialize reads TableObject properties.
 func (t *TableObject) Deserialize(r report.Reader) error {
-	return t.TableBase.Deserialize(r)
+	if err := t.TableBase.Deserialize(r); err != nil {
+		return err
+	}
+	t.ManualBuildAutoSpans = r.ReadBool("ManualBuildAutoSpans", true)
+	return nil
 }

@@ -2,6 +2,7 @@ package reportpkg
 
 import (
 	"github.com/andrewloable/go-fastreport/data"
+	"github.com/andrewloable/go-fastreport/export"
 	"github.com/andrewloable/go-fastreport/preview"
 	"github.com/andrewloable/go-fastreport/report"
 	"github.com/andrewloable/go-fastreport/style"
@@ -71,6 +72,9 @@ type Report struct {
 	// before the engine runs.
 	BaseReportPath string
 
+	// ExportsOptions holds report-level export UI configuration.
+	ExportsOptions *export.ExportsOptions
+
 	// calcDS is the current-row data source set by SetCalcContext.
 	calcDS data.DataSource
 
@@ -85,6 +89,7 @@ func NewReport() *Report {
 		dictionary:        data.NewDictionary(),
 		styles:            style.NewStyleSheet(),
 		InitialPageNumber: 1,
+		ExportsOptions:    export.NewExportsOptions(),
 	}
 }
 

@@ -21,11 +21,11 @@ type TableColumn struct {
 	keepColumns int
 }
 
-// NewTableColumn creates a TableColumn with sensible defaults.
+// NewTableColumn creates a TableColumn with defaults matching the C# constructor.
 func NewTableColumn() *TableColumn {
 	c := &TableColumn{
 		ComponentBase: *report.NewComponentBase(),
-		maxWidth:      500, // reasonable default max
+		maxWidth:      5000, // matches C# DefaultValue(5000)
 	}
 	c.SetWidth(100) // default column width
 	return c
@@ -69,7 +69,7 @@ func (c *TableColumn) Serialize(w report.Writer) error {
 	if c.minWidth != 0 {
 		w.WriteFloat("MinWidth", c.minWidth)
 	}
-	if c.maxWidth != 500 {
+	if c.maxWidth != 5000 {
 		w.WriteFloat("MaxWidth", c.maxWidth)
 	}
 	if c.autoSize {
@@ -90,7 +90,7 @@ func (c *TableColumn) Deserialize(r report.Reader) error {
 		return err
 	}
 	c.minWidth = r.ReadFloat("MinWidth", 0)
-	c.maxWidth = r.ReadFloat("MaxWidth", 500)
+	c.maxWidth = r.ReadFloat("MaxWidth", 5000)
 	c.autoSize = r.ReadBool("AutoSize", false)
 	c.pageBreak = r.ReadBool("PageBreak", false)
 	c.keepColumns = r.ReadInt("KeepColumns", 0)

@@ -42,12 +42,16 @@ func (p *Pages) PageList() []*Page { return p.pageList }
 // Page represents a single PDF page (/Type /Page).
 // Width and Height are in PDF user units (points, 1/72 inch).
 type Page struct {
-	obj       *core.IndirectObject
-	contents  *Contents
-	xObjects  *core.Dictionary // /Resources /XObject sub-dictionary
-	fontDict  *core.Dictionary // /Resources /Font sub-dictionary
-	Width     float64
-	Height    float64
+	obj        *core.IndirectObject
+	contents   *Contents
+	xObjects   *core.Dictionary // /Resources /XObject sub-dictionary
+	fontDict   *core.Dictionary // /Resources /Font sub-dictionary
+	extGStates *core.Dictionary // /Resources /ExtGState sub-dictionary
+	resources  *core.Dictionary // top-level resources dict (for lazy ExtGState add)
+	annots     *core.Array      // /Annots array (lazy)
+	pageDict   *core.Dictionary // the page dictionary itself
+	Width      float64
+	Height     float64
 }
 
 // NewPage creates a new page, links it to the given Pages tree, and registers
@@ -107,12 +111,14 @@ func NewPage(w *Writer, pages *Pages, width, height float64) *Page {
 
 	obj := w.NewObject(dict)
 	page := &Page{
-		obj:      obj,
-		contents: contents,
-		xObjects: xObject,
-		fontDict: fontDict,
-		Width:    width,
-		Height:   height,
+		obj:       obj,
+		contents:  contents,
+		xObjects:  xObject,
+		fontDict:  fontDict,
+		resources: resources,
+		pageDict:  dict,
+		Width:     width,
+		Height:    height,
 	}
 
 	pages.AddPage(page)
@@ -130,4 +136,26 @@ func (p *Page) Obj() *core.IndirectObject { return p.obj }
 // given name (e.g. "Im0").  The name is used in content streams as /Im0.
 func (p *Page) AddXObject(name string, obj *core.IndirectObject) {
 	p.xObjects.Add(name, core.NewName(obj.Reference()))
+}
+
+// AddAnnotation appends a PDF annotation dictionary to the page's /Annots array.
+// Lazily creates the /Annots array on first call and registers it in the page dict.
+func (p *Page) AddAnnotation(annotDict *core.Dictionary) {
+	if p.annots == nil {
+		p.annots = core.NewArray()
+		p.pageDict.Add("Annots", p.annots)
+	}
+	p.annots.Add(annotDict)
+}
+
+// AddExtGState registers a graphics state dictionary as an /ExtGState resource
+// under the given name (e.g. "GS1"). The name is used in content streams as /GS1 gs.
+// The dict should contain entries like /ca (fill opacity) and /CA (stroke opacity).
+// Lazily creates the /ExtGState sub-dictionary on first call.
+func (p *Page) AddExtGState(name string, gsDict *core.Dictionary) {
+	if p.extGStates == nil {
+		p.extGStates = core.NewDictionary()
+		p.resources.Add("ExtGState", p.extGStates)
+	}
+	p.extGStates.Add(name, gsDict)
 }

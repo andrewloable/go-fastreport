@@ -126,13 +126,7 @@ func (b *IntelligentMailBarcode) Encode(text string) error {
 	}
 }
 
-// Render renders the IMb as a placeholder grey rectangle (full encoding TBD).
-func (b *IntelligentMailBarcode) Render(width, height int) (image.Image, error) {
-	if b.encodedText == "" {
-		return nil, fmt.Errorf("intelligentmail: not encoded")
-	}
-	return placeholderImage(width, height), nil
-}
+// Render is implemented in intelligentmail.go.
 
 // ── MSIBarcode ────────────────────────────────────────────────────────────────
 
@@ -254,10 +248,7 @@ func (b *MaxiCodeBarcode) Encode(text string) error {
 	return nil
 }
 
-// Render renders a placeholder for MaxiCode (full 2D matrix encoding is TBD).
-func (b *MaxiCodeBarcode) Render(width, height int) (image.Image, error) {
-	return placeholderImage(width, height), nil
-}
+// Render is implemented in maxicode.go.
 
 // ── PharmacodeBarcode ─────────────────────────────────────────────────────────
 
@@ -344,9 +335,135 @@ func (b *PlesseyBarcode) Encode(text string) error {
 	return nil
 }
 
-// Render draws a Plessey placeholder (full CRC encoding TBD).
+// Render draws the Plessey barcode as a 1-D bar image with CRC.
 func (b *PlesseyBarcode) Render(width, height int) (image.Image, error) {
-	return placeholderImage(width, height), nil
+	if b.encodedText == "" {
+		return nil, fmt.Errorf("plessey: not encoded")
+	}
+	bits, err := plesseyEncode(b.encodedText)
+	if err != nil {
+		return nil, err
+	}
+	return renderBitPattern(bits, width, height, color.Black, color.White), nil
+}
+
+// plesseyEncode generates the Plessey bar/space bit array including CRC.
+// Ported from FastReport BarcodePlessey.cs / ZXing PlesseyWriter.
+func plesseyEncode(text string) ([]bool, error) {
+	const alphabet = "0123456789ABCDEF"
+
+	// Lookup table: index of each character in alphabet.
+	indexOf := func(ch rune) (int, bool) {
+		for i, a := range alphabet {
+			if a == ch {
+				return i, true
+			}
+		}
+		return 0, false
+	}
+
+	// Bar-width tables (unit widths alternating bar/space starting with bar).
+	startWidths := []int{14, 11, 14, 11, 5, 20, 14, 11}
+	endWidths := []int{20, 5, 20, 5, 14, 11, 14, 11}
+	terminationWidths := []int{25}
+	numberWidths := [16][]int{
+		{5, 20, 5, 20, 5, 20, 5, 20},     // 0
+		{14, 11, 5, 20, 5, 20, 5, 20},    // 1
+		{5, 20, 14, 11, 5, 20, 5, 20},    // 2
+		{14, 11, 14, 11, 5, 20, 5, 20},   // 3
+		{5, 20, 5, 20, 14, 11, 5, 20},    // 4
+		{14, 11, 5, 20, 14, 11, 5, 20},   // 5
+		{5, 20, 14, 11, 14, 11, 5, 20},   // 6
+		{14, 11, 14, 11, 14, 11, 5, 20},  // 7
+		{5, 20, 5, 20, 5, 20, 14, 11},    // 8
+		{14, 11, 5, 20, 5, 20, 14, 11},   // 9
+		{5, 20, 14, 11, 5, 20, 14, 11},   // A
+		{14, 11, 14, 11, 5, 20, 14, 11},  // B
+		{5, 20, 5, 20, 14, 11, 14, 11},   // C
+		{14, 11, 5, 20, 14, 11, 14, 11},  // D
+		{5, 20, 14, 11, 14, 11, 14, 11},  // E
+		{14, 11, 14, 11, 14, 11, 14, 11}, // F
+	}
+	crcGrid := []byte{1, 1, 1, 1, 0, 1, 0, 0, 1}
+	crc0Widths := []int{5, 20}
+	crc1Widths := []int{14, 11}
+
+	n := len(text)
+	// Calculate the total bit array capacity.
+	codeWidth := 100 + 100 + n*100 + 25*8 + 25 + 100 + 100
+	result := make([]bool, codeWidth)
+
+	// CRC buffer: 4 bits per character + 8 bits CRC remainder.
+	crcBuf := make([]byte, 4*n+8)
+	crcPos := 0
+
+	appendPattern := func(pos int, widths []int, startBlack bool) int {
+		black := startBlack
+		added := 0
+		for _, w := range widths {
+			for j := 0; j < w; j++ {
+				if pos+j < len(result) {
+					result[pos+j] = black
+				}
+			}
+			pos += w
+			added += w
+			black = !black
+		}
+		return added
+	}
+
+	pos := 100
+	// Start pattern.
+	pos += appendPattern(pos, startWidths, true)
+
+	// Data + CRC buffer population.
+	for _, ch := range text {
+		idx, ok := indexOf(ch)
+		if !ok {
+			return nil, fmt.Errorf("plessey: invalid character %q", ch)
+		}
+		pos += appendPattern(pos, numberWidths[idx], true)
+		crcBuf[crcPos] = byte(idx & 1)
+		crcBuf[crcPos+1] = byte((idx >> 1) & 1)
+		crcBuf[crcPos+2] = byte((idx >> 2) & 1)
+		crcBuf[crcPos+3] = byte((idx >> 3) & 1)
+		crcPos += 4
+	}
+
+	// CRC polynomial division.
+	for i := 0; i < 4*n; i++ {
+		if crcBuf[i] != 0 {
+			for j := 0; j < 9; j++ {
+				crcBuf[i+j] ^= crcGrid[j]
+			}
+		}
+	}
+
+	// Append CRC bits.
+	for i := 0; i < 8; i++ {
+		if crcBuf[n*4+i] == 0 {
+			pos += appendPattern(pos, crc0Widths, true)
+		} else {
+			pos += appendPattern(pos, crc1Widths, true)
+		}
+	}
+
+	// Termination bar.
+	pos += appendPattern(pos, terminationWidths, true)
+	// End pattern.
+	appendPattern(pos, endWidths, false)
+
+	// Trim result to actual used length.
+	return result[:pos+sum(endWidths)], nil
+}
+
+func sum(s []int) int {
+	n := 0
+	for _, v := range s {
+		n += v
+	}
+	return n
 }
 
 // ── PostNetBarcode ────────────────────────────────────────────────────────────

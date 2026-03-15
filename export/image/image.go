@@ -2,17 +2,18 @@
 package image
 
 import (
+	"bytes"
 	"fmt"
 	"image"
 	"image/color"
 	"image/draw"
+	_ "image/jpeg" // register JPEG decoder
 	"image/png"
 	"io"
 	"math"
 	"strings"
 
 	"golang.org/x/image/font"
-	"golang.org/x/image/font/basicfont"
 	"golang.org/x/image/math/fixed"
 
 	"github.com/andrewloable/go-fastreport/export"
@@ -168,7 +169,13 @@ func (e *Exporter) renderObject(obj preview.PreparedObject, bandTop float32) {
 			tc = color.RGBA{A: 255}
 		}
 
-		face := basicfont.Face7x13
+		// Select a font face based on obj.Font. Use the object's point size
+		// scaled by the exporter's DPI setting. Fall back to basicfont if needed.
+		fontPt := float64(obj.Font.Size)
+		if fontPt <= 0 {
+			fontPt = 10
+		}
+		face := selectFace(obj.Font, fontPt, DefaultDPI*float64(e.Scale))
 		lineH := face.Metrics().Height.Ceil()
 		ascent := face.Metrics().Ascent.Ceil()
 		lines := e.wrapText(obj.Text, w, face)
@@ -269,8 +276,7 @@ func (e *Exporter) renderObject(obj preview.PreparedObject, bandTop float32) {
 		}
 
 	case preview.ObjectTypePicture:
-		// Picture blobs are embedded by the engine; image export skips them here
-		// as decoding is handled by the PDF/HTML exporters.
+		e.drawPictureObject(x, y, w, h, obj)
 
 	case preview.ObjectTypePolyLine:
 		if len(obj.Points) < 2 {
@@ -342,6 +348,59 @@ func (e *Exporter) drawBorderLines(b style.Border, x, y, w, h int) {
 			c = black
 		}
 		e.drawVLine(x+w-1, y, y+h, c)
+	}
+}
+
+// drawPictureObject decodes the image blob from BlobStore and draws it scaled
+// into the rectangle (x, y, x+w, y+h) on the current page canvas.
+func (e *Exporter) drawPictureObject(x, y, w, h int, obj preview.PreparedObject) {
+	if e.pp == nil || obj.BlobIdx < 0 {
+		return
+	}
+	blobData := e.pp.BlobStore.Get(obj.BlobIdx)
+	if len(blobData) == 0 {
+		return
+	}
+
+	src, _, err := image.Decode(bytes.NewReader(blobData))
+	if err != nil {
+		return
+	}
+
+	srcBounds := src.Bounds()
+	if srcBounds.Dx() == 0 || srcBounds.Dy() == 0 || w == 0 || h == 0 {
+		return
+	}
+
+	// Scale source pixels into the destination rectangle using nearest-neighbour.
+	dst := image.Rect(x, y, x+w, y+h).Intersect(e.curPage.Bounds())
+	scaleX := float64(srcBounds.Dx()) / float64(w)
+	scaleY := float64(srcBounds.Dy()) / float64(h)
+
+	for py := dst.Min.Y; py < dst.Max.Y; py++ {
+		srcY := srcBounds.Min.Y + int(float64(py-y)*scaleY)
+		if srcY < srcBounds.Min.Y {
+			srcY = srcBounds.Min.Y
+		}
+		if srcY >= srcBounds.Max.Y {
+			srcY = srcBounds.Max.Y - 1
+		}
+		for px := dst.Min.X; px < dst.Max.X; px++ {
+			srcX := srcBounds.Min.X + int(float64(px-x)*scaleX)
+			if srcX < srcBounds.Min.X {
+				srcX = srcBounds.Min.X
+			}
+			if srcX >= srcBounds.Max.X {
+				srcX = srcBounds.Max.X - 1
+			}
+			r, g, b, a := src.At(srcX, srcY).RGBA()
+			e.curPage.SetRGBA(px, py, color.RGBA{
+				R: uint8(r >> 8),
+				G: uint8(g >> 8),
+				B: uint8(b >> 8),
+				A: uint8(a >> 8),
+			})
+		}
 	}
 }
 

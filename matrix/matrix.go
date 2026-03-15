@@ -57,6 +57,12 @@ const (
 	MatrixEvenStylePriorityColumns                                // alternate on columns
 )
 
+// EvenStylePriority* aliases for test and user convenience.
+const (
+	EvenStylePriorityRows    = MatrixEvenStylePriorityRows
+	EvenStylePriorityColumns = MatrixEvenStylePriorityColumns
+)
+
 // ── Descriptors ───────────────────────────────────────────────────────────────
 
 // Descriptor is the base for column/row/cell descriptors.
@@ -81,6 +87,8 @@ type HeaderDescriptor struct {
 	PageBreak bool
 	// SuppressTotals suppresses the total when there is only one value (default: false).
 	SuppressTotals bool
+	// TotalText is the label shown in the totals row/column (default: "Total").
+	TotalText string
 }
 
 // NewHeaderDescriptor creates a HeaderDescriptor with the given expression and C# defaults.
@@ -89,6 +97,7 @@ func NewHeaderDescriptor(expr string) *HeaderDescriptor {
 		Descriptor: Descriptor{Expression: expr},
 		Sort:       SortOrderAscending,
 		Totals:     true,
+		TotalText:  "Total",
 	}
 }
 
@@ -226,8 +235,8 @@ type MatrixObject struct {
 	CellsSideBySide bool
 	// KeepCellsSideBySide keeps side-by-side cells together on page breaks (default: false).
 	KeepCellsSideBySide bool
-	// MatrixEvenStylePriority controls even-style alternation axis (default: Rows).
-	MatrixEvenStylePriority MatrixEvenStylePriority
+	// EvenStylePriority controls even-style alternation axis (default: Rows).
+	EvenStylePriority MatrixEvenStylePriority
 	// Style is the named built-in style to apply (e.g. "Green").
 	Style string
 	// ShowTitle shows the data source title row (default: false).
@@ -252,6 +261,11 @@ type MatrixObject struct {
 	rowIndex map[string]int
 	// colIndex maps col value → index.
 	colIndex map[string]int
+
+	// Multi-level header support (populated by AddDataMultiLevel).
+	rowRoot       *HeaderItem
+	colRoot       *HeaderItem
+	mlAccumulators map[multiLevelKey]*accumulator
 }
 
 // New creates a MatrixObject with defaults matching the C# constructor.
@@ -474,8 +488,8 @@ func (m *MatrixObject) Serialize(w report.Writer) error {
 	if m.KeepCellsSideBySide {
 		w.WriteBool("KeepCellsSideBySide", true)
 	}
-	if m.MatrixEvenStylePriority != MatrixEvenStylePriorityRows {
-		w.WriteInt("MatrixEvenStylePriority", int(m.MatrixEvenStylePriority))
+	if m.EvenStylePriority != MatrixEvenStylePriorityRows {
+		w.WriteInt("MatrixEvenStylePriority", int(m.EvenStylePriority))
 	}
 	if m.Style != "" {
 		w.WriteStr("Style", m.Style)
@@ -528,7 +542,7 @@ func (m *MatrixObject) Deserialize(r report.Reader) error {
 	m.AutoSize = r.ReadBool("AutoSize", true)
 	m.CellsSideBySide = r.ReadBool("CellsSideBySide", false)
 	m.KeepCellsSideBySide = r.ReadBool("KeepCellsSideBySide", false)
-	m.MatrixEvenStylePriority = MatrixEvenStylePriority(r.ReadInt("MatrixEvenStylePriority", 0))
+	m.EvenStylePriority = MatrixEvenStylePriority(r.ReadInt("MatrixEvenStylePriority", 0))
 	m.Style = r.ReadStr("Style", "")
 	m.ShowTitle = r.ReadBool("ShowTitle", false)
 	m.SplitRows = r.ReadBool("SplitRows", false)

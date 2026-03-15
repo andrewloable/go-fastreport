@@ -34,6 +34,14 @@ type Exporter struct {
 	curPage *Page
 	pp      *preview.PreparedPages // access to blob store for images
 	imgIdx  int                    // counter for unique XObject names
+
+	// UseCMYK controls color space selection.
+	// When true, colors are emitted using DeviceCMYK (k/K operators).
+	// When false (default), DeviceRGB (rg/RG operators) is used.
+	UseCMYK bool
+
+	// sigFields accumulates /Widget annotation references for the /AcroForm.
+	sigFields []*core.IndirectObject
 }
 
 // NewExporter creates an Exporter with default settings (all pages).
@@ -106,6 +114,13 @@ func (e *Exporter) ExportBand(b *preview.PreparedBand) error {
 			e.renderPolyPath(contents, b, obj, true)
 		case preview.ObjectTypeCheckBox:
 			e.renderCheckBoxObject(contents, b, obj)
+		case preview.ObjectTypeDigitalSignature:
+			e.renderDigitalSignatureField(b, obj)
+		}
+
+		// Add hyperlink annotation for any object that carries a hyperlink.
+		if obj.HyperlinkKind != 0 && obj.HyperlinkValue != "" {
+			e.renderHyperlinkAnnotation(b, obj)
 		}
 	}
 	return nil
@@ -128,8 +143,8 @@ func (e *Exporter) renderCheckBoxObject(c *Contents, b *preview.PreparedBand, ob
 
 	// Draw checkbox border rectangle.
 	c.WriteString(fmt.Sprintf(
-		"q %.3f w 0 0 0 RG %.4f %.4f %.4f %.4f re S Q\n",
-		lw, xPt, yPt, wPt, hPt,
+		"q %.3f w %s %.4f %.4f %.4f %.4f re S Q\n",
+		lw, e.pdfStrokeColorOp(color.RGBA{A: 255}), xPt, yPt, wPt, hPt,
 	))
 
 	if obj.Checked {
@@ -144,14 +159,14 @@ func (e *Exporter) renderCheckBoxObject(c *Contents, b *preview.PreparedBand, ob
 		x3 := xPt + wPt - margin
 		y3 := yPt + hPt - margin
 		c.WriteString(fmt.Sprintf(
-			"q %.3f w 0 0 0 RG %.4f %.4f m %.4f %.4f l %.4f %.4f l S Q\n",
-			tickLW, x1, y1, x2, y2, x3, y3,
+			"q %.3f w %s %.4f %.4f m %.4f %.4f l %.4f %.4f l S Q\n",
+			tickLW, e.pdfStrokeColorOp(color.RGBA{A: 255}), x1, y1, x2, y2, x3, y3,
 		))
 	}
 }
 
 // renderTextObject writes PDF operators for a TextObject.
-// It renders the fill background, border lines, and text.
+// It renders the fill background, border lines, and multi-line wrapped text.
 func (e *Exporter) renderTextObject(c *Contents, b *preview.PreparedBand, obj preview.PreparedObject) {
 	objTopPx := b.Top + obj.Top
 	xPt := float64(export.PixelsToPoints(obj.Left))
@@ -185,20 +200,136 @@ func (e *Exporter) renderTextObject(c *Contents, b *preview.PreparedBand, obj pr
 
 	// Text color.
 	tc := obj.TextColor
-	r := float64(tc.R) / 255.0
-	g := float64(tc.G) / 255.0
-	bl := float64(tc.B) / 255.0
 
-	// Position text near the top of the object (simple single-line placement).
-	textY := yPt + hPt - float64(export.PixelsToPoints(font.Size))*1.2
-	if textY < yPt {
-		textY = yPt
+	// Line height: 1.2× font size (in points).
+	fontPt := float64(font.Size)
+	lineHeight := fontPt * 1.2
+
+	// Padding: 2px on each side so text doesn't touch the border.
+	const padPx = 2
+	padPt := float64(export.PixelsToPoints(padPx))
+	innerX := xPt + padPt
+	innerW := wPt - 2*padPt
+	if innerW <= 0 {
+		innerW = wPt
+		innerX = xPt
 	}
 
-	c.WriteString(fmt.Sprintf(
-		"q %.4f %.4f %.4f rg BT /%s %.2f Tf %.2f %.2f Td (%s) Tj ET Q\n",
-		r, g, bl, fontAlias, font.Size, xPt, textY, pdfEscape(obj.Text),
-	))
+	// Split text into lines, respecting word-wrap and hard newlines.
+	lines := pdfWrapText(obj.Text, innerW, fontPt, obj.WordWrap)
+	if len(lines) == 0 {
+		return
+	}
+
+	totalTextH := float64(len(lines)) * lineHeight
+
+	// Vertical starting position based on VertAlign.
+	// PDF y is bottom-up; yPt is the bottom of the object box.
+	var startY float64
+	switch obj.VertAlign {
+	case 1: // Center
+		startY = yPt + (hPt+totalTextH)/2 - lineHeight
+	case 2: // Bottom
+		startY = yPt + totalTextH - lineHeight
+	default: // Top (0)
+		startY = yPt + hPt - lineHeight
+	}
+	// Clamp so first line baseline is inside the box.
+	if startY > yPt+hPt-fontPt {
+		startY = yPt + hPt - fontPt
+	}
+
+	// Write PDF text block.
+	// Use Tm (text matrix) for absolute line positioning to avoid Td accumulation.
+	c.WriteString(fmt.Sprintf("q %s\n", e.pdfFillColorOp(tc)))
+	c.WriteString("BT\n")
+	c.WriteString(fmt.Sprintf("/%s %.2f Tf\n", fontAlias, fontPt))
+
+	for i, line := range lines {
+		lineY := startY - float64(i)*lineHeight
+		if lineY < yPt-lineHeight { // below the object bottom — stop rendering
+			break
+		}
+
+		// Horizontal alignment.
+		lineX := innerX
+		lineW := pdfEstimateTextWidth(line, fontPt)
+		var wordSpacing float64
+		switch obj.HorzAlign {
+		case 1: // Center
+			lineX = xPt + (wPt-lineW)/2
+		case 2: // Right
+			lineX = xPt + wPt - lineW - padPt
+		case 3: // Justify — spread words, but not on the last line
+			lineX = innerX
+			if obj.WordWrap && i < len(lines)-1 {
+				wordCount := float64(strings.Count(line, " "))
+				if wordCount > 0 {
+					ws := (innerW - lineW) / wordCount
+					if ws > 0 { // only expand, never compress
+						wordSpacing = ws
+					}
+				}
+			}
+		}
+		if lineX < xPt {
+			lineX = xPt
+		}
+
+		// Tm sets text line matrix: [1 0 0 1 tx ty] = identity with translation.
+		if wordSpacing != 0 {
+			c.WriteString(fmt.Sprintf("%.4f Tw\n", wordSpacing))
+		}
+		c.WriteString(fmt.Sprintf("1 0 0 1 %.4f %.4f Tm (%s) Tj\n", lineX, lineY, pdfEscape(line)))
+		if wordSpacing != 0 {
+			c.WriteString("0 Tw\n")
+		}
+	}
+	c.WriteString("ET\nQ\n")
+}
+
+// pdfWrapText splits text into lines that fit within maxWidth (in points),
+// using a rough character-width estimate (fontPt × 0.6 per character).
+// Hard newlines (\n) are always honoured. If wordWrap is false, each paragraph
+// is emitted as a single line without breaking.
+func pdfWrapText(text string, maxWidth, fontPt float64, wordWrap bool) []string {
+	// Split on hard newlines first.
+	paragraphs := strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
+	var lines []string
+	for _, para := range paragraphs {
+		if para == "" {
+			lines = append(lines, "")
+			continue
+		}
+		if !wordWrap {
+			lines = append(lines, para)
+			continue
+		}
+		// Word-wrap within this paragraph.
+		words := strings.Fields(para)
+		if len(words) == 0 {
+			lines = append(lines, "")
+			continue
+		}
+		current := words[0]
+		for _, w := range words[1:] {
+			candidate := current + " " + w
+			if pdfEstimateTextWidth(candidate, fontPt) <= maxWidth {
+				current = candidate
+			} else {
+				lines = append(lines, current)
+				current = w
+			}
+		}
+		lines = append(lines, current)
+	}
+	return lines
+}
+
+// pdfEstimateTextWidth estimates the rendered width of text in points using the
+// rough heuristic that the average glyph width is 0.6× the font point size.
+func pdfEstimateTextWidth(text string, fontPt float64) float64 {
+	return float64(len(text)) * fontPt * 0.6
 }
 
 // renderRectObject draws fill and border for Line/Shape objects.
@@ -235,11 +366,9 @@ func (e *Exporter) renderPolyPath(c *Contents, b *preview.PreparedBand, obj prev
 
 	// Line color from the first border line, defaulting to black.
 	lc := obj.Border.Lines[0]
-	var strokeR, strokeG, strokeB float64
+	strokeCol := color.RGBA{A: 255} // black
 	if lc != nil && lc.Color.A > 0 {
-		strokeR = float64(lc.Color.R) / 255.0
-		strokeG = float64(lc.Color.G) / 255.0
-		strokeB = float64(lc.Color.B) / 255.0
+		strokeCol = lc.Color
 	}
 
 	heightPt := float64(export.PixelsToPoints(obj.Height))
@@ -247,7 +376,7 @@ func (e *Exporter) renderPolyPath(c *Contents, b *preview.PreparedBand, obj prev
 	// Build the path.  Points are pixel offsets from the object's top-left corner.
 	// PDF uses bottom-left origin, so y must be flipped.
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("q %.4f %.4f %.4f RG ", strokeR, strokeG, strokeB))
+	sb.WriteString(fmt.Sprintf("q %s ", e.pdfStrokeColorOp(strokeCol)))
 
 	for i, pt := range obj.Points {
 		pxPt := originXPt + float64(export.PixelsToPoints(pt[0]))
@@ -269,13 +398,49 @@ func (e *Exporter) renderPolyPath(c *Contents, b *preview.PreparedBand, obj prev
 	c.WriteString(sb.String())
 }
 
-// pdfFillRect draws a filled rectangle using the given color.
-func (e *Exporter) pdfFillRect(c *Contents, x, y, w, h float64, col color.RGBA) {
+// rgbaToCMYK converts an RGBA color to CMYK components in [0,1].
+func rgbaToCMYK(col color.RGBA) (c, m, y, k float64) {
 	r := float64(col.R) / 255.0
 	g := float64(col.G) / 255.0
 	b := float64(col.B) / 255.0
-	c.WriteString(fmt.Sprintf("q %.4f %.4f %.4f rg %.2f %.2f %.2f %.2f re f Q\n",
-		r, g, b, x, y, w, h))
+	k = 1.0 - math.Max(r, math.Max(g, b))
+	if k == 1.0 {
+		return 0, 0, 0, 1
+	}
+	c = (1.0 - r - k) / (1.0 - k)
+	m = (1.0 - g - k) / (1.0 - k)
+	y = (1.0 - b - k) / (1.0 - k)
+	return
+}
+
+// pdfFillColorOp returns a PDF fill color operator string ("rg" or "k") for col.
+func (e *Exporter) pdfFillColorOp(col color.RGBA) string {
+	if e.UseCMYK {
+		c, m, y, k := rgbaToCMYK(col)
+		return fmt.Sprintf("%.4f %.4f %.4f %.4f k", c, m, y, k)
+	}
+	r := float64(col.R) / 255.0
+	g := float64(col.G) / 255.0
+	b := float64(col.B) / 255.0
+	return fmt.Sprintf("%.4f %.4f %.4f rg", r, g, b)
+}
+
+// pdfStrokeColorOp returns a PDF stroke color operator string ("RG" or "K") for col.
+func (e *Exporter) pdfStrokeColorOp(col color.RGBA) string {
+	if e.UseCMYK {
+		c, m, y, k := rgbaToCMYK(col)
+		return fmt.Sprintf("%.4f %.4f %.4f %.4f K", c, m, y, k)
+	}
+	r := float64(col.R) / 255.0
+	g := float64(col.G) / 255.0
+	b := float64(col.B) / 255.0
+	return fmt.Sprintf("%.4f %.4f %.4f RG", r, g, b)
+}
+
+// pdfFillRect draws a filled rectangle using the given color.
+func (e *Exporter) pdfFillRect(c *Contents, x, y, w, h float64, col color.RGBA) {
+	c.WriteString(fmt.Sprintf("q %s %.2f %.2f %.2f %.2f re f Q\n",
+		e.pdfFillColorOp(col), x, y, w, h))
 }
 
 // pdfDrawBorder draws the visible border lines of b around the given rectangle.
@@ -309,9 +474,6 @@ func (e *Exporter) pdfDrawBorder(c *Contents, x, y, w, h float64, b *style.Borde
 		if lw < 0.5 {
 			lw = 0.5
 		}
-		r := float64(lc.R) / 255.0
-		g := float64(lc.G) / 255.0
-		bl := float64(lc.B) / 255.0
 
 		var dashCmd string
 		switch line.Style {
@@ -325,20 +487,173 @@ func (e *Exporter) pdfDrawBorder(c *Contents, x, y, w, h float64, b *style.Borde
 			dashCmd = "[] 0 d " // solid
 		}
 
-		c.WriteString(fmt.Sprintf("q %.4f %.4f %.4f RG %.2f w %s%.2f %.2f m %.2f %.2f l S Q\n",
-			r, g, bl, lw, dashCmd, s.x1, s.y1, s.x2, s.y2))
+		c.WriteString(fmt.Sprintf("q %s %.2f w %s%.2f %.2f m %.2f %.2f l S Q\n",
+			e.pdfStrokeColorOp(lc), lw, dashCmd, s.x1, s.y1, s.x2, s.y2))
 	}
 
 	// Drop shadow.
 	if b.Shadow && b.ShadowWidth > 0 {
 		sw := float64(export.PixelsToPoints(b.ShadowWidth))
 		sc := b.ShadowColor
-		sr := float64(sc.R) / 255.0
-		sg := float64(sc.G) / 255.0
-		sb := float64(sc.B) / 255.0
-		c.WriteString(fmt.Sprintf("q %.4f %.4f %.4f rg %.2f %.2f %.2f %.2f re f Q\n",
-			sr, sg, sb, x+sw, y-sw, w, h))
+		c.WriteString(fmt.Sprintf("q %s %.2f %.2f %.2f %.2f re f Q\n",
+			e.pdfFillColorOp(sc), x+sw, y-sw, w, h))
 	}
+}
+
+// renderHyperlinkAnnotation creates a PDF /Annot dictionary with /Subtype /Link
+// for the given object and appends it to the current page's /Annots array.
+// Supports URL (external) and PageNumber (internal GoTo) hyperlinks.
+func (e *Exporter) renderHyperlinkAnnotation(b *preview.PreparedBand, obj preview.PreparedObject) {
+	if e.curPage == nil {
+		return
+	}
+	objTopPx := b.Top + obj.Top
+	xPt := float64(export.PixelsToPoints(obj.Left))
+	yPt := e.curPage.Height - float64(export.PixelsToPoints(objTopPx+obj.Height))
+	wPt := float64(export.PixelsToPoints(obj.Width))
+	hPt := float64(export.PixelsToPoints(obj.Height))
+
+	// /Rect [llx lly urx ury] in PDF coordinates (bottom-left origin).
+	rect := core.NewArray(
+		core.NewFloat(xPt),
+		core.NewFloat(yPt),
+		core.NewFloat(xPt+wPt),
+		core.NewFloat(yPt+hPt),
+	)
+
+	annotDict := core.NewDictionary()
+	annotDict.Add("Type", core.NewName("Annot"))
+	annotDict.Add("Subtype", core.NewName("Link"))
+	annotDict.Add("Rect", rect)
+	annotDict.Add("Border", core.NewArray(core.NewInt(0), core.NewInt(0), core.NewInt(0))) // no border
+
+	const (
+		hyperlinkURL        = 1
+		hyperlinkPageNumber = 2
+		hyperlinkBookmark   = 3
+	)
+
+	switch obj.HyperlinkKind {
+	case hyperlinkURL:
+		// External URI action.
+		actionDict := core.NewDictionary()
+		actionDict.Add("Type", core.NewName("Action"))
+		actionDict.Add("S", core.NewName("URI"))
+		actionDict.Add("URI", core.NewString(obj.HyperlinkValue))
+		annotDict.Add("A", actionDict)
+
+	case hyperlinkPageNumber:
+		// Internal GoTo action — navigate to the Nth page.
+		pages := e.pages.PageList()
+		pageNo := 0
+		for _, c := range obj.HyperlinkValue {
+			if c >= '0' && c <= '9' {
+				pageNo = pageNo*10 + int(c-'0')
+			}
+		}
+		pageNo-- // convert 1-based to 0-based
+		if pageNo >= 0 && pageNo < len(pages) {
+			dest := core.NewArray(
+				core.NewRef(pages[pageNo].Obj()),
+				core.NewName("XYZ"),
+				core.NewInt(0),
+				core.NewFloat(pages[pageNo].Height),
+				core.NewInt(0),
+			)
+			actionDict := core.NewDictionary()
+			actionDict.Add("Type", core.NewName("Action"))
+			actionDict.Add("S", core.NewName("GoTo"))
+			actionDict.Add("D", dest)
+			annotDict.Add("A", actionDict)
+		}
+
+	case hyperlinkBookmark:
+		// GoTo named destination.
+		actionDict := core.NewDictionary()
+		actionDict.Add("Type", core.NewName("Action"))
+		actionDict.Add("S", core.NewName("GoTo"))
+		actionDict.Add("D", core.NewHexString(obj.HyperlinkValue))
+		annotDict.Add("A", actionDict)
+	}
+
+	e.curPage.AddAnnotation(annotDict)
+}
+
+// renderDigitalSignatureField creates a PDF /Widget annotation for a digital
+// signature field and registers it with the page /Annots array and the AcroForm
+// /Fields array.  The field has /Subtype /Sig and an empty /V (unsigned).
+// A minimal appearance stream draws a dashed border around the field area.
+func (e *Exporter) renderDigitalSignatureField(b *preview.PreparedBand, obj preview.PreparedObject) {
+	if e.curPage == nil || e.writer == nil {
+		return
+	}
+
+	// Convert field rectangle to PDF coordinates (points, bottom-left origin).
+	xPt := float64(export.PixelsToPoints(obj.Left))
+	yPt := e.curPage.Height - float64(export.PixelsToPoints(b.Top+obj.Top+obj.Height))
+	wPt := float64(export.PixelsToPoints(obj.Width))
+	hPt := float64(export.PixelsToPoints(obj.Height))
+
+	// Build the /Widget annotation dictionary.
+	rect := core.NewArray(
+		core.NewFloat(xPt), core.NewFloat(yPt),
+		core.NewFloat(xPt+wPt), core.NewFloat(yPt+hPt),
+	)
+
+	// Build a minimal appearance stream that draws a dashed border.
+	apContent := fmt.Sprintf(
+		"q [2 2] 0 d 0.5 w %.4f %.4f %.4f %.4f re S Q\n",
+		0.0, 0.0, wPt, hPt,
+	)
+	apStream := core.NewStream()
+	apStream.Data = []byte(apContent)
+	apStreamObj := e.writer.NewObject(apStream)
+
+	// Build appearance /AP dict.
+	apDict := core.NewDictionary()
+	apDict.Add("N", core.NewRef(apStreamObj))
+
+	// Signature value dict (empty = unsigned field).
+	sigValDict := core.NewDictionary()
+	sigValDict.Add("Type", core.NewName("Sig"))
+	sigValDict.Add("Filter", core.NewName("Adobe.PPKLite"))
+	sigValDict.Add("SubFilter", core.NewName("adbe.pkcs7.detached"))
+
+	// The field name: use object name or default.
+	fieldName := obj.Name
+	if fieldName == "" {
+		fieldName = "Signature"
+	}
+
+	widgetDict := core.NewDictionary()
+	widgetDict.Add("Type", core.NewName("Annot"))
+	widgetDict.Add("Subtype", core.NewName("Widget"))
+	widgetDict.Add("FT", core.NewName("Sig"))
+	widgetDict.Add("Rect", rect)
+	widgetDict.Add("T", core.NewHexString(fieldName))
+	widgetDict.Add("F", core.NewInt(4)) // Print flag
+	widgetDict.Add("AP", apDict)
+	widgetDict.Add("V", sigValDict)
+
+	widgetObj := e.writer.NewObject(widgetDict)
+	e.curPage.AddAnnotation(widgetDict)
+	e.sigFields = append(e.sigFields, widgetObj)
+}
+
+// finalizeAcroForm builds the /AcroForm dictionary and registers it in the
+// catalog when there are signature fields.  Called from Finish().
+func (e *Exporter) finalizeAcroForm() {
+	if len(e.sigFields) == 0 || e.catalog == nil {
+		return
+	}
+	fields := core.NewArray()
+	for _, f := range e.sigFields {
+		fields.Add(core.NewRef(f))
+	}
+	acroForm := core.NewDictionary()
+	acroForm.Add("Fields", fields)
+	acroForm.Add("SigFlags", core.NewInt(3)) // 3 = AppendOnly | SignaturesExist
+	e.catalog.SetAcroForm(acroForm)
 }
 
 // pdfFontAlias selects the pre-registered PDF font alias based on the font
@@ -443,26 +758,33 @@ func (e *Exporter) renderWatermark(c *Contents, pg *preview.PreparedPage) {
 	escaped := pdfEscape(wm.Text)
 
 	col := wm.TextColor
-	r := float64(col.R) / 255.0
-	g := float64(col.G) / 255.0
-	b := float64(col.B) / 255.0
-	alpha := float64(255-col.A) / 255.0 // A=0 → opaque, A=255 → invisible
-	if alpha < 0.1 {
-		alpha = 0.3 // default light transparency
+	// alpha: col.A = 0 → fully opaque; col.A = 255 → invisible.
+	// Convert to PDF /ca fill opacity (0.0 = transparent, 1.0 = opaque).
+	fillOpacity := 1.0 - float64(col.A)/255.0
+	if fillOpacity > 0.9 {
+		fillOpacity = 0.3 // default light transparency when no alpha specified
 	}
 
-	// Write a simple text rendering using PDF operators.
-	// We push a graphics state, apply transparency, rotate+centre, draw text, pop.
-	c.WriteString(fmt.Sprintf("q\n"))
+	// Register an ExtGState with the fill opacity (/ca) for this watermark.
+	gsDict := core.NewDictionary()
+	gsDict.Add("Type", core.NewName("ExtGState"))
+	gsDict.Add("ca", core.NewFloat(fillOpacity)) // fill opacity
+	gsDict.Add("CA", core.NewFloat(fillOpacity)) // stroke opacity
+	e.curPage.AddExtGState("WM1", gsDict)
+
+	// Write PDF operators: rotate+centre transformation, apply ExtGState, draw text.
+	c.WriteString("q\n")
 	// Set fill colour.
-	c.WriteString(fmt.Sprintf("%.4f %.4f %.4f rg\n", r, g, b))
+	c.WriteString(fmt.Sprintf("%s\n", e.pdfFillColorOp(col)))
 	// Apply rotation matrix centred at (cx, cy).
 	c.WriteString(fmt.Sprintf("%.6f %.6f %.6f %.6f %.4f %.4f cm\n",
 		cos, sin, -sin, cos, cx, cy))
+	// Apply graphics state with proper transparency.
+	c.WriteString("/WM1 gs\n")
 	// Text block.
-	c.WriteString(fmt.Sprintf("BT\n"))
+	c.WriteString("BT\n")
 	c.WriteString(fmt.Sprintf("/F1 %.2f Tf\n", fontSize))
-	c.WriteString(fmt.Sprintf("%.4f Tr\n", alpha*2)) // Tr 0=fill, 2=invisible-ish hack
+	c.WriteString("0 Tr\n") // Tr 0 = fill (normal rendering mode)
 	// Centre the text horizontally (approximate: half the font size * num chars).
 	approxW := fontSize * float64(len(wm.Text)) * 0.5
 	c.WriteString(fmt.Sprintf("%.4f %.4f Td\n", -approxW/2, -fontSize/2))
@@ -480,6 +802,7 @@ func (e *Exporter) Finish() error {
 		e.writeOutlines()
 		e.writeNamedDests()
 	}
+	e.finalizeAcroForm()
 	return e.writer.Write(e.w)
 }
 

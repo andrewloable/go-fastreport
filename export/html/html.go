@@ -38,6 +38,7 @@ type Exporter struct {
 	pp      *preview.PreparedPages
 	sb      strings.Builder
 	pageIdx int
+	css     *cssRegistry
 }
 
 // NewExporter creates an Exporter with sensible defaults.
@@ -62,6 +63,7 @@ func (e *Exporter) Export(pp *preview.PreparedPages, w io.Writer) error {
 func (e *Exporter) Start() error {
 	e.sb.Reset()
 	e.pageIdx = 0
+	e.css = newCSSRegistry()
 	e.sb.WriteString("<!DOCTYPE html>\n<html>\n<head>\n")
 	e.sb.WriteString(fmt.Sprintf("<title>%s</title>\n", export.HTMLString(e.Title)))
 	if e.EmbedCSS {
@@ -119,16 +121,18 @@ func (e *Exporter) renderObject(obj preview.PreparedObject, scale float32) {
 	w := obj.Width * scale
 	h := obj.Height * scale
 
-	// Build inline CSS.
-	var css strings.Builder
-	css.WriteString(fmt.Sprintf(
+	// positional is always unique per object — kept inline.
+	positional := fmt.Sprintf(
 		"position:absolute;left:%.2fpx;top:%.2fpx;width:%.2fpx;height:%.2fpx;overflow:hidden;",
 		left, top, w, h,
-	))
+	)
+
+	// sharedCSS collects properties that can be shared across elements.
+	var shared strings.Builder
 
 	// Fill color.
 	if obj.FillColor.A > 0 {
-		css.WriteString(fmt.Sprintf(
+		shared.WriteString(fmt.Sprintf(
 			"background-color:rgba(%d,%d,%d,%.2f);",
 			obj.FillColor.R, obj.FillColor.G, obj.FillColor.B,
 			float32(obj.FillColor.A)/255.0,
@@ -136,50 +140,58 @@ func (e *Exporter) renderObject(obj preview.PreparedObject, scale float32) {
 	}
 
 	// Border.
-	css.WriteString(borderCSS(&obj.Border, scale))
+	shared.WriteString(borderCSS(&obj.Border, scale))
+
+	// styleAttr builds the full style= attribute (positional only when a class is used).
+	styleAttr := func(extra string) string {
+		combined := shared.String() + extra
+		name := e.css.Register(combined)
+		if name != "" {
+			return fmt.Sprintf(`style="%s" class="%s"`, positional, name)
+		}
+		return fmt.Sprintf(`style="%s%s"`, positional, combined)
+	}
 
 	switch obj.Kind {
 	case preview.ObjectTypeText:
-		// Font styling.
+		// Build shared text-specific CSS.
+		var textCSS strings.Builder
 		font := obj.Font
-		css.WriteString(fmt.Sprintf("font-family:'%s';font-size:%.1fpt;", font.Name, font.Size))
+		textCSS.WriteString(fmt.Sprintf("font-family:'%s';font-size:%.1fpt;", font.Name, font.Size))
 		if font.Style&style.FontStyleBold != 0 {
-			css.WriteString("font-weight:bold;")
+			textCSS.WriteString("font-weight:bold;")
 		}
 		if font.Style&style.FontStyleItalic != 0 {
-			css.WriteString("font-style:italic;")
+			textCSS.WriteString("font-style:italic;")
 		}
 		if font.Style&style.FontStyleUnderline != 0 {
-			css.WriteString("text-decoration:underline;")
+			textCSS.WriteString("text-decoration:underline;")
 		}
-		// Text color.
 		tc := obj.TextColor
-		css.WriteString(fmt.Sprintf("color:rgba(%d,%d,%d,%.2f);", tc.R, tc.G, tc.B, float32(tc.A)/255.0))
-		// Horizontal alignment.
+		textCSS.WriteString(fmt.Sprintf("color:rgba(%d,%d,%d,%.2f);", tc.R, tc.G, tc.B, float32(tc.A)/255.0))
 		switch obj.HorzAlign {
 		case 1:
-			css.WriteString("text-align:center;")
+			textCSS.WriteString("text-align:center;")
 		case 2:
-			css.WriteString("text-align:right;")
+			textCSS.WriteString("text-align:right;")
 		case 3:
-			css.WriteString("text-align:justify;")
+			textCSS.WriteString("text-align:justify;")
 		default:
-			css.WriteString("text-align:left;")
+			textCSS.WriteString("text-align:left;")
 		}
-		// Vertical alignment via flex.
 		switch obj.VertAlign {
 		case 1:
-			css.WriteString("display:flex;align-items:center;")
+			textCSS.WriteString("display:flex;align-items:center;")
 		case 2:
-			css.WriteString("display:flex;align-items:flex-end;")
+			textCSS.WriteString("display:flex;align-items:flex-end;")
 		}
 		if obj.WordWrap {
-			css.WriteString("word-wrap:break-word;white-space:normal;")
+			textCSS.WriteString("word-wrap:break-word;white-space:normal;")
 		} else {
-			css.WriteString("white-space:nowrap;")
+			textCSS.WriteString("white-space:nowrap;")
 		}
 
-		e.sb.WriteString(fmt.Sprintf(`<div style="%s">%s</div>`, css.String(), export.HTMLString(obj.Text)))
+		e.sb.WriteString(fmt.Sprintf(`<div %s>%s</div>`, styleAttr(textCSS.String()), export.HTMLString(obj.Text)))
 
 	case preview.ObjectTypePicture:
 		if obj.BlobIdx >= 0 && e.pp != nil {
@@ -187,21 +199,21 @@ func (e *Exporter) renderObject(obj preview.PreparedObject, scale float32) {
 				mime := imageMIME(data)
 				encoded := base64.StdEncoding.EncodeToString(data)
 				e.sb.WriteString(fmt.Sprintf(
-					`<div style="%s"><img src="data:%s;base64,%s" style="width:100%%;height:100%%;object-fit:contain;" alt=""></div>`,
-					css.String(), mime, encoded,
+					`<div %s><img src="data:%s;base64,%s" style="width:100%%;height:100%%;object-fit:contain;" alt=""></div>`,
+					styleAttr(""), mime, encoded,
 				))
 				break
 			}
 		}
 		// No image data — empty placeholder.
-		e.sb.WriteString(fmt.Sprintf(`<div style="%s"></div>`, css.String()))
+		e.sb.WriteString(fmt.Sprintf(`<div %s></div>`, styleAttr("")))
 
 	case preview.ObjectTypeLine:
 		if obj.LineDiagonal {
 			// Render diagonal line as an inline SVG.
 			e.sb.WriteString(fmt.Sprintf(
-				`<div style="%s"><svg width="%.2f" height="%.2f" style="position:absolute;top:0;left:0;">`,
-				css.String(), w, h,
+				`<div %s><svg width="%.2f" height="%.2f" style="position:absolute;top:0;left:0;">`,
+				styleAttr(""), w, h,
 			))
 			e.sb.WriteString(fmt.Sprintf(
 				`<line x1="0" y1="0" x2="%.2f" y2="%.2f" stroke="#000" stroke-width="1"/>`,
@@ -210,22 +222,24 @@ func (e *Exporter) renderObject(obj preview.PreparedObject, scale float32) {
 			e.sb.WriteString(`</svg></div>`)
 		} else {
 			// Horizontal or vertical: use border-bottom or border-left.
+			var lineExtra string
 			if h <= w {
-				css.WriteString("border-bottom:1px solid #000;height:1px;")
+				lineExtra = "border-bottom:1px solid #000;height:1px;"
 			} else {
-				css.WriteString("border-left:1px solid #000;width:1px;")
+				lineExtra = "border-left:1px solid #000;width:1px;"
 			}
-			e.sb.WriteString(fmt.Sprintf(`<div style="%s"></div>`, css.String()))
+			e.sb.WriteString(fmt.Sprintf(`<div %s></div>`, styleAttr(lineExtra)))
 		}
 
 	case preview.ObjectTypeShape:
+		var shapeExtra string
 		switch obj.ShapeKind {
 		case 2: // Ellipse
-			css.WriteString("border:1px solid #000;border-radius:50%;")
+			shapeExtra = "border:1px solid #000;border-radius:50%;"
 		case 1: // RoundRectangle
-			css.WriteString(fmt.Sprintf("border:1px solid #000;border-radius:%.2fpx;", obj.ShapeCurve*scale))
+			shapeExtra = fmt.Sprintf("border:1px solid #000;border-radius:%.2fpx;", obj.ShapeCurve*scale)
 		case 3: // Triangle — use inline SVG
-			e.sb.WriteString(fmt.Sprintf(`<div style="%s">`, css.String()))
+			e.sb.WriteString(fmt.Sprintf(`<div %s>`, styleAttr("")))
 			e.sb.WriteString(fmt.Sprintf(
 				`<svg width="%.2f" height="%.2f" style="position:absolute;top:0;left:0;">`,
 				w, h,
@@ -235,9 +249,8 @@ func (e *Exporter) renderObject(obj preview.PreparedObject, scale float32) {
 				w/2, h, w, h,
 			))
 			e.sb.WriteString(`</svg></div>`)
-			break
 		case 4: // Diamond — use inline SVG
-			e.sb.WriteString(fmt.Sprintf(`<div style="%s">`, css.String()))
+			e.sb.WriteString(fmt.Sprintf(`<div %s>`, styleAttr("")))
 			e.sb.WriteString(fmt.Sprintf(
 				`<svg width="%.2f" height="%.2f" style="position:absolute;top:0;left:0;">`,
 				w, h,
@@ -247,13 +260,21 @@ func (e *Exporter) renderObject(obj preview.PreparedObject, scale float32) {
 				w/2, w, h/2, w/2, h, h/2,
 			))
 			e.sb.WriteString(`</svg></div>`)
-			break
 		default: // Rectangle
-			css.WriteString("border:1px solid #000;")
+			shapeExtra = "border:1px solid #000;"
 		}
 		if obj.ShapeKind != 3 && obj.ShapeKind != 4 {
-			e.sb.WriteString(fmt.Sprintf(`<div style="%s"></div>`, css.String()))
+			e.sb.WriteString(fmt.Sprintf(`<div %s></div>`, styleAttr(shapeExtra)))
 		}
+
+	case preview.ObjectTypeDigitalSignature:
+		// Render a dashed-border placeholder box for digital signature fields.
+		label := obj.Text
+		if label == "" {
+			label = "Digital Signature"
+		}
+		sigExtra := "border:2px dashed #888;color:#888;font-size:10pt;display:flex;align-items:center;justify-content:center;"
+		e.sb.WriteString(fmt.Sprintf(`<div %s><span>%s</span></div>`, styleAttr(sigExtra), export.HTMLString(label)))
 
 	case preview.ObjectTypeCheckBox:
 		checked := ""
@@ -261,13 +282,79 @@ func (e *Exporter) renderObject(obj preview.PreparedObject, scale float32) {
 			checked = " checked"
 		}
 		e.sb.WriteString(fmt.Sprintf(
-			`<div style="%s"><input type="checkbox"%s disabled style="margin:auto;"></div>`,
-			css.String(), checked,
+			`<div %s><input type="checkbox"%s disabled style="margin:auto;"></div>`,
+			styleAttr(""), checked,
 		))
+
+	case preview.ObjectTypePolyLine, preview.ObjectTypePolygon:
+		if len(obj.Points) < 2 {
+			e.sb.WriteString(fmt.Sprintf(`<div %s></div>`, styleAttr("")))
+			break
+		}
+
+		// Determine stroke color from border.
+		strokeColor := "black"
+		strokeWidth := 1.0
+		if obj.Border.Lines[0] != nil {
+			lc := obj.Border.Lines[0].Color
+			if lc.A > 0 {
+				strokeColor = fmt.Sprintf("rgba(%d,%d,%d,%.2f)",
+					lc.R, lc.G, lc.B, float32(lc.A)/255.0)
+			}
+			if obj.Border.Lines[0].Width > 0 {
+				strokeWidth = float64(obj.Border.Lines[0].Width) * float64(scale)
+			}
+		}
+
+		// Build SVG points string.
+		var pts strings.Builder
+		for i, pt := range obj.Points {
+			px := float64(pt[0]) * float64(scale)
+			py := float64(pt[1]) * float64(scale)
+			if i > 0 {
+				pts.WriteByte(' ')
+			}
+			pts.WriteString(fmt.Sprintf("%.2f,%.2f", px, py))
+		}
+
+		// PolyLine/Polygon use overflow:visible — build positional inline directly.
+		polyPos := fmt.Sprintf(
+			"position:absolute;left:%.2fpx;top:%.2fpx;width:%.2fpx;height:%.2fpx;overflow:visible;",
+			left, top, w, h,
+		)
+
+		if obj.Kind == preview.ObjectTypePolyLine {
+			e.sb.WriteString(fmt.Sprintf(
+				`<div style="%s"><svg width="%.2f" height="%.2f" style="overflow:visible;">`,
+				polyPos, w, h,
+			))
+			e.sb.WriteString(fmt.Sprintf(
+				`<polyline points="%s" stroke="%s" stroke-width="%.2f" fill="none"/>`,
+				pts.String(), strokeColor, strokeWidth,
+			))
+			e.sb.WriteString(`</svg></div>`)
+		} else {
+			// Polygon — close the path and fill.
+			fillColor := "none"
+			if obj.FillColor.A > 0 {
+				fc := obj.FillColor
+				fillColor = fmt.Sprintf("rgba(%d,%d,%d,%.2f)",
+					fc.R, fc.G, fc.B, float32(fc.A)/255.0)
+			}
+			e.sb.WriteString(fmt.Sprintf(
+				`<div style="%s"><svg width="%.2f" height="%.2f" style="overflow:visible;">`,
+				polyPos, w, h,
+			))
+			e.sb.WriteString(fmt.Sprintf(
+				`<polygon points="%s" stroke="%s" stroke-width="%.2f" fill="%s"/>`,
+				pts.String(), strokeColor, strokeWidth, fillColor,
+			))
+			e.sb.WriteString(`</svg></div>`)
+		}
 
 	default:
 		// Unknown/unhandled type — render an empty placeholder.
-		e.sb.WriteString(fmt.Sprintf(`<div style="%s"></div>`, css.String()))
+		e.sb.WriteString(fmt.Sprintf(`<div %s></div>`, styleAttr("")))
 	}
 }
 
@@ -277,6 +364,10 @@ func (e *Exporter) ExportPageEnd(_ *preview.PreparedPage) error {
 }
 
 func (e *Exporter) Finish() error {
+	// Inject collected CSS classes before closing body.
+	if e.css != nil {
+		e.sb.WriteString(e.css.StyleBlock())
+	}
 	e.sb.WriteString("</body>\n</html>\n")
 	_, err := io.WriteString(e.w, e.sb.String())
 	return err

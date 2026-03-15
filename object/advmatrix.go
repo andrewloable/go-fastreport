@@ -1,8 +1,13 @@
 package object
 
 import (
+	"image/color"
+
 	"github.com/andrewloable/go-fastreport/report"
+	"github.com/andrewloable/go-fastreport/style"
+	"github.com/andrewloable/go-fastreport/utils"
 )
+
 
 // AdvMatrixDescriptor holds the definition of a row or column dimension
 // in an AdvMatrixObject.
@@ -26,18 +31,20 @@ type AdvMatrixColumn struct {
 
 // AdvMatrixCell holds a single cell within a physical row of the AdvMatrix table.
 type AdvMatrixCell struct {
-	Name     string
-	Width    float32
-	Height   float32
-	ColSpan  int
-	RowSpan  int
-	Text     string
+	Name      string
+	Width     float32
+	Height    float32
+	ColSpan   int
+	RowSpan   int
+	Text      string
 	HorzAlign int
 	VertAlign int
+	// Style fields parsed from FRX attributes.
+	Border    *style.Border // nil = no border
+	FillColor *color.RGBA   // nil = no fill
+	Font      *style.Font   // nil = inherit default
 	// Buttons contains any MatrixCollapseButton/MatrixSortButton children.
 	Buttons []*MatrixButton
-	// RawAttrs preserves other attributes for round-trip fidelity.
-	RawAttrs map[string]string
 }
 
 // MatrixButton holds the minimal properties of a MatrixCollapseButton or
@@ -68,7 +75,9 @@ type AdvMatrixRow struct {
 //
 // It is the Go equivalent of FastReport.AdvMatrix.AdvMatrixObject.
 // This implementation supports FRX loading (deserialization) and serialization
-// for round-trip fidelity; rendering is not yet implemented.
+// for round-trip fidelity. The physical template cells (TableRows/TableColumns)
+// are rendered by populateAdvMatrixCells in the report engine, with ColSpan,
+// RowSpan, fill color, border, and font all resolved from the deserialized FRX.
 type AdvMatrixObject struct {
 	report.ReportComponentBase
 
@@ -198,12 +207,48 @@ func (cell *AdvMatrixCell) Serialize(w report.Writer) error {
 	if cell.VertAlign != 0 {
 		w.WriteInt("VertAlign", cell.VertAlign)
 	}
+	if cell.Border != nil && cell.Border.VisibleLines != 0 {
+		bl := formatBorderLinesStr(cell.Border.VisibleLines)
+		if bl != "" {
+			w.WriteStr("Border.Lines", bl)
+		}
+		if len(cell.Border.Lines) > 0 && cell.Border.Lines[0] != nil {
+			c := cell.Border.Lines[0].Color
+			w.WriteStr("Border.Color", utils.FormatColor(c))
+		}
+	}
+	if cell.FillColor != nil {
+		w.WriteStr("Fill.Color", utils.FormatColor(*cell.FillColor))
+	}
+	if cell.Font != nil {
+		w.WriteStr("Font", style.FontToStr(*cell.Font))
+	}
 	for _, btn := range cell.Buttons {
 		if err := w.WriteObjectNamed(btn.TypeName, btn); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// formatBorderLinesStr converts a BorderLines bitmask to the FRX string form.
+func formatBorderLinesStr(bl style.BorderLines) string {
+	switch bl {
+	case style.BorderLinesAll:
+		return "All"
+	case style.BorderLinesNone:
+		return "None"
+	case style.BorderLinesLeft:
+		return "Left"
+	case style.BorderLinesRight:
+		return "Right"
+	case style.BorderLinesTop:
+		return "Top"
+	case style.BorderLinesBottom:
+		return "Bottom"
+	default:
+		return ""
+	}
 }
 
 // Deserialize reads AdvMatrixCell properties.
@@ -222,7 +267,58 @@ func (cell *AdvMatrixCell) Deserialize(r report.Reader) error {
 	if cell.RowSpan < 1 {
 		cell.RowSpan = 1
 	}
+	// Parse border.
+	borderLines := r.ReadStr("Border.Lines", "")
+	borderColor := r.ReadStr("Border.Color", "")
+	if borderLines != "" || borderColor != "" {
+		b := style.NewBorder()
+		if borderLines != "" {
+			bl := parseBorderLinesStr(borderLines)
+			b.VisibleLines = bl
+		}
+		if borderColor != "" {
+			if c, err := utils.ParseColor(borderColor); err == nil {
+				for i := range b.Lines {
+					if b.Lines[i] != nil {
+						b.Lines[i].Color = c
+					}
+				}
+			}
+		}
+		cell.Border = b
+	}
+	// Parse fill color.
+	if fc := r.ReadStr("Fill.Color", ""); fc != "" {
+		if c, err := utils.ParseColor(fc); err == nil {
+			cell.FillColor = &c
+		}
+	}
+	// Parse font.
+	if fs := r.ReadStr("Font", ""); fs != "" {
+		f := style.FontFromStr(fs)
+		cell.Font = &f
+	}
 	return nil
+}
+
+// parseBorderLinesStr converts the FRX Border.Lines string to a BorderLines bitmask.
+func parseBorderLinesStr(s string) style.BorderLines {
+	switch s {
+	case "All":
+		return style.BorderLinesLeft | style.BorderLinesRight | style.BorderLinesTop | style.BorderLinesBottom
+	case "None":
+		return 0
+	case "Left":
+		return style.BorderLinesLeft
+	case "Right":
+		return style.BorderLinesRight
+	case "Top":
+		return style.BorderLinesTop
+	case "Bottom":
+		return style.BorderLinesBottom
+	default:
+		return 0
+	}
 }
 
 // Serialize writes MatrixButton properties.
@@ -304,22 +400,8 @@ func (a *AdvMatrixObject) DeserializeChild(childType string, r report.Reader) bo
 				break
 			}
 			if ct == "TableCell" {
-				cell := &AdvMatrixCell{
-					Name:      r.ReadStr("Name", ""),
-					Width:     r.ReadFloat("Width", 0),
-					Height:    r.ReadFloat("Height", 0),
-					ColSpan:   r.ReadInt("ColSpan", 1),
-					RowSpan:   r.ReadInt("RowSpan", 1),
-					Text:      r.ReadStr("Text", ""),
-					HorzAlign: r.ReadInt("HorzAlign", 0),
-					VertAlign: r.ReadInt("VertAlign", 0),
-				}
-				if cell.ColSpan < 1 {
-					cell.ColSpan = 1
-				}
-				if cell.RowSpan < 1 {
-					cell.RowSpan = 1
-				}
+				cell := &AdvMatrixCell{}
+				_ = cell.Deserialize(r)
 				// Iterate children of the cell (MatrixCollapseButton, MatrixSortButton).
 				for {
 					btnType, ok2 := r.NextChild()

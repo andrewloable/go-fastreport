@@ -22,8 +22,8 @@ func TestNewTableColumn_Defaults(t *testing.T) {
 	if c.MinWidth() != 0 {
 		t.Errorf("MinWidth default = %v, want 0", c.MinWidth())
 	}
-	if c.MaxWidth() != 500 {
-		t.Errorf("MaxWidth default = %v, want 500", c.MaxWidth())
+	if c.MaxWidth() != 5000 {
+		t.Errorf("MaxWidth default = %v, want 5000", c.MaxWidth())
 	}
 	if c.AutoSize() {
 		t.Error("AutoSize should default to false")
@@ -385,12 +385,15 @@ func TestTableObject_Serialize_ContainsKeyAttributes(t *testing.T) {
 		`Name="Table1"`,
 		`FixedRows="2"`,
 		`Layout="2"`, // TableLayoutWrapped = 2
-		`RepeatHeaders="true"`,
 		`ManualBuildEvent="BuildTable"`,
 	} {
 		if !strings.Contains(xml, want) {
 			t.Errorf("XML missing %q in:\n%s", want, xml)
 		}
+	}
+	// RepeatHeaders=true is the default and must NOT be written (delta serialization).
+	if strings.Contains(xml, `RepeatHeaders="true"`) {
+		t.Errorf("RepeatHeaders=\"true\" should not be written (it is the default): %s", xml)
 	}
 }
 

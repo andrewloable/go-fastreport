@@ -56,6 +56,16 @@ type CubeSourceBase interface {
 
 	// Cell value retrieval. x/y are 0-based data-grid coordinates.
 	GetMeasureCell(x, y int) MeasureCell
+
+	// Measures placement. MeasuresInXAxis returns true when the measure
+	// headers should appear as an extra level on the X (column) axis; false
+	// means they go on the Y (row) axis.
+	// MeasuresInYAxis is the inverse convenience accessor.
+	// MeasuresLevel returns the nesting depth at which measure headers are
+	// inserted (-1 means innermost / deepest level).
+	MeasuresInXAxis() bool
+	MeasuresInYAxis() bool
+	MeasuresLevel() int
 }
 
 // ── Descriptor base ───────────────────────────────────────────────────────────
@@ -113,6 +123,12 @@ type CrossViewData struct {
 	Columns []*HeaderDescriptor
 	Rows    []*HeaderDescriptor
 	Cells   []*CellDescriptor
+
+	// columnTerminalIndexes holds indices into Columns for leaf-level descriptors
+	// (the descriptors that map directly to data-grid columns).
+	columnTerminalIndexes []int
+	// rowTerminalIndexes holds indices into Rows for leaf-level descriptors.
+	rowTerminalIndexes []int
 }
 
 // AddColumn appends a column header descriptor.
@@ -124,11 +140,141 @@ func (d *CrossViewData) AddRow(h *HeaderDescriptor) { d.Rows = append(d.Rows, h)
 // AddCell appends a cell descriptor.
 func (d *CrossViewData) AddCell(c *CellDescriptor) { d.Cells = append(d.Cells, c) }
 
+// ColumnTerminalIndexes returns the indices of leaf column descriptors.
+func (d *CrossViewData) ColumnTerminalIndexes() []int { return d.columnTerminalIndexes }
+
+// RowTerminalIndexes returns the indices of leaf row descriptors.
+func (d *CrossViewData) RowTerminalIndexes() []int { return d.rowTerminalIndexes }
+
 // Clear removes all descriptors.
 func (d *CrossViewData) Clear() {
 	d.Columns = d.Columns[:0]
 	d.Rows = d.Rows[:0]
 	d.Cells = d.Cells[:0]
+	d.columnTerminalIndexes = d.columnTerminalIndexes[:0]
+	d.rowTerminalIndexes = d.rowTerminalIndexes[:0]
+}
+
+// CreateDescriptors builds the descriptor model from a CubeSourceBase.
+//
+// Column descriptors: one per X-axis field level. When MeasuresCount > 1 and
+// MeasuresInXAxis is true, a measure-level descriptor is inserted at the
+// MeasuresLevel position.
+//
+// Row descriptors: analogous for Y-axis / MeasuresInYAxis.
+//
+// Cell descriptors: one per unique (terminal-column × terminal-row) combination,
+// matching the data grid cell at (x, y).
+//
+// Terminal indexes are computed after descriptors are created.
+func (d *CrossViewData) CreateDescriptors(src CubeSourceBase) {
+	d.Clear()
+
+	xFields := src.XAxisFieldsCount()
+	yFields := src.YAxisFieldsCount()
+	measures := src.MeasuresCount()
+	measuresInX := src.MeasuresInXAxis() && measures > 1
+	measuresInY := src.MeasuresInYAxis() && measures > 1
+	measLevel := src.MeasuresLevel()
+
+	// ── Column (X-axis) descriptors ───────────────────────────────────────────
+	// We create one descriptor per field level. If measures belong to the X
+	// axis, we insert an extra level at measLevel (or innermost if -1).
+	xLevels := xFields
+	if measuresInX {
+		xLevels++ // extra level for measures
+	}
+	xMeasureLevel := measLevel
+	if measuresInX && xMeasureLevel < 0 {
+		xMeasureLevel = xLevels - 1 // innermost
+	}
+
+	xFieldIdx := 0
+	for level := 0; level < xLevels; level++ {
+		if measuresInX && level == xMeasureLevel {
+			// Insert measure-level descriptors.
+			for j := 0; j < measures; j++ {
+				hd := &HeaderDescriptor{
+					MeasureName: src.GetMeasureName(j),
+					IsMeasure:   true,
+					Level:       level,
+				}
+				d.columnTerminalIndexes = append(d.columnTerminalIndexes, len(d.Columns))
+				d.AddColumn(hd)
+			}
+		} else {
+			if xFieldIdx < xFields {
+				hd := &HeaderDescriptor{
+					FieldName: src.GetXAxisFieldName(xFieldIdx),
+					Level:     level,
+				}
+				// If this is the deepest non-measure field and no measure level,
+				// mark as terminal.
+				if !measuresInX && level == xFields-1 {
+					d.columnTerminalIndexes = append(d.columnTerminalIndexes, len(d.Columns))
+				}
+				d.AddColumn(hd)
+				xFieldIdx++
+			}
+		}
+	}
+
+	// ── Row (Y-axis) descriptors ───────────────────────────────────────────────
+	yLevels := yFields
+	if measuresInY {
+		yLevels++
+	}
+	yMeasureLevel := measLevel
+	if measuresInY && yMeasureLevel < 0 {
+		yMeasureLevel = yLevels - 1
+	}
+
+	yFieldIdx := 0
+	for level := 0; level < yLevels; level++ {
+		if measuresInY && level == yMeasureLevel {
+			for j := 0; j < measures; j++ {
+				hd := &HeaderDescriptor{
+					MeasureName: src.GetMeasureName(j),
+					IsMeasure:   true,
+					Level:       level,
+				}
+				d.rowTerminalIndexes = append(d.rowTerminalIndexes, len(d.Rows))
+				d.AddRow(hd)
+			}
+		} else {
+			if yFieldIdx < yFields {
+				hd := &HeaderDescriptor{
+					FieldName: src.GetYAxisFieldName(yFieldIdx),
+					Level:     level,
+				}
+				if !measuresInY && level == yFields-1 {
+					d.rowTerminalIndexes = append(d.rowTerminalIndexes, len(d.Rows))
+				}
+				d.AddRow(hd)
+				yFieldIdx++
+			}
+		}
+	}
+
+	// ── Cell descriptors ──────────────────────────────────────────────────────
+	// One cell descriptor per data-grid position (data cols × data rows).
+	// When multiple measures exist on an axis, the data-col/row count already
+	// includes the measure dimension via DataColumnCount / DataRowCount.
+	dataCols := src.DataColumnCount()
+	dataRows := src.DataRowCount()
+	for y := 0; y < dataRows; y++ {
+		for x := 0; x < dataCols; x++ {
+			cd := &CellDescriptor{
+				X: x,
+				Y: y,
+			}
+			// Attach measure name when a single measure axis exists.
+			if measures == 1 {
+				cd.MeasureName = src.GetMeasureName(0)
+			}
+			d.AddCell(cd)
+		}
+	}
 }
 
 // ── ResultCell ────────────────────────────────────────────────────────────────
@@ -193,35 +339,11 @@ func (cv *CrossViewObject) SetSource(src CubeSourceBase) {
 
 // buildDescriptors rebuilds the descriptor model from the current source.
 func (cv *CrossViewObject) buildDescriptors() {
-	cv.Data.Clear()
 	if cv.Source == nil {
+		cv.Data.Clear()
 		return
 	}
-	src := cv.Source
-
-	// Column (X-axis) header descriptors — one per X-axis field.
-	for i := 0; i < src.XAxisFieldsCount(); i++ {
-		cv.Data.AddColumn(&HeaderDescriptor{
-			FieldName: src.GetXAxisFieldName(i),
-			Level:     i,
-		})
-	}
-
-	// Row (Y-axis) header descriptors — one per Y-axis field.
-	for i := 0; i < src.YAxisFieldsCount(); i++ {
-		cv.Data.AddRow(&HeaderDescriptor{
-			FieldName: src.GetYAxisFieldName(i),
-			Level:     i,
-		})
-	}
-
-	// Cell descriptors — one per combination of terminal column × terminal row.
-	// For simplicity we create one per measure per data cell.
-	for j := 0; j < src.MeasuresCount(); j++ {
-		cv.Data.AddCell(&CellDescriptor{
-			MeasureName: src.GetMeasureName(j),
-		})
-	}
+	cv.Data.CreateDescriptors(cv.Source)
 }
 
 // Build computes the ResultGrid by traversing the source axes and filling cells.
@@ -239,17 +361,32 @@ func (cv *CrossViewObject) Build() (*ResultGrid, error) {
 func buildGrid(cv *CrossViewObject) (*ResultGrid, error) {
 	src := cv.Source
 
-	xFieldCount := src.XAxisFieldsCount()
-	yFieldCount := src.YAxisFieldsCount()
 	dataCols := src.DataColumnCount()
 	dataRows := src.DataRowCount()
 
+	// Number of header rows = X-axis field levels.
+	// When MeasuresInXAxis, there is an extra level for measures.
+	xHeaderRows := src.XAxisFieldsCount()
+	if src.MeasuresInXAxis() && src.MeasuresCount() > 1 {
+		xHeaderRows++
+	}
+
+	// Number of header columns = Y-axis field levels.
+	// When MeasuresInYAxis, there is an extra level for measures.
+	yHeaderCols := src.YAxisFieldsCount()
+	if src.MeasuresInYAxis() && src.MeasuresCount() > 1 {
+		yHeaderCols++
+	}
+
 	// Grid dimensions:
-	//  cols = yFieldCount (Y-axis labels) + dataCols
-	//  rows = xFieldCount (X-axis header rows) + dataRows
-	// An optional title row at the very top is not included here for simplicity.
-	totalCols := yFieldCount + dataCols
-	totalRows := xFieldCount + dataRows
+	//  cols = yHeaderCols (Y-axis labels) + dataCols
+	//  rows = xHeaderRows (X-axis header rows) + dataRows
+	totalCols := yHeaderCols + dataCols
+	totalRows := xHeaderRows + dataRows
+
+	// Alias for the rest of the function (replaces old xFieldCount/yFieldCount).
+	xFieldCount := xHeaderRows
+	yFieldCount := yHeaderCols
 
 	if totalCols <= 0 {
 		totalCols = 1

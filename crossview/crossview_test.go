@@ -41,6 +41,9 @@ func (m *mockCube) GetYAxisFieldName(i int) string { return m.yFields[i] }
 func (m *mockCube) GetMeasureName(j int) string    { return m.measures[j] }
 func (m *mockCube) DataColumnCount() int           { return len(m.xValues) }
 func (m *mockCube) DataRowCount() int              { return len(m.yValues) }
+func (m *mockCube) MeasuresInXAxis() bool          { return false }
+func (m *mockCube) MeasuresInYAxis() bool          { return false }
+func (m *mockCube) MeasuresLevel() int             { return -1 }
 
 func (m *mockCube) TraverseXAxis(fn crossview.AxisTraverseFunc) {
 	for i, v := range m.xValues {
@@ -90,8 +93,10 @@ func TestSetSource_BuildsDescriptors(t *testing.T) {
 	if len(cv.Data.Rows) != 1 {
 		t.Errorf("Rows len = %d, want 1 (one Y-axis field)", len(cv.Data.Rows))
 	}
-	if len(cv.Data.Cells) != 1 {
-		t.Errorf("Cells len = %d, want 1 (one measure)", len(cv.Data.Cells))
+	// CreateDescriptors creates one CellDescriptor per data-grid position
+	// (dataCols × dataRows = 2 × 2 = 4).
+	if len(cv.Data.Cells) != 4 {
+		t.Errorf("Cells len = %d, want 4 (dataCols×dataRows)", len(cv.Data.Cells))
 	}
 	if cv.Data.Columns[0].FieldName != "Region" {
 		t.Errorf("Column[0].FieldName = %q, want Region", cv.Data.Columns[0].FieldName)
@@ -259,6 +264,9 @@ func (m *multiLevelCube) GetYAxisFieldName(i int) string { return "Product" }
 func (m *multiLevelCube) GetMeasureName(j int) string    { return "Sales" }
 func (m *multiLevelCube) DataColumnCount() int           { return 2 } // Q1, Q2
 func (m *multiLevelCube) DataRowCount() int              { return 1 }
+func (m *multiLevelCube) MeasuresInXAxis() bool          { return false }
+func (m *multiLevelCube) MeasuresInYAxis() bool          { return false }
+func (m *multiLevelCube) MeasuresLevel() int             { return -1 }
 
 func (m *multiLevelCube) TraverseXAxis(fn crossview.AxisTraverseFunc) {
 	// Level 0: 2024 spanning both quarters
@@ -309,6 +317,116 @@ func TestBuild_MultiLevelXAxis(t *testing.T) {
 	q1 := grid.Cell(1, 1)
 	if q1.Text != "Q1" {
 		t.Errorf("Cell(1,1).Text = %q, want 'Q1'", q1.Text)
+	}
+}
+
+// ── Multi-measure X-axis ──────────────────────────────────────────────────────
+
+// multiMeasureCube: Region (X) × Product (Y), two measures: Sales + Qty.
+// MeasuresInXAxis = true, so each leaf column has two sub-columns.
+type multiMeasureCube struct{}
+
+func (m *multiMeasureCube) XAxisFieldsCount() int          { return 1 }
+func (m *multiMeasureCube) YAxisFieldsCount() int          { return 1 }
+func (m *multiMeasureCube) MeasuresCount() int             { return 2 }
+func (m *multiMeasureCube) GetXAxisFieldName(i int) string { return "Region" }
+func (m *multiMeasureCube) GetYAxisFieldName(i int) string { return "Product" }
+func (m *multiMeasureCube) GetMeasureName(j int) string    { return []string{"Sales", "Qty"}[j] }
+func (m *multiMeasureCube) DataColumnCount() int           { return 4 } // North/Sales, North/Qty, South/Sales, South/Qty
+func (m *multiMeasureCube) DataRowCount() int              { return 2 }
+func (m *multiMeasureCube) MeasuresInXAxis() bool          { return true }
+func (m *multiMeasureCube) MeasuresInYAxis() bool          { return false }
+func (m *multiMeasureCube) MeasuresLevel() int             { return -1 } // innermost
+
+func (m *multiMeasureCube) TraverseXAxis(fn crossview.AxisTraverseFunc) {
+	// Level 0: Region values (each spans 2 measure columns)
+	fn(crossview.AxisDrawCell{Text: "North", Cell: 0, Level: 0, SizeCell: 2, SizeLevel: 1})
+	fn(crossview.AxisDrawCell{Text: "South", Cell: 2, Level: 0, SizeCell: 2, SizeLevel: 1})
+	// Level 1 (measure): Sales, Qty, Sales, Qty
+	fn(crossview.AxisDrawCell{Text: "Sales", Cell: 0, Level: 1, SizeCell: 1, SizeLevel: 1})
+	fn(crossview.AxisDrawCell{Text: "Qty", Cell: 1, Level: 1, SizeCell: 1, SizeLevel: 1})
+	fn(crossview.AxisDrawCell{Text: "Sales", Cell: 2, Level: 1, SizeCell: 1, SizeLevel: 1})
+	fn(crossview.AxisDrawCell{Text: "Qty", Cell: 3, Level: 1, SizeCell: 1, SizeLevel: 1})
+}
+
+func (m *multiMeasureCube) TraverseYAxis(fn crossview.AxisTraverseFunc) {
+	fn(crossview.AxisDrawCell{Text: "Apples", Cell: 0, Level: 0, SizeCell: 1, SizeLevel: 1})
+	fn(crossview.AxisDrawCell{Text: "Bananas", Cell: 1, Level: 0, SizeCell: 1, SizeLevel: 1})
+}
+
+func (m *multiMeasureCube) GetMeasureCell(x, y int) crossview.MeasureCell {
+	// [row][col]: 4 cols (N/Sales, N/Qty, S/Sales, S/Qty), 2 rows
+	data := [][]string{
+		{"100", "10", "200", "20"},
+		{"150", "15", "250", "25"},
+	}
+	if y >= 0 && y < len(data) && x >= 0 && x < len(data[y]) {
+		return crossview.MeasureCell{Text: data[y][x]}
+	}
+	return crossview.MeasureCell{}
+}
+
+func TestCreateDescriptors_MultiMeasureInXAxis(t *testing.T) {
+	cv := crossview.NewCrossViewObject()
+	cv.SetSource(&multiMeasureCube{})
+
+	// Columns: Region(level0) + Sales(level1,measure) + Qty(level1,measure) = 3
+	if len(cv.Data.Columns) != 3 {
+		t.Errorf("Columns len = %d, want 3", len(cv.Data.Columns))
+	}
+	// Terminal column indexes = measure descriptors (indices 1 and 2)
+	terminals := cv.Data.ColumnTerminalIndexes()
+	if len(terminals) != 2 {
+		t.Errorf("ColumnTerminalIndexes len = %d, want 2", len(terminals))
+	}
+	// Measure descriptors should have IsMeasure=true
+	for _, idx := range terminals {
+		if !cv.Data.Columns[idx].IsMeasure {
+			t.Errorf("Columns[%d].IsMeasure = false, want true", idx)
+		}
+	}
+	// Row: Product = 1 descriptor, 1 terminal
+	if len(cv.Data.Rows) != 1 {
+		t.Errorf("Rows len = %d, want 1", len(cv.Data.Rows))
+	}
+	if len(cv.Data.RowTerminalIndexes()) != 1 {
+		t.Errorf("RowTerminalIndexes len = %d, want 1", len(cv.Data.RowTerminalIndexes()))
+	}
+	// Cells: dataCols(4) × dataRows(2) = 8
+	if len(cv.Data.Cells) != 8 {
+		t.Errorf("Cells len = %d, want 8", len(cv.Data.Cells))
+	}
+}
+
+func TestBuild_MultiMeasureInXAxis_GridDimensions(t *testing.T) {
+	cv := crossview.NewCrossViewObject()
+	cv.SetSource(&multiMeasureCube{})
+
+	grid, err := cv.Build()
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	// totalCols = yFields(1) + dataCols(4) = 5
+	// totalRows = xFields(2) + dataRows(2) = 4  (xFields includes measure level)
+	if grid.ColCount != 5 {
+		t.Errorf("ColCount = %d, want 5", grid.ColCount)
+	}
+	if grid.RowCount != 4 {
+		t.Errorf("RowCount = %d, want 4", grid.RowCount)
+	}
+	// Row 0 (level 0): "North" at col 1 with ColSpan=2
+	north := grid.Cell(0, 1)
+	if north.Text != "North" {
+		t.Errorf("Cell(0,1).Text = %q, want 'North'", north.Text)
+	}
+	if north.ColSpan != 2 {
+		t.Errorf("Cell(0,1).ColSpan = %d, want 2", north.ColSpan)
+	}
+	// Data cell at (row=2, col=1) = Apples/North/Sales = "100"
+	c := grid.Cell(2, 1)
+	if c.Text != "100" {
+		t.Errorf("Cell(2,1).Text = %q, want '100'", c.Text)
 	}
 }
 

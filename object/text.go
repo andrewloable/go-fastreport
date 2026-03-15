@@ -355,6 +355,10 @@ type TextObject struct {
 	// highlights holds the conditional-formatting rules for this text object.
 	// The engine evaluates each condition in order and applies the first match.
 	highlights []style.HighlightCondition
+
+	// formats is the multi-format collection for multi-expression text objects.
+	// When non-nil, the formats here supersede the single TextObjectBase.format.
+	formats *format.Collection
 }
 
 // NewTextObject creates a TextObject with defaults.
@@ -513,6 +517,13 @@ func (t *TextObject) ParagraphFormat() ParagraphFormat { return t.paragraphForma
 // SetParagraphFormat sets the paragraph format.
 func (t *TextObject) SetParagraphFormat(pf ParagraphFormat) { t.paragraphFormat = pf }
 
+// Formats returns the multi-format collection. Returns nil when no collection
+// has been set (single-format mode via TextObjectBase.Format() is used instead).
+func (t *TextObject) Formats() *format.Collection { return t.formats }
+
+// SetFormats replaces the multi-format collection.
+func (t *TextObject) SetFormats(fc *format.Collection) { t.formats = fc }
+
 // MergeMode returns the merge-mode flags.
 func (t *TextObject) MergeMode() MergeMode { return t.mergeMode }
 
@@ -540,15 +551,20 @@ func (t *TextObject) AddHighlight(c style.HighlightCondition) {
 // can delegate unknown child elements to the TextObject itself.
 func (t *TextObject) DeserializeChild(childType string, r report.Reader) bool {
 	if childType == "Formats" {
-		// Multi-format case: first child format is used as the primary format.
+		// Multi-format case: populate the FormatCollection.
+		t.formats = format.NewCollection()
 		for {
 			ct, ok := r.NextChild()
 			if !ok {
 				break
 			}
 			f := deserializeFormatFromChild(ct, r)
-			if f != nil && t.format == nil {
-				t.format = f // use first format as primary
+			if f != nil {
+				t.formats.Add(f)
+				// Keep the single format field in sync with the primary.
+				if t.format == nil {
+					t.format = f
+				}
 			}
 			// drain any children of the format element
 			for {
@@ -556,9 +572,13 @@ func (t *TextObject) DeserializeChild(childType string, r report.Reader) bool {
 				if !ok2 {
 					break
 				}
-				if r.FinishChild() != nil { break }
+				if r.FinishChild() != nil {
+					break
+				}
 			}
-			if r.FinishChild() != nil { break }
+			if r.FinishChild() != nil {
+				break
+			}
 		}
 		return true
 	}

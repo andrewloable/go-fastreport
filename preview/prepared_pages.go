@@ -195,6 +195,25 @@ const (
 	// ObjectTypeSVG is a raw SVG document stored as UTF-8 bytes in BlobStore.
 	// HTML exporters may emit it inline; PDF/image exporters draw a placeholder.
 	ObjectTypeSVG
+	// ObjectTypeDigitalSignature is a DigitalSignatureObject.
+	// PDF exporters render it as a /Widget /Sig form field annotation.
+	// Other exporters render a styled placeholder box.
+	ObjectTypeDigitalSignature
+)
+
+// DuplicatesMode controls how consecutive objects with the same name and text
+// are rendered. Mirrors FastReport.Duplicates enum.
+type DuplicatesMode int
+
+const (
+	// DuplicatesShow shows all duplicate values (default).
+	DuplicatesShow DuplicatesMode = iota
+	// DuplicatesClear keeps the first occurrence and clears text in duplicates.
+	DuplicatesClear
+	// DuplicatesHide keeps the first occurrence and hides (removes) duplicates.
+	DuplicatesHide
+	// DuplicatesMerge stretches the first occurrence to cover all duplicates.
+	DuplicatesMerge
 )
 
 // PreparedObject is a rendered report component snapshot.
@@ -237,6 +256,12 @@ type PreparedObject struct {
 	WordWrap bool
 	// Checked is the checked state for ObjectTypeCheckBox.
 	Checked bool
+	// Duplicates controls how repeated values with the same object name are handled.
+	Duplicates DuplicatesMode
+	// HyperlinkKind indicates the type of hyperlink (0=None, 1=URL, 2=PageNumber, 3=Bookmark).
+	HyperlinkKind int
+	// HyperlinkValue is the resolved hyperlink target (URL, page number string, bookmark name).
+	HyperlinkValue string
 }
 
 // ── PreparedWatermark ─────────────────────────────────────────────────────────

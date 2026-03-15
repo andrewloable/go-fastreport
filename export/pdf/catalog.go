@@ -45,6 +45,12 @@ func (c *Catalog) SetNamedDests(namesRef *core.IndirectObject) {
 	c.dict.Add("Names", names)
 }
 
+// SetAcroForm registers an /AcroForm dictionary with the catalog.
+// Required for PDF interactive form fields (including digital signatures).
+func (c *Catalog) SetAcroForm(acroForm *core.Dictionary) {
+	c.dict.Add("AcroForm", acroForm)
+}
+
 // Info holds PDF document metadata stored in the document information dictionary.
 type Info struct {
 	obj      *core.IndirectObject

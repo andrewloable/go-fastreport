@@ -13,6 +13,7 @@ import (
 	"github.com/andrewloable/go-fastreport/barcode"
 	"github.com/andrewloable/go-fastreport/format"
 	"github.com/andrewloable/go-fastreport/gauge"
+	"github.com/andrewloable/go-fastreport/maprender"
 	"github.com/andrewloable/go-fastreport/object"
 	"github.com/andrewloable/go-fastreport/preview"
 	"github.com/andrewloable/go-fastreport/report"
@@ -184,6 +185,9 @@ func (e *ReportEngine) populateTableObjects(tbl *table.TableObject, originX, ori
 // as individual PreparedObjects. Each AdvMatrixRow holds AdvMatrixCell entries;
 // column widths come from TableColumns.  Absolute positions are computed from
 // the object's own Left/Top.
+//
+// ColSpan and RowSpan are resolved to pixel widths/heights using cumulative
+// column/row offset arrays, matching the logic in populateTableObjects.
 func (e *ReportEngine) populateAdvMatrixCells(adv *object.AdvMatrixObject, pb *preview.PreparedBand) {
 	if len(adv.TableRows) == 0 {
 		return
@@ -195,65 +199,83 @@ func (e *ReportEngine) populateAdvMatrixCells(adv *object.AdvMatrixObject, pb *p
 		colX[i+1] = colX[i] + col.Width
 	}
 
+	// Build cumulative row Y offsets for RowSpan height computation.
+	rowYOff := make([]float32, len(adv.TableRows)+1)
+	for ri, row := range adv.TableRows {
+		h := row.Height
+		if h <= 0 {
+			h = 20
+		}
+		rowYOff[ri+1] = rowYOff[ri] + h
+	}
+
 	originX := adv.Left()
 	originY := adv.Top()
-	rowY := float32(0)
-
 	black := color.RGBA{A: 255}
-	white := color.RGBA{R: 255, G: 255, B: 255, A: 0}
+	transparent := color.RGBA{R: 255, G: 255, B: 255, A: 0}
 
-	for _, row := range adv.TableRows {
-		rowH := row.Height
-		if rowH <= 0 {
-			rowH = 20
-		}
+	for ri, row := range adv.TableRows {
 		for ci, cell := range row.Cells {
 			if cell == nil {
 				continue
 			}
-			// Compute cell X.
+
+			// Cell left: cumulative column offset.
 			var cellX float32
 			if ci < len(colX) {
 				cellX = colX[ci]
 			}
-			// Compute cell width: use cell.Width if set, else span columns.
-			cellW := cell.Width
-			if cellW <= 0 {
-				colSpan := cell.ColSpan
-				if colSpan < 1 {
-					colSpan = 1
-				}
-				end := ci + colSpan
-				if end <= len(colX)-1 {
-					cellW = colX[end] - colX[ci]
-				} else if ci < len(colX)-1 {
-					cellW = colX[len(colX)-1] - colX[ci]
-				}
+
+			// Cell width: span ColSpan columns.
+			colSpan := cell.ColSpan
+			if colSpan < 1 {
+				colSpan = 1
 			}
-			cellH := cell.Height
-			if cellH <= 0 {
-				cellH = rowH
+			endCol := ci + colSpan
+			if endCol > len(colX)-1 {
+				endCol = len(colX) - 1
 			}
+			cellW := colX[endCol] - colX[ci]
+
+			// Cell height: span RowSpan rows.
+			rowSpan := cell.RowSpan
+			if rowSpan < 1 {
+				rowSpan = 1
+			}
+			endRow := ri + rowSpan
+			if endRow > len(rowYOff)-1 {
+				endRow = len(rowYOff) - 1
+			}
+			cellH := rowYOff[endRow] - rowYOff[ri]
 
 			text := e.evalText(cell.Text)
+			fillColor := transparent
+			if cell.FillColor != nil {
+				fillColor = *cell.FillColor
+			}
 			po := preview.PreparedObject{
 				Name:      cell.Name,
 				Kind:      preview.ObjectTypeText,
 				Left:      originX + cellX,
-				Top:       originY + rowY,
+				Top:       originY + rowYOff[ri],
 				Width:     cellW,
 				Height:    cellH,
 				Text:      text,
 				BlobIdx:   -1,
 				TextColor: black,
-				FillColor: white,
+				FillColor: fillColor,
 				HorzAlign: cell.HorzAlign,
 				VertAlign: cell.VertAlign,
 				WordWrap:  true,
 			}
+			if cell.Font != nil {
+				po.Font = *cell.Font
+			}
+			if cell.Border != nil {
+				po.Border = *cell.Border
+			}
 			pb.Objects = append(pb.Objects, po)
 		}
-		rowY += rowH
 	}
 }
 
@@ -489,8 +511,9 @@ func (e *ReportEngine) buildPreparedObject(obj report.Base) *preview.PreparedObj
 		// The individual cells will be emitted below via populateAdvMatrixCells.
 
 	case *object.DigitalSignatureObject:
-		// Render as a text placeholder showing the signature field.
-		po.Kind = preview.ObjectTypeText
+		// ObjectTypeDigitalSignature: PDF exporters create a /Sig Widget annotation;
+		// other exporters render a styled placeholder box with the placeholder text.
+		po.Kind = preview.ObjectTypeDigitalSignature
 		po.TextColor = color.RGBA{A: 255}
 		po.Text = v.Placeholder()
 
@@ -526,12 +549,43 @@ func (e *ReportEngine) buildPreparedObject(obj report.Base) *preview.PreparedObj
 		}
 
 	case *object.MapObject:
-		// Map rendering is not yet implemented; emit an empty picture placeholder.
 		po.Kind = preview.ObjectTypePicture
+		// Build maprender.Options from MapObject layers.
+		opts := maprender.Options{
+			Width:   int(geom.Width()),
+			Height:  int(geom.Height()),
+			OffsetX: float64(v.OffsetX),
+			OffsetY: float64(v.OffsetY),
+		}
+		for _, layer := range v.Layers {
+			opts.Layers = append(opts.Layers, maprender.Layer{
+				Shapefile: layer.Shapefile,
+				Palette:   layer.Palette,
+				Type:      layer.Type,
+			})
+		}
+		if opts.Width <= 0 {
+			opts.Width = 400
+		}
+		if opts.Height <= 0 {
+			opts.Height = 200
+		}
+		img := maprender.Render(opts)
+		if img != nil && e.preparedPages != nil {
+			var buf bytes.Buffer
+			if encErr := png.Encode(&buf, img); encErr == nil {
+				po.BlobIdx = e.preparedPages.BlobStore.Add(v.Name(), buf.Bytes())
+			}
+		}
 
 	case *object.MSChartObject:
-		// MSChart rendering is not yet implemented; emit an empty picture placeholder.
 		po.Kind = preview.ObjectTypePicture
+		if series := sparkline.DecodeChartData(v.ChartData); series != nil {
+			img := sparkline.Render(series, int(geom.Width()), int(geom.Height()))
+			if img != nil {
+				po.BlobIdx = e.renderGaugeBlob(v.Name(), img)
+			}
+		}
 
 	case *table.TableObject:
 		// The bounding box is rendered as a shape; individual cells are added

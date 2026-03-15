@@ -72,6 +72,7 @@ func init() {
 		{"DigitalSignatureObject", func() report.Base { return object.NewDigitalSignatureObject() }},
 		{"MapObject", func() report.Base { return object.NewMapObject() }},
 		{"MapLayer", func() report.Base { return object.NewMapLayer() }},
+		{"RFIDLabel", func() report.Base { return object.NewRFIDLabel() }},
 
 		// Table object and its children
 		{"TableObject", func() report.Base { return table.NewTableObject() }},

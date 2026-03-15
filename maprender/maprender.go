@@ -28,6 +28,16 @@ type Layer struct {
 	Shapefile string
 	Palette   string
 	Type      string // "Choropleth", "Bubble", etc.
+
+	// GeoFeatures contains user-supplied geographic features for this layer.
+	// When non-nil, the built-in continental outlines are replaced by these.
+	GeoFeatures []GeoFeature
+
+	// Bubbles is the list of bubble overlays for "Bubble" type layers.
+	Bubbles []Bubble
+
+	// ShowLegend enables a legend for this layer.
+	ShowLegend bool
 }
 
 // Options control the rendering.
@@ -137,9 +147,52 @@ func Render(opts Options) image.Image {
 		}
 	}
 
-	// Draw simplified continental outlines (major blobs only).
-	for _, poly := range continents {
-		drawPoly(poly, land)
+	// Collect all user-supplied GeoFeatures across all layers.
+	hasUserFeatures := false
+	for _, l := range opts.Layers {
+		if len(l.GeoFeatures) > 0 {
+			hasUserFeatures = true
+			break
+		}
+	}
+
+	if hasUserFeatures {
+		// Render user-supplied GeoFeatures with choropleth coloring.
+		for _, layer := range opts.Layers {
+			if len(layer.GeoFeatures) == 0 {
+				continue
+			}
+			pal := NamedPalette(layer.Palette)
+
+			// Find value range for normalization.
+			minVal, maxVal := math.Inf(1), math.Inf(-1)
+			for _, f := range layer.GeoFeatures {
+				if f.Value < minVal {
+					minVal = f.Value
+				}
+				if f.Value > maxVal {
+					maxVal = f.Value
+				}
+			}
+			valRange := maxVal - minVal
+			if valRange == 0 {
+				valRange = 1
+			}
+
+			for _, feat := range layer.GeoFeatures {
+				t := (feat.Value - minVal) / valRange
+				fc := pal.Color(t)
+				nfc := color.NRGBA{fc.R, fc.G, fc.B, fc.A}
+				for _, poly := range feat.Polygons {
+					drawPoly(poly, nfc)
+				}
+			}
+		}
+	} else {
+		// Draw simplified continental outlines (major blobs only).
+		for _, poly := range continents {
+			drawPoly(poly, land)
+		}
 	}
 
 	// ── Graticule ─────────────────────────────────────────────────────────────
@@ -174,6 +227,49 @@ func Render(opts Options) image.Image {
 	pPM := int(lonToX(0))
 	for iy := 0; iy < h; iy++ {
 		setPixel(pPM, iy, equatorColor)
+	}
+
+	// ── Bubble overlays ───────────────────────────────────────────────────────
+	for _, layer := range opts.Layers {
+		if layer.Type != "Bubble" || len(layer.Bubbles) == 0 {
+			continue
+		}
+		// Find max value for radius scaling.
+		maxVal := 0.0
+		for _, b := range layer.Bubbles {
+			if b.Value > maxVal {
+				maxVal = b.Value
+			}
+		}
+		if maxVal == 0 {
+			maxVal = 1
+		}
+		maxRadius := math.Min(float64(w), float64(h)) * 0.12
+		for _, bubble := range layer.Bubbles {
+			bx := int(lonToX(bubble.Lon))
+			by := int(latToY(bubble.Lat))
+			r := int(math.Sqrt(bubble.Value/maxVal) * maxRadius)
+			if r < 2 {
+				r = 2
+			}
+			bc := bubble.Color
+			if bc.A == 0 {
+				bc = color.NRGBA{220, 80, 80, 180}
+			}
+			fillCircle(img, bx, by, r, bc)
+			// Outline.
+			outlineCircle(img, bx, by, r, color.NRGBA{bc.R / 2, bc.G / 2, bc.B / 2, 220})
+		}
+	}
+
+	// ── Legend ────────────────────────────────────────────────────────────────
+	for _, layer := range opts.Layers {
+		if !layer.ShowLegend {
+			continue
+		}
+		pal := NamedPalette(layer.Palette)
+		drawLegend(img, w-60, 10, 50, 100, pal, layer.Palette)
+		break // one legend
 	}
 
 	// ── Layer info label ─────────────────────────────────────────────────────
@@ -290,6 +386,78 @@ func charBitmap(ch rune) [5]byte {
 	default:
 		return [5]byte{0b111, 0b101, 0b111, 0b101, 0b111}
 	}
+}
+
+// fillCircle fills a circle at (cx,cy) with radius r.
+func fillCircle(img *image.NRGBA, cx, cy, r int, col color.NRGBA) {
+	b := img.Bounds()
+	for dy := -r; dy <= r; dy++ {
+		for dx := -r; dx <= r; dx++ {
+			if dx*dx+dy*dy <= r*r {
+				px, py := cx+dx, cy+dy
+				if px >= b.Min.X && py >= b.Min.Y && px < b.Max.X && py < b.Max.Y {
+					img.SetNRGBA(px, py, col)
+				}
+			}
+		}
+	}
+}
+
+// outlineCircle draws a 1-pixel circle outline using midpoint algorithm.
+func outlineCircle(img *image.NRGBA, cx, cy, r int, col color.NRGBA) {
+	b := img.Bounds()
+	set := func(x, y int) {
+		if x >= b.Min.X && y >= b.Min.Y && x < b.Max.X && y < b.Max.Y {
+			img.SetNRGBA(x, y, col)
+		}
+	}
+	x, y := r, 0
+	for x >= y {
+		set(cx+x, cy+y); set(cx-x, cy+y)
+		set(cx+x, cy-y); set(cx-x, cy-y)
+		set(cx+y, cy+x); set(cx-y, cy+x)
+		set(cx+y, cy-x); set(cx-y, cy-x)
+		y++
+		if x*x+y*y > r*r {
+			x--
+		}
+	}
+}
+
+// drawLegend renders a vertical color gradient legend bar at (x,y) with size (w,h).
+func drawLegend(img *image.NRGBA, x, y, w, h int, pal ChoroplethPalette, title string) {
+	bounds := img.Bounds()
+	// Gradient bar.
+	for dy := 0; dy < h; dy++ {
+		t := 1.0 - float64(dy)/float64(h)
+		col := pal.Color(t)
+		for dx := 0; dx < w; dx++ {
+			px, py := x+dx, y+dy
+			if px >= bounds.Min.X && py >= bounds.Min.Y && px < bounds.Max.X && py < bounds.Max.Y {
+				img.SetNRGBA(px, py, col)
+			}
+		}
+	}
+	// Border.
+	borderCol := color.NRGBA{80, 80, 80, 255}
+	for dy := 0; dy <= h; dy++ {
+		img.SetNRGBA(clampInt(x, bounds.Max.X-1), clampInt(y+dy, bounds.Max.Y-1), borderCol)
+		img.SetNRGBA(clampInt(x+w, bounds.Max.X-1), clampInt(y+dy, bounds.Max.Y-1), borderCol)
+	}
+	for dx := 0; dx <= w; dx++ {
+		img.SetNRGBA(clampInt(x+dx, bounds.Max.X-1), clampInt(y, bounds.Max.Y-1), borderCol)
+		img.SetNRGBA(clampInt(x+dx, bounds.Max.X-1), clampInt(y+h, bounds.Max.Y-1), borderCol)
+	}
+}
+
+func clampInt(v, max int) int {
+	if v < 0 {
+		return 0
+	}
+	if v >= max {
+		return max - 1
+	}
+	return v
 }
 
 // continents holds simplified continental outline polygons as [lon,lat] pairs.

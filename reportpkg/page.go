@@ -56,6 +56,17 @@ type ReportPage struct {
 	ResetPageNumber    bool
 	StartOnOddPage     bool
 
+	// BackPage references another ReportPage by name. When set, the referenced
+	// page's content is rendered as a background layer behind this page's content.
+	// This mirrors FastReport's ReportPage.BackPage property.
+	BackPage string
+
+	// BackPageOddEven controls when the back page is applied:
+	//   0 = always (both odd and even pages)
+	//   1 = odd pages only
+	//   2 = even pages only
+	BackPageOddEven int
+
 	// Script event names.
 	CreatePageEvent  string
 	StartPageEvent   string
@@ -346,6 +357,12 @@ func (p *ReportPage) Serialize(w report.Writer) error {
 	if p.ManualBuildEvent != "" {
 		w.WriteStr("ManualBuildEvent", p.ManualBuildEvent)
 	}
+	if p.BackPage != "" {
+		w.WriteStr("BackPage", p.BackPage)
+	}
+	if p.BackPageOddEven != 0 {
+		w.WriteInt("BackPageOddEven", p.BackPageOddEven)
+	}
 
 	// Watermark properties are written as flat attributes on the page element.
 	if p.Watermark != nil {
@@ -449,6 +466,8 @@ func (p *ReportPage) Deserialize(r report.Reader) error {
 	p.StartPageEvent = r.ReadStr("StartPageEvent", "")
 	p.FinishPageEvent = r.ReadStr("FinishPageEvent", "")
 	p.ManualBuildEvent = r.ReadStr("ManualBuildEvent", "")
+	p.BackPage = r.ReadStr("BackPage", "")
+	p.BackPageOddEven = r.ReadInt("BackPageOddEven", 0)
 	p.Columns.Count = r.ReadInt("Columns.Count", 0)
 	p.Columns.Width = r.ReadFloat("Columns.Width", 0)
 	if p.Watermark == nil {

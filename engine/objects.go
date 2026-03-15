@@ -510,6 +510,13 @@ func (e *ReportEngine) buildPreparedObject(obj report.Base) *preview.PreparedObj
 		po.ShapeKind = 0
 		// The individual cells will be emitted below via populateAdvMatrixCells.
 
+	case *object.RFIDLabel:
+		// RFIDLabel: rendered as a dashed-border placeholder box showing EPC data.
+		// Actual RFID encoding is performed by the printer driver at print time.
+		po.Kind = preview.ObjectTypeDigitalSignature // reuse the dashed placeholder style
+		po.TextColor = color.RGBA{A: 255}
+		po.Text = v.PlaceholderText()
+
 	case *object.DigitalSignatureObject:
 		// ObjectTypeDigitalSignature: PDF exporters create a /Sig Widget annotation;
 		// other exporters render a styled placeholder box with the placeholder text.
@@ -544,6 +551,9 @@ func (e *ReportEngine) buildPreparedObject(obj report.Base) *preview.PreparedObj
 					if encErr := png.Encode(&buf, img); encErr == nil {
 						po.BlobIdx = e.preparedPages.BlobStore.Add(v.Name(), buf.Bytes())
 					}
+					// Also capture the module bit-matrix for vector rendering.
+					po.IsBarcode = true
+					po.BarcodeModules = extractBarcodeModules(img)
 				}
 			}
 		}
@@ -722,4 +732,31 @@ func decodeSvgData(s string) []byte {
 		return b
 	}
 	return nil
+}
+
+// extractBarcodeModules converts a barcode image to a boolean module matrix.
+// Each true entry represents a dark (black) module in the barcode symbol.
+// The image is sampled at its native resolution — 1 pixel per module.
+func extractBarcodeModules(img image.Image) [][]bool {
+	if img == nil {
+		return nil
+	}
+	bounds := img.Bounds()
+	w := bounds.Max.X - bounds.Min.X
+	h := bounds.Max.Y - bounds.Min.Y
+	if w <= 0 || h <= 0 {
+		return nil
+	}
+	modules := make([][]bool, h)
+	for y := 0; y < h; y++ {
+		modules[y] = make([]bool, w)
+		for x := 0; x < w; x++ {
+			c := img.At(bounds.Min.X+x, bounds.Min.Y+y)
+			r, g, b, _ := c.RGBA()
+			// Treat pixels with luminance < 50% as dark modules.
+			lum := (r + g + b) / 3
+			modules[y][x] = lum < 0x7FFF
+		}
+	}
+	return modules
 }

@@ -258,6 +258,16 @@ type PreparedObject struct {
 	Checked bool
 	// Duplicates controls how repeated values with the same object name are handled.
 	Duplicates DuplicatesMode
+
+	// ── Barcode-specific fields (ObjectTypePicture only) ─────────────────────
+	// IsBarcode indicates that this picture object was rendered from a BarcodeObject.
+	// When true and BarcodeModules is non-nil, exporters may use vector rendering.
+	IsBarcode bool
+	// BarcodeModules is the raw module bit-matrix of the encoded barcode
+	// (true = dark module). Rows are indexed [y][x]. Only set when IsBarcode is true.
+	// The dimensions correspond to the minimum symbol size (1px per module);
+	// exporters scale the modules to fit the object bounds.
+	BarcodeModules [][]bool
 	// HyperlinkKind indicates the type of hyperlink (0=None, 1=URL, 2=PageNumber, 3=Bookmark).
 	HyperlinkKind int
 	// HyperlinkValue is the resolved hyperlink target (URL, page number string, bookmark name).

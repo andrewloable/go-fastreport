@@ -242,13 +242,7 @@ func NewMaxiCodeBarcode() *MaxiCodeBarcode {
 // DefaultValue returns a sample MaxiCode payload.
 func (b *MaxiCodeBarcode) DefaultValue() string { return "MaxiCode Test" }
 
-// Encode stores the payload (MaxiCode encoding is complex and not yet implemented).
-func (b *MaxiCodeBarcode) Encode(text string) error {
-	b.encodedText = text
-	return nil
-}
-
-// Render is implemented in maxicode.go.
+// Encode and Render are implemented in maxicode.go.
 
 // ── PharmacodeBarcode ─────────────────────────────────────────────────────────
 

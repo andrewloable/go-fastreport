@@ -34,6 +34,7 @@ type Exporter struct {
 	curPage *Page
 	pp      *preview.PreparedPages // access to blob store for images
 	imgIdx  int                    // counter for unique XObject names
+	fontMgr *pdfFontManager        // document-level TrueType font embedding
 
 	// UseCMYK controls color space selection.
 	// When true, colors are emitted using DeviceCMYK (k/K operators).
@@ -67,6 +68,9 @@ func (e *Exporter) Start() error {
 	// Build catalog → pages tree.
 	e.pages = NewPages(e.writer)
 	e.catalog = NewCatalog(e.writer, e.pages)
+
+	// Create document-level TrueType font manager.
+	e.fontMgr = NewPDFFontManager(e.writer)
 
 	return nil
 }
@@ -105,7 +109,10 @@ func (e *Exporter) ExportBand(b *preview.PreparedBand) error {
 		case preview.ObjectTypeLine, preview.ObjectTypeShape:
 			e.renderRectObject(contents, b, obj)
 		case preview.ObjectTypePicture:
-			if e.pp != nil && obj.BlobIdx >= 0 {
+			if obj.IsBarcode && obj.BarcodeModules != nil {
+				// Render barcode as PDF vector paths (crisp at any zoom).
+				e.renderBarcodeVector(contents, b, obj)
+			} else if e.pp != nil && obj.BlobIdx >= 0 {
 				e.renderPictureObject(contents, b, obj)
 			}
 		case preview.ObjectTypePolyLine:
@@ -196,7 +203,12 @@ func (e *Exporter) renderTextObject(c *Contents, b *preview.PreparedBand, obj pr
 	}
 	bold := font.Style&style.FontStyleBold != 0
 	italic := font.Style&style.FontStyleItalic != 0
-	fontAlias := pdfFontAlias(font.Name, bold, italic)
+	var fontAlias string
+	if e.fontMgr != nil {
+		fontAlias = e.fontMgr.RegisterFont(font.Name, bold, italic)
+	} else {
+		fontAlias = pdfFontAlias(font.Name, bold, italic)
+	}
 
 	// Text color.
 	tc := obj.TextColor
@@ -216,7 +228,10 @@ func (e *Exporter) renderTextObject(c *Contents, b *preview.PreparedBand, obj pr
 	}
 
 	// Split text into lines, respecting word-wrap and hard newlines.
-	lines := pdfWrapText(obj.Text, innerW, fontPt, obj.WordWrap)
+	measureFn := func(text string) float64 {
+		return e.measureText(fontAlias, text, fontPt)
+	}
+	lines := pdfWrapTextFn(obj.Text, innerW, measureFn, obj.WordWrap)
 	if len(lines) == 0 {
 		return
 	}
@@ -245,6 +260,8 @@ func (e *Exporter) renderTextObject(c *Contents, b *preview.PreparedBand, obj pr
 	c.WriteString("BT\n")
 	c.WriteString(fmt.Sprintf("/%s %.2f Tf\n", fontAlias, fontPt))
 
+	isEmbedded := strings.HasPrefix(fontAlias, "EF")
+
 	for i, line := range lines {
 		lineY := startY - float64(i)*lineHeight
 		if lineY < yPt-lineHeight { // below the object bottom — stop rendering
@@ -253,7 +270,7 @@ func (e *Exporter) renderTextObject(c *Contents, b *preview.PreparedBand, obj pr
 
 		// Horizontal alignment.
 		lineX := innerX
-		lineW := pdfEstimateTextWidth(line, fontPt)
+		lineW := e.measureText(fontAlias, line, fontPt)
 		var wordSpacing float64
 		switch obj.HorzAlign {
 		case 1: // Center
@@ -280,7 +297,12 @@ func (e *Exporter) renderTextObject(c *Contents, b *preview.PreparedBand, obj pr
 		if wordSpacing != 0 {
 			c.WriteString(fmt.Sprintf("%.4f Tw\n", wordSpacing))
 		}
-		c.WriteString(fmt.Sprintf("1 0 0 1 %.4f %.4f Tm (%s) Tj\n", lineX, lineY, pdfEscape(line)))
+		if isEmbedded && e.fontMgr != nil {
+			hexStr := e.fontMgr.EncodeText(fontAlias, line)
+			c.WriteString(fmt.Sprintf("1 0 0 1 %.4f %.4f Tm %s Tj\n", lineX, lineY, hexStr))
+		} else {
+			c.WriteString(fmt.Sprintf("1 0 0 1 %.4f %.4f Tm (%s) Tj\n", lineX, lineY, pdfEscape(line)))
+		}
 		if wordSpacing != 0 {
 			c.WriteString("0 Tw\n")
 		}
@@ -293,6 +315,14 @@ func (e *Exporter) renderTextObject(c *Contents, b *preview.PreparedBand, obj pr
 // Hard newlines (\n) are always honoured. If wordWrap is false, each paragraph
 // is emitted as a single line without breaking.
 func pdfWrapText(text string, maxWidth, fontPt float64, wordWrap bool) []string {
+	return pdfWrapTextFn(text, maxWidth, func(s string) float64 {
+		return pdfEstimateTextWidth(s, fontPt)
+	}, wordWrap)
+}
+
+// pdfWrapTextFn is like pdfWrapText but accepts a custom width measurement
+// function, enabling accurate glyph-advance-based measurement for embedded fonts.
+func pdfWrapTextFn(text string, maxWidth float64, measureFn func(string) float64, wordWrap bool) []string {
 	// Split on hard newlines first.
 	paragraphs := strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
 	var lines []string
@@ -314,7 +344,7 @@ func pdfWrapText(text string, maxWidth, fontPt float64, wordWrap bool) []string 
 		current := words[0]
 		for _, w := range words[1:] {
 			candidate := current + " " + w
-			if pdfEstimateTextWidth(candidate, fontPt) <= maxWidth {
+			if measureFn(candidate) <= maxWidth {
 				current = candidate
 			} else {
 				lines = append(lines, current)
@@ -330,6 +360,15 @@ func pdfWrapText(text string, maxWidth, fontPt float64, wordWrap bool) []string 
 // rough heuristic that the average glyph width is 0.6× the font point size.
 func pdfEstimateTextWidth(text string, fontPt float64) float64 {
 	return float64(len(text)) * fontPt * 0.6
+}
+
+// measureText returns the rendered width of text using either the embedded font
+// manager (for EF-prefixed aliases) or the rough heuristic estimator.
+func (e *Exporter) measureText(alias, text string, fontPt float64) float64 {
+	if strings.HasPrefix(alias, "EF") && e.fontMgr != nil {
+		return e.fontMgr.MeasureText(alias, text, fontPt)
+	}
+	return pdfEstimateTextWidth(text, fontPt)
 }
 
 // renderRectObject draws fill and border for Line/Shape objects.
@@ -803,6 +842,15 @@ func (e *Exporter) Finish() error {
 		e.writeNamedDests()
 	}
 	e.finalizeAcroForm()
+
+	// Finalize embedded font objects and register them in every page's /Font dict.
+	if e.fontMgr != nil {
+		e.fontMgr.Finalize()
+		for _, page := range e.pages.PageList() {
+			e.fontMgr.AddToPage(page.FontDict())
+		}
+	}
+
 	return e.writer.Write(e.w)
 }
 
@@ -1032,4 +1080,55 @@ func pdfEscape(s string) string {
 		}
 	}
 	return string(out)
+}
+
+// renderBarcodeVector renders a barcode as PDF vector paths (filled rectangles),
+// one rectangle per dark module. This produces crisp output at any zoom level,
+// unlike raster image embedding which can appear blurry when zoomed.
+//
+// The module matrix from PreparedObject.BarcodeModules is scaled to fit the
+// object's rendered bounds.
+func (e *Exporter) renderBarcodeVector(c *Contents, b *preview.PreparedBand, obj preview.PreparedObject) {
+	modules := obj.BarcodeModules
+	if len(modules) == 0 || len(modules[0]) == 0 {
+		return
+	}
+	rows := len(modules)
+	cols := len(modules[0])
+
+	// Convert object bounds from pixels to PDF points (bottom-up coordinates).
+	objTopPx := b.Top + obj.Top
+	xPt := float64(export.PixelsToPoints(obj.Left))
+	yPt := e.curPage.Height - float64(export.PixelsToPoints(objTopPx+obj.Height))
+	wPt := float64(export.PixelsToPoints(obj.Width))
+	hPt := float64(export.PixelsToPoints(obj.Height))
+	if wPt <= 0 || hPt <= 0 {
+		return
+	}
+
+	// Module size in points.
+	modW := wPt / float64(cols)
+	modH := hPt / float64(rows)
+
+	// Use the barcode color (default black).
+	bc := obj.TextColor
+	if bc.A == 0 {
+		bc.A = 255 // default opaque black
+	}
+
+	c.WriteString(fmt.Sprintf("q %s\n", e.pdfFillColorOp(bc)))
+	for row := 0; row < rows; row++ {
+		for col := 0; col < cols; col++ {
+			if !modules[row][col] {
+				continue
+			}
+			// PDF y is bottom-up: row 0 is at the top of the barcode bounding box.
+			mx := xPt + float64(col)*modW
+			my := yPt + float64(rows-1-row)*modH
+			// Draw filled rectangle for this dark module.
+			c.WriteString(fmt.Sprintf("%.4f %.4f %.4f %.4f re f\n", mx, my, modW, modH))
+		}
+	}
+	c.WriteString("Q\n")
+
 }

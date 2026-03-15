@@ -86,9 +86,22 @@ func TestExporter_MultiPage(t *testing.T) {
 	}
 
 	out := buf.String()
-	// Should contain all band names in content streams.
-	if !strings.Contains(out, "Band1") {
-		t.Error("PDF should contain Band1")
+	// With embedded TrueType fonts, text is stored as hex glyph IDs rather than
+	// literal strings, so we verify structural correctness instead of literal content.
+	if !strings.HasPrefix(out, "%PDF-") {
+		t.Error("PDF should start with %PDF-")
+	}
+	if !strings.Contains(out, "%EOF") {
+		t.Error("PDF should contain EOF marker")
+	}
+	// Verify that embedded font objects (Type0 with Identity-H) are present.
+	// The Name type encodes '-' as '#2D', so "Identity-H" appears as "Identity#2DH".
+	if !strings.Contains(out, "Identity#2DH") {
+		t.Error("PDF should contain embedded TrueType font with Identity-H encoding")
+	}
+	// Verify the EmbeddedFile stream is present (FontFile2).
+	if !strings.Contains(out, "EmbeddedFile") {
+		t.Error("PDF should contain FontFile2 EmbeddedFile stream")
 	}
 }
 

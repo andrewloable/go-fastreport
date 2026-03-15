@@ -17,13 +17,17 @@ import (
 
 // Exporter produces HTML output from a PreparedPages collection.
 //
-// Output structure:
+// Output structure (non-layered):
 //
 //	<html><body>
 //	  <div class="page" …> <!-- one per page -->
 //	    <div class="band" …> … </div>
 //	  </div>
 //	</body></html>
+//
+// In Layers mode, band divs are omitted. Every object is positioned
+// absolutely on the page with an explicit z-index, allowing correct
+// rendering of overlapping objects.
 type Exporter struct {
 	export.ExportBase
 
@@ -33,12 +37,19 @@ type Exporter struct {
 	EmbedCSS bool
 	// Scale converts pixel values to CSS pixels (default 1.0).
 	Scale float32
+	// Layers enables layered output mode. When true, every report object is
+	// rendered as a top-level absolutely-positioned element on the page div
+	// with a z-index matching its paint order. Band wrapper divs are omitted.
+	// This allows overlapping objects to render correctly.
+	Layers bool
 
 	w       io.Writer
 	pp      *preview.PreparedPages
 	sb      strings.Builder
 	pageIdx int
 	css     *cssRegistry
+	// zIdx is the current z-index counter, incremented per object in Layers mode.
+	zIdx int
 }
 
 // NewExporter creates an Exporter with sensible defaults.
@@ -80,6 +91,7 @@ func (e *Exporter) ExportPageBegin(pg *preview.PreparedPage) error {
 	}
 	w := pg.Width * scale
 	h := pg.Height * scale
+	e.zIdx = 0
 	e.sb.WriteString(fmt.Sprintf(
 		`<div class="page" style="position:relative;width:%.2fpx;height:%.2fpx;`+
 			`overflow:hidden;margin:0 auto 20px auto;background:#fff;box-shadow:0 0 5px #aaa;">`,
@@ -95,23 +107,58 @@ func (e *Exporter) ExportBand(b *preview.PreparedBand) error {
 	if scale <= 0 {
 		scale = 1
 	}
+
+	if e.Layers {
+		// In layers mode, render each object directly onto the page with
+		// absolute coordinates (band.Top + obj.Top) and ascending z-index.
+		bandTop := b.Top
+		for _, obj := range b.Objects {
+			layered := obj
+			layered.Top += bandTop
+			e.renderObjectLayered(layered, scale)
+		}
+		return nil
+	}
+
 	top := b.Top * scale
 	h := b.Height * scale
-
 	label := export.HTMLString(b.Name)
 	e.sb.WriteString(fmt.Sprintf(
 		`<div class="band" data-name="%s" style="position:absolute;top:%.2fpx;`+
 			`left:0;right:0;height:%.2fpx;">`,
 		label, top, h,
 	))
-
-	// Render each child object.
 	for _, obj := range b.Objects {
 		e.renderObject(obj, scale)
 	}
-
 	e.sb.WriteString("</div>\n")
 	return nil
+}
+
+// renderObjectLayered renders a single object in layers mode.
+// The object's Top has already been adjusted to page-absolute coordinates.
+// Each object gets a unique z-index so paint order matches band/object order.
+func (e *Exporter) renderObjectLayered(obj preview.PreparedObject, scale float32) {
+	e.zIdx++
+	// Patch the positional CSS to include z-index.
+	// We do this by temporarily wrapping renderObject with a hook.
+	// Simplest approach: render normally then add z-index via the positional override.
+	//
+	// We use a small helper that delegates to renderObject but intercepts the
+	// positional style. Since renderObject builds its own positional string
+	// internally, we use a two-pass approach: render to a temp builder, inject z-index.
+	savedSB := e.sb
+	e.sb.Reset()
+	e.renderObject(obj, scale)
+	rendered := e.sb.String()
+	e.sb = savedSB
+
+	// Inject z-index into the first style=" block of the rendered element.
+	// The positional style always contains "position:absolute;" so we can
+	// reliably target that attribute.
+	zStyle := fmt.Sprintf("z-index:%d;", e.zIdx)
+	rendered = strings.Replace(rendered, "position:absolute;", "position:absolute;"+zStyle, 1)
+	e.sb.WriteString(rendered)
 }
 
 // renderObject writes an HTML element for a single PreparedObject.

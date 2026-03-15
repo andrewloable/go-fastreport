@@ -148,6 +148,10 @@ func (p *Page) AddAnnotation(annotDict *core.Dictionary) {
 	p.annots.Add(annotDict)
 }
 
+// FontDict returns the page's /Font resource dictionary.
+// Used by pdfFontManager.AddToPage to register embedded font references.
+func (p *Page) FontDict() *core.Dictionary { return p.fontDict }
+
 // AddExtGState registers a graphics state dictionary as an /ExtGState resource
 // under the given name (e.g. "GS1"). The name is used in content streams as /GS1 gs.
 // The dict should contain entries like /ca (fill opacity) and /CA (stroke opacity).

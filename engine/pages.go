@@ -52,6 +52,9 @@ func (e *ReportEngine) startPage(pg *reportpkg.ReportPage, isFirst bool) {
 		}
 	}
 
+	// Back page: render referenced page's bands before the current page content.
+	e.applyBackPage(pg)
+
 	if isFirst {
 		// Show overlay band if present.
 		e.showBand(pg.Overlay())
@@ -86,6 +89,82 @@ func (e *ReportEngine) endPage(pg *reportpkg.ReportPage, isLast bool) {
 	}
 	e.showBand(pg.PageFooter())
 	e.OnStateChanged(pg, EngineStatePageFinished)
+}
+
+// applyBackPage renders the bands of the page referenced by pg.BackPage behind
+// the current page's content. It checks BackPageOddEven to decide whether to
+// apply on odd pages (1), even pages (2), or both (0).
+//
+// The back-page bands are printed at their natural Y positions (same as a
+// normal page start) and do not advance CurY — they appear as background
+// layers. After rendering, CurY is reset to 0 so the main page content
+// starts from the top.
+func (e *ReportEngine) applyBackPage(pg *reportpkg.ReportPage) {
+	if pg.BackPage == "" {
+		return
+	}
+	// Check odd/even constraint.
+	switch pg.BackPageOddEven {
+	case 1: // odd pages only
+		if e.pageNo%2 == 0 {
+			return
+		}
+	case 2: // even pages only
+		if e.pageNo%2 != 0 {
+			return
+		}
+	}
+
+	// Find the referenced back-page template.
+	backPg := e.report.FindPage(pg.BackPage)
+	if backPg == nil {
+		return
+	}
+
+	// Save and restore CurY so that back-page rendering does not shift the
+	// main page's print position.
+	savedY := e.curY
+	e.curY = 0
+
+	// Render all bands of the back page at their natural positions.
+	for _, b := range backPg.AllBands() {
+		e.showBandNoAdvance(b)
+	}
+
+	e.curY = savedY
+}
+
+// showBandNoAdvance renders a band into the prepared pages at the current CurY
+// position without advancing CurY. Used for back-page rendering.
+func (e *ReportEngine) showBandNoAdvance(b report.Base) {
+	if b == nil {
+		return
+	}
+	if v := reflect.ValueOf(b); v.Kind() == reflect.Ptr && v.IsNil() {
+		return
+	}
+	type hasVisible interface{ Visible() bool }
+	if vis, ok := b.(hasVisible); ok && !vis.Visible() {
+		return
+	}
+	height := e.bandHeight(b)
+	if height <= 0 {
+		return
+	}
+	if e.preparedPages != nil {
+		pb := &preview.PreparedBand{
+			Name:   b.Name() + "_back",
+			Top:    e.curY,
+			Height: height,
+		}
+		type hasObjects interface{ Objects() *report.ObjectCollection }
+		if ho, ok := b.(hasObjects); ok {
+			e.populateBandObjects2(ho.Objects(), pb)
+		}
+		_ = e.preparedPages.AddBand(pb)
+	}
+	// Advance local cursor within back-page rendering so consecutive bands stack.
+	e.curY += height
 }
 
 // startColumn initialises the current column.

@@ -273,6 +273,15 @@ type TableObject struct {
 	// ManualBuildAutoSpans propagates ColSpan/RowSpan automatically
 	// during a ManualBuild event (default: true).
 	ManualBuildAutoSpans bool
+
+	// ManualBuild is an optional callback invoked during report preparation
+	// to programmatically construct the table instead of using the static
+	// design-time rows/columns. Use the provided TableHelper to call
+	// PrintRow/PrintColumn in the order you want them rendered.
+	//
+	// When ManualBuild is set, the engine ignores the template rows/columns
+	// and renders the result table produced by the helper.
+	ManualBuild ManualBuildFunc
 }
 
 // TypeName returns the FRX element name.
@@ -305,4 +314,26 @@ func (t *TableObject) Deserialize(r report.Reader) error {
 	}
 	t.ManualBuildAutoSpans = r.ReadBool("ManualBuildAutoSpans", true)
 	return nil
+}
+
+// IsManualBuild returns true when a ManualBuild callback or ManualBuildEvent
+// script name is set, meaning the engine should call InvokeManualBuild instead
+// of rendering the static template rows/columns.
+func (t *TableObject) IsManualBuild() bool {
+	return t.ManualBuild != nil || t.ManualBuildEvent != ""
+}
+
+// InvokeManualBuild calls the ManualBuild callback (if set), passing a fresh
+// TableHelper backed by this TableObject. It returns the result TableBase
+// built by the callback, or nil when neither callback nor event is set.
+//
+// The returned TableBase is ready for rendering: its rows/columns/cells are
+// copies of the selected template elements (no references to the template).
+func (t *TableObject) InvokeManualBuild() *TableBase {
+	if t.ManualBuild == nil {
+		return nil
+	}
+	h := newTableHelper(t)
+	t.ManualBuild(h)
+	return h.Result()
 }

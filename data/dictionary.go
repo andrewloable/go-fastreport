@@ -6,6 +6,7 @@ import "strings"
 // data sources, connections, relations, parameters, system variables, and totals.
 // It is the Go equivalent of FastReport.Data.Dictionary.
 type Dictionary struct {
+	connections     []*DataConnectionBase
 	dataSources     []DataSource
 	relations       []*Relation
 	parameters      []*Parameter
@@ -18,6 +19,39 @@ type Dictionary struct {
 // NewDictionary creates an empty Dictionary.
 func NewDictionary() *Dictionary {
 	return &Dictionary{}
+}
+
+// -----------------------------------------------------------------------
+// Connections
+// -----------------------------------------------------------------------
+
+// AddConnection registers a database connection.
+func (d *Dictionary) AddConnection(c *DataConnectionBase) {
+	d.connections = append(d.connections, c)
+}
+
+// RemoveConnection removes a connection by reference.
+func (d *Dictionary) RemoveConnection(c *DataConnectionBase) {
+	for i, conn := range d.connections {
+		if conn == c {
+			d.connections = append(d.connections[:i], d.connections[i+1:]...)
+			return
+		}
+	}
+}
+
+// Connections returns all registered database connections.
+func (d *Dictionary) Connections() []*DataConnectionBase { return d.connections }
+
+// FindConnectionByName returns the connection with the given name (case-insensitive),
+// or nil if not found.
+func (d *Dictionary) FindConnectionByName(name string) *DataConnectionBase {
+	for _, c := range d.connections {
+		if strings.EqualFold(c.Name(), name) {
+			return c
+		}
+	}
+	return nil
 }
 
 // -----------------------------------------------------------------------

@@ -29,6 +29,7 @@ func (e *ReportEngine) RunDataBandRows(db *band.DataBand, rows int) {
 	}
 
 	headerShown := false
+	var lastRowPosition int
 	for rowIdx := 0; rowIdx < rows; rowIdx++ {
 		isFirst := rowIdx == 0
 		isLast := rowIdx == rows-1
@@ -42,7 +43,14 @@ func (e *ReportEngine) RunDataBandRows(db *band.DataBand, rows int) {
 		// Show DataHeader on first row.
 		if isFirst && !headerShown {
 			if hdr := db.Header(); hdr != nil {
+				headerPos := 0
+				if e.preparedPages != nil {
+					headerPos = e.preparedPages.CurPosition()
+				}
+				e.keepCurY = e.curY
 				e.ShowFullBand(&hdr.HeaderFooterBandBase.BandBase)
+				// KeepWithData: ensure header stays with first data row.
+				e.checkKeepHeaderWithData(hdr, db, headerPos)
 				if hdr.RepeatOnEveryPage() {
 					e.AddReprintDataHeader(hdr)
 				}
@@ -53,6 +61,12 @@ func (e *ReportEngine) RunDataBandRows(db *band.DataBand, rows int) {
 		// Start new page if configured (not on first row).
 		if db.StartNewPage() && db.FlagUseStartNewPage && rowIdx > 0 {
 			e.startNewPageForCurrent()
+		}
+
+		// Snapshot position before last row for KeepWithData footer check.
+		if isLast && e.preparedPages != nil {
+			lastRowPosition = e.preparedPages.CurPosition()
+			e.keepCurY = e.curY
 		}
 
 		// Show the data band itself.
@@ -70,6 +84,8 @@ func (e *ReportEngine) RunDataBandRows(db *band.DataBand, rows int) {
 			e.RemoveReprint(&hdr.HeaderFooterBandBase.BandBase)
 		}
 		if ftr := db.Footer(); ftr != nil {
+			// KeepWithData: move last row + footer to new page if footer doesn't fit.
+			e.checkKeepFooterWithData(ftr, lastRowPosition)
 			e.ShowFullBand(&ftr.HeaderFooterBandBase.BandBase)
 			if ftr.RepeatOnEveryPage() {
 				e.AddReprintDataFooter(ftr)

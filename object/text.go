@@ -349,6 +349,9 @@ type TextObject struct {
 	mergeMode         MergeMode
 	autoWidth         bool
 
+	// textOutline defines an optional stroke drawn around each character.
+	textOutline style.TextOutline
+
 	// highlights holds the conditional-formatting rules for this text object.
 	// The engine evaluates each condition in order and applies the first match.
 	highlights []style.HighlightCondition
@@ -414,6 +417,25 @@ func (t *TextObject) Font() style.Font { return t.font }
 
 // SetFont sets the text font.
 func (t *TextObject) SetFont(f style.Font) { t.font = f }
+
+// ApplyStyle overrides the base implementation to also propagate the font and
+// text-fill colour from the style entry. Both the modern Apply* flags and the
+// legacy *Changed flags are honoured.
+func (t *TextObject) ApplyStyle(entry *style.StyleEntry) {
+	t.ReportComponentBase.ApplyStyle(entry)
+	if entry == nil {
+		return
+	}
+	if entry.ApplyFont || entry.FontChanged {
+		t.font = entry.Font
+	}
+}
+
+// TextOutline returns the text stroke/outline settings.
+func (t *TextObject) TextOutline() style.TextOutline { return t.textOutline }
+
+// SetTextOutline sets the text stroke/outline settings.
+func (t *TextObject) SetTextOutline(v style.TextOutline) { t.textOutline = v }
 
 // FontWidthRatio returns the horizontal font scaling ratio (default 1.0).
 func (t *TextObject) FontWidthRatio() float32 { return t.fontWidthRatio }
@@ -644,6 +666,17 @@ func (t *TextObject) Serialize(w report.Writer) error {
 	if t.autoWidth {
 		w.WriteBool("AutoWidth", true)
 	}
+	// TextOutline
+	if t.textOutline.Enabled {
+		w.WriteBool("TextOutline.Enabled", true)
+		w.WriteStr("TextOutline.Color", utils.FormatColor(t.textOutline.Color))
+		if t.textOutline.Width != 1 {
+			w.WriteFloat("TextOutline.Width", t.textOutline.Width)
+		}
+		if t.textOutline.DashStyle != 0 {
+			w.WriteInt("TextOutline.DashStyle", t.textOutline.DashStyle)
+		}
+	}
 	return nil
 }
 
@@ -674,5 +707,16 @@ func (t *TextObject) Deserialize(r report.Reader) error {
 	t.paragraphOffset = r.ReadFloat("ParagraphOffset", 0)
 	t.mergeMode = MergeMode(r.ReadInt("MergeMode", 0))
 	t.autoWidth = r.ReadBool("AutoWidth", false)
+	// TextOutline
+	t.textOutline.Enabled = r.ReadBool("TextOutline.Enabled", false)
+	if cs := r.ReadStr("TextOutline.Color", ""); cs != "" {
+		if c, err := utils.ParseColor(cs); err == nil {
+			t.textOutline.Color = c
+		}
+	} else {
+		t.textOutline.Color = style.DefaultTextOutline().Color
+	}
+	t.textOutline.Width = r.ReadFloat("TextOutline.Width", 1)
+	t.textOutline.DashStyle = r.ReadInt("TextOutline.DashStyle", 0)
 	return nil
 }

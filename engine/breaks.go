@@ -3,53 +3,80 @@ package engine
 import (
 	"github.com/andrewloable/go-fastreport/band"
 	"github.com/andrewloable/go-fastreport/preview"
+	"github.com/andrewloable/go-fastreport/report"
 )
 
 // ── Soft page breaks ──────────────────────────────────────────────────────────
 
 // BreakBand handles a soft page break for b.
-// It renders as much of the band as fits in FreeSpace, then starts a new
-// page and renders the remainder.
+// It renders as much of the band as fits in FreeSpace on the current page,
+// then starts a new page and renders the remainder.
 //
-// The Go implementation is a simplified version: when a band overflows, it
-// either places the whole band on the next page (if CanBreak=false) or splits
-// it at FreeSpace using Break().
+// When CanBreak=true the band's objects are partitioned at the break line:
+//   - Objects entirely above the line stay on the current page.
+//   - Objects that cross the line are clipped (top fragment stays, bottom moves).
+//   - Objects entirely below the line move to the new page with adjusted tops.
+//
+// When CanBreak=false or the band fits, the whole band moves to the next page.
 func (e *ReportEngine) BreakBand(b *band.BandBase) {
 	height := e.CalcBandHeight(b)
 	free := e.freeSpace
 
 	if b.CanBreak() && free > 0 && height > free {
-		// Attempt to split the band at FreeSpace height.
-		// In a full implementation, Break() would split text objects etc.
-		// Here we render the top portion and defer the rest.
+		// ── determine break line ──────────────────────────────────────────
+		// The break line starts at freeSpace. We then lower it to avoid
+		// cutting through non-breakable objects.
+		breakLine := free
+		// Iterate objects: if a non-breakable object crosses breakLine, pull
+		// breakLine down to that object's top.
+		changed := true
+		for changed {
+			changed = false
+			for i := 0; i < b.Objects().Len(); i++ {
+				obj := b.Objects().Get(i)
+				top, bottom := objTopBottom(obj)
+				if top < breakLine && bottom > breakLine {
+					// Object crosses the line.
+					if !objCanBreak(obj) {
+						if top < breakLine {
+							breakLine = top
+							changed = true
+							break
+						}
+					}
+				}
+			}
+		}
 
-		// Render top portion (up to free space).
+		// ── build top PreparedBand ────────────────────────────────────────
 		if e.preparedPages != nil {
-			pb := &preview.PreparedBand{
+			pbTop := &preview.PreparedBand{
 				Name:   b.Name(),
 				Top:    e.curY,
-				Height: free,
+				Height: breakLine,
 			}
-			_ = e.preparedPages.AddBand(pb)
+			e.splitPopulateTop(b.Objects(), pbTop, breakLine)
+			_ = e.preparedPages.AddBand(pbTop)
 		}
-		e.AdvanceY(free)
+		e.AdvanceY(breakLine)
 
-		// Start new page.
+		// ── start new page ────────────────────────────────────────────────
 		e.startNewPageForCurrent()
 
-		// Render remainder.
-		remainder := height - free
+		// ── build remainder PreparedBand ──────────────────────────────────
+		remainder := height - breakLine
 		if remainder > 0 && e.preparedPages != nil {
-			pb := &preview.PreparedBand{
+			pbRem := &preview.PreparedBand{
 				Name:   b.Name(),
 				Top:    e.curY,
 				Height: remainder,
 			}
-			_ = e.preparedPages.AddBand(pb)
+			e.splitPopulateBottom(b.Objects(), pbRem, breakLine)
+			_ = e.preparedPages.AddBand(pbRem)
 			e.AdvanceY(remainder)
 		}
 	} else {
-		// Cannot break or already on new page — put the whole band on the next page.
+		// Cannot break or already fits — move whole band to the next page.
 		e.startNewPageForCurrent()
 		if e.preparedPages != nil {
 			pb := &preview.PreparedBand{
@@ -57,9 +84,87 @@ func (e *ReportEngine) BreakBand(b *band.BandBase) {
 				Top:    e.curY,
 				Height: height,
 			}
+			e.populateBandObjects(b, pb)
 			_ = e.preparedPages.AddBand(pb)
 		}
 		e.AdvanceY(height)
+	}
+}
+
+// objTopBottom returns the Top and Bottom (Top+Height) of any report object
+// that exposes Top() and Height() via the ComponentBase interface.
+func objTopBottom(obj report.Base) (top, bottom float32) {
+	type positioned interface {
+		Top() float32
+		Height() float32
+	}
+	if p, ok := obj.(positioned); ok {
+		t := p.Top()
+		return t, t + p.Height()
+	}
+	return 0, 0
+}
+
+// objCanBreak returns true if obj is a BreakableComponent with CanBreak=true.
+func objCanBreak(obj report.Base) bool {
+	type breakable interface {
+		CanBreak() bool
+	}
+	if b, ok := obj.(breakable); ok {
+		return b.CanBreak()
+	}
+	return false
+}
+
+// splitPopulateTop builds PreparedObjects for the portion of the band's objects
+// that falls above (or at) the breakLine.
+func (e *ReportEngine) splitPopulateTop(objs *report.ObjectCollection, pb *preview.PreparedBand, breakLine float32) {
+	if objs == nil {
+		return
+	}
+	for i := 0; i < objs.Len(); i++ {
+		obj := objs.Get(i)
+		top, bottom := objTopBottom(obj)
+		if top >= breakLine {
+			continue // entirely below breakLine — skip
+		}
+		po := e.buildPreparedObject(obj)
+		if po == nil {
+			continue
+		}
+		if bottom > breakLine {
+			// Object crosses breakLine — clip height to what fits.
+			po.Height = breakLine - top
+		}
+		pb.Objects = append(pb.Objects, *po)
+	}
+}
+
+// splitPopulateBottom builds PreparedObjects for the portion of the band's objects
+// that falls below the breakLine, adjusting their Top coordinates to start at 0.
+func (e *ReportEngine) splitPopulateBottom(objs *report.ObjectCollection, pb *preview.PreparedBand, breakLine float32) {
+	if objs == nil {
+		return
+	}
+	for i := 0; i < objs.Len(); i++ {
+		obj := objs.Get(i)
+		top, bottom := objTopBottom(obj)
+		if bottom <= breakLine {
+			continue // entirely above breakLine — skip
+		}
+		po := e.buildPreparedObject(obj)
+		if po == nil {
+			continue
+		}
+		if top < breakLine {
+			// Object straddles the line — its remainder starts at 0.
+			po.Height = bottom - breakLine
+			po.Top = 0
+		} else {
+			// Entirely below breakLine — shift top up by breakLine.
+			po.Top = top - breakLine
+		}
+		pb.Objects = append(pb.Objects, *po)
 	}
 }
 

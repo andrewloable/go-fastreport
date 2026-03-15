@@ -29,23 +29,35 @@ const (
 type EngineStateHandler func(sender any, state EngineState)
 
 // deferredItem holds a deferred handler and its processing trigger state.
+// When repeat is true, the handler re-queues itself after firing so it fires
+// on every occurrence of state (e.g. every PageFinished). One-shot handlers
+// (repeat=false) are removed after the first matching event.
 type deferredItem struct {
 	state   EngineState
 	handler func()
+	repeat  bool
 }
 
 // OnStateChanged fires all registered deferred handlers that match state.
 // It is called internally at lifecycle boundaries.
+// Repeating handlers (repeat=true) remain in the queue after firing;
+// one-shot handlers (repeat=false) are removed.
 func (e *ReportEngine) OnStateChanged(sender any, state EngineState) {
-	remaining := e.deferredObjects[:0]
-	for _, item := range e.deferredObjects {
+	// Snapshot the current list so handlers added during execution
+	// are not triggered in the same pass.
+	current := e.deferredObjects
+	e.deferredObjects = e.deferredObjects[:0]
+	for _, item := range current {
 		if item.state == state {
 			item.handler()
+			if item.repeat {
+				// Re-queue repeating handler for next occurrence.
+				e.deferredObjects = append(e.deferredObjects, item)
+			}
 		} else {
-			remaining = append(remaining, item)
+			e.deferredObjects = append(e.deferredObjects, item)
 		}
 	}
-	e.deferredObjects = remaining
 
 	// Notify external state listeners.
 	for _, h := range e.stateHandlers {
@@ -53,10 +65,19 @@ func (e *ReportEngine) OnStateChanged(sender any, state EngineState) {
 	}
 }
 
-// AddDeferredHandler registers a function to be called when a specific
+// AddDeferredHandler registers a one-shot function to be called when a specific
 // EngineState fires. The handler is removed after it fires once.
 func (e *ReportEngine) AddDeferredHandler(state EngineState, fn func()) {
-	e.deferredObjects = append(e.deferredObjects, deferredItem{state: state, handler: fn})
+	e.deferredObjects = append(e.deferredObjects, deferredItem{state: state, handler: fn, repeat: false})
+}
+
+// AddRepeatingDeferredHandler registers a function that fires on every occurrence
+// of state (e.g. every PageFinished or ColumnFinished). The handler persists in the
+// queue until ClearDeferredHandlers or the report ends.
+// Use this for ProcessAt=PageFinished and ProcessAt=ColumnFinished where the same
+// handler must evaluate on every page/column boundary.
+func (e *ReportEngine) AddRepeatingDeferredHandler(state EngineState, fn func()) {
+	e.deferredObjects = append(e.deferredObjects, deferredItem{state: state, handler: fn, repeat: true})
 }
 
 // AddStateHandler registers a persistent callback invoked on every state change.

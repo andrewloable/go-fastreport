@@ -8,6 +8,7 @@ import (
 )
 
 // ReportInfo holds descriptive metadata about a report.
+// It is the Go equivalent of FastReport.ReportInfo embedded in ReportSettings.
 type ReportInfo struct {
 	// Name is the display name of the report.
 	Name string
@@ -15,8 +16,18 @@ type ReportInfo struct {
 	Author string
 	// Description provides a short description.
 	Description string
-	// Version is the report version string.
+	// Version is the report version string (free-form, e.g. "1.0").
 	Version string
+	// Created is the ISO-8601 creation timestamp stored in the FRX.
+	Created string
+	// Modified is the ISO-8601 last-modified timestamp stored in the FRX.
+	Modified string
+	// CreatorVersion is the FastReport version that created the file (e.g. "2023.1.0").
+	CreatorVersion string
+	// SavePreviewPicture indicates the FRX should embed a preview thumbnail.
+	SavePreviewPicture bool
+	// Picture holds the raw bytes of the embedded preview image (PNG/JPEG).
+	Picture []byte
 }
 
 // Report is the top-level container for a report definition.
@@ -139,6 +150,21 @@ func (r *Report) Serialize(w report.Writer) error {
 	if r.Info.Description != "" {
 		w.WriteStr("ReportDescription", r.Info.Description)
 	}
+	if r.Info.Version != "" {
+		w.WriteStr("ReportVersion", r.Info.Version)
+	}
+	if r.Info.Created != "" {
+		w.WriteStr("Created", r.Info.Created)
+	}
+	if r.Info.Modified != "" {
+		w.WriteStr("Modified", r.Info.Modified)
+	}
+	if r.Info.CreatorVersion != "" {
+		w.WriteStr("CreatorVersion", r.Info.CreatorVersion)
+	}
+	if r.Info.SavePreviewPicture {
+		w.WriteBool("SavePreviewPicture", true)
+	}
 	if r.Compressed {
 		w.WriteBool("Compressed", true)
 	}
@@ -184,6 +210,11 @@ func (r *Report) Deserialize(rd report.Reader) error {
 	r.Info.Name = rd.ReadStr("ReportName", "")
 	r.Info.Author = rd.ReadStr("ReportAuthor", "")
 	r.Info.Description = rd.ReadStr("ReportDescription", "")
+	r.Info.Version = rd.ReadStr("ReportVersion", "")
+	r.Info.Created = rd.ReadStr("Created", "")
+	r.Info.Modified = rd.ReadStr("Modified", "")
+	r.Info.CreatorVersion = rd.ReadStr("CreatorVersion", "")
+	r.Info.SavePreviewPicture = rd.ReadBool("SavePreviewPicture", false)
 	r.Compressed = rd.ReadBool("Compressed", false)
 	r.ConvertNulls = rd.ReadBool("ConvertNulls", false)
 	r.DoublePass = rd.ReadBool("DoublePass", false)

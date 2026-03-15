@@ -9,6 +9,9 @@ import (
 	"strings"
 
 	"github.com/andrewloable/go-fastreport/data"
+	csvdata "github.com/andrewloable/go-fastreport/data/csv"
+	jsondata "github.com/andrewloable/go-fastreport/data/json"
+	xmldata "github.com/andrewloable/go-fastreport/data/xml"
 	"github.com/andrewloable/go-fastreport/report"
 	"github.com/andrewloable/go-fastreport/serial"
 	"github.com/andrewloable/go-fastreport/style"
@@ -170,9 +173,7 @@ func deserializeChildren(rdr *serial.Reader, parent report.Base) {
 
 
 // deserializeDictionary reads the <Dictionary> element and populates the
-// report dictionary with Parameters, Relations, and Totals.
-// DataSource connection elements (TableDataSource, CsvDataConnection, etc.) are
-// skipped — they require the caller to register data sources programmatically.
+// report dictionary with Parameters, Relations, Totals, and data connections.
 func deserializeDictionary(rdr *serial.Reader, dict *data.Dictionary) {
 	for {
 		childType, ok := rdr.NextChild()
@@ -189,12 +190,201 @@ func deserializeDictionary(rdr *serial.Reader, dict *data.Dictionary) {
 		case "Total":
 			t := deserializeTotal(rdr)
 			dict.AddTotal(t)
+		case "JsonDataConnection":
+			conn, sources := deserializeJsonConnection(rdr)
+			dict.AddConnection(conn)
+			for _, ds := range sources {
+				dict.AddDataSource(ds)
+			}
+		case "CsvDataConnection":
+			conn, sources := deserializeCsvConnection(rdr)
+			dict.AddConnection(conn)
+			for _, ds := range sources {
+				dict.AddDataSource(ds)
+			}
+		case "XmlDataConnection":
+			conn, sources := deserializeXmlConnection(rdr)
+			dict.AddConnection(conn)
+			for _, ds := range sources {
+				dict.AddDataSource(ds)
+			}
+		case "TableDataSource":
+			// Top-level TableDataSource without a connection — load as a standalone source.
+			ts := deserializeTableDataSource(rdr, nil)
+			dict.AddDataSource(ts)
 		default:
-			// DataSource connections and other children are skipped.
+			// Unknown children are skipped.
 			_ = rdr.SkipElement()
 		}
 		_ = rdr.FinishChild()
 	}
+}
+
+// deserializeJsonConnection reads a <JsonDataConnection> element and returns
+// the connection stub plus any nested data sources it exposes.
+func deserializeJsonConnection(rdr *serial.Reader) (*data.DataConnectionBase, []data.DataSource) {
+	name := rdr.ReadStr("Name", "JsonConnection")
+	connStr := rdr.ReadStr("ConnectionString", "")
+	enabled := rdr.ReadBool("Enabled", true)
+
+	conn := data.NewDataConnectionBase("json")
+	conn.SetName(name)
+	conn.SetEnabled(enabled)
+	conn.ConnectionString = connStr
+
+	// The connection string for JsonDataConnection contains the file path.
+	filePath := connStr
+
+	var sources []data.DataSource
+	for {
+		ct, ok := rdr.NextChild()
+		if !ok {
+			break
+		}
+		if ct == "TableDataSource" {
+			ds := deserializeJsonTableDataSource(rdr, filePath)
+			sources = append(sources, ds)
+		} else {
+			_ = rdr.SkipElement()
+		}
+		_ = rdr.FinishChild()
+	}
+	return conn, sources
+}
+
+// deserializeJsonTableDataSource reads a <TableDataSource> nested inside a
+// JsonDataConnection and returns a JSONDataSource configured with the file path.
+func deserializeJsonTableDataSource(rdr *serial.Reader, filePath string) data.DataSource {
+	name := rdr.ReadStr("Name", "")
+	alias := rdr.ReadStr("Alias", name)
+	rootPath := rdr.ReadStr("TableName", "")
+	// Drain children.
+	for {
+		_, ok := rdr.NextChild()
+		if !ok {
+			break
+		}
+		_ = rdr.FinishChild()
+	}
+	ds := jsondata.New(name)
+	ds.SetAlias(alias)
+	ds.SetFilePath(filePath)
+	ds.SetRootPath(rootPath)
+	return ds
+}
+
+// deserializeCsvConnection reads a <CsvDataConnection> element.
+func deserializeCsvConnection(rdr *serial.Reader) (*data.DataConnectionBase, []data.DataSource) {
+	name := rdr.ReadStr("Name", "CsvConnection")
+	connStr := rdr.ReadStr("ConnectionString", "")
+	enabled := rdr.ReadBool("Enabled", true)
+
+	conn := data.NewDataConnectionBase("csv")
+	conn.SetName(name)
+	conn.SetEnabled(enabled)
+	conn.ConnectionString = connStr
+
+	// CSV connection string is the file path.
+	filePath := connStr
+
+	var sources []data.DataSource
+	for {
+		ct, ok := rdr.NextChild()
+		if !ok {
+			break
+		}
+		if ct == "TableDataSource" {
+			tableName := rdr.ReadStr("Name", "")
+			alias := rdr.ReadStr("Alias", tableName)
+			separator := rdr.ReadStr("Separator", ",")
+			hasHeader := rdr.ReadBool("HasHeader", true)
+			// Drain children.
+			for {
+				_, ok2 := rdr.NextChild()
+				if !ok2 {
+					break
+				}
+				_ = rdr.FinishChild()
+			}
+			ds := csvdata.New(tableName)
+			ds.SetFilePath(filePath)
+			ds.SetAlias(alias)
+			if len(separator) > 0 {
+				ds.SetSeparator(rune(separator[0]))
+			}
+			ds.SetHasHeader(hasHeader)
+			sources = append(sources, ds)
+		} else {
+			_ = rdr.SkipElement()
+		}
+		_ = rdr.FinishChild()
+	}
+	return conn, sources
+}
+
+// deserializeXmlConnection reads an <XmlDataConnection> element.
+func deserializeXmlConnection(rdr *serial.Reader) (*data.DataConnectionBase, []data.DataSource) {
+	name := rdr.ReadStr("Name", "XmlConnection")
+	connStr := rdr.ReadStr("ConnectionString", "")
+	enabled := rdr.ReadBool("Enabled", true)
+
+	conn := data.NewDataConnectionBase("xml")
+	conn.SetName(name)
+	conn.SetEnabled(enabled)
+	conn.ConnectionString = connStr
+
+	filePath := connStr
+
+	var sources []data.DataSource
+	for {
+		ct, ok := rdr.NextChild()
+		if !ok {
+			break
+		}
+		if ct == "TableDataSource" {
+			tableName := rdr.ReadStr("Name", "")
+			alias := rdr.ReadStr("Alias", tableName)
+			xPath := rdr.ReadStr("TableName", "")
+			// Drain children.
+			for {
+				_, ok2 := rdr.NextChild()
+				if !ok2 {
+					break
+				}
+				_ = rdr.FinishChild()
+			}
+			ds := xmldata.New(tableName)
+			ds.SetFilePath(filePath)
+			ds.SetAlias(alias)
+			ds.SetRootPath(xPath)
+			sources = append(sources, ds)
+		} else {
+			_ = rdr.SkipElement()
+		}
+		_ = rdr.FinishChild()
+	}
+	return conn, sources
+}
+
+// deserializeTableDataSource reads a standalone <TableDataSource> element.
+func deserializeTableDataSource(rdr *serial.Reader, conn *data.DataConnectionBase) *data.TableDataSource {
+	name := rdr.ReadStr("Name", "")
+	alias := rdr.ReadStr("Alias", name)
+	tableName := rdr.ReadStr("TableName", "")
+	selectCmd := rdr.ReadStr("SelectCommand", "")
+	// Drain children (CommandParameter etc.).
+	for {
+		_, ok := rdr.NextChild()
+		if !ok {
+			break
+		}
+		_ = rdr.FinishChild()
+	}
+	ts := data.NewTableDataSource(name)
+	ts.SetAlias(alias)
+	ts.SetTableName(tableName)
+	ts.SetSelectCommand(selectCmd)
+	return ts
 }
 
 // deserializeParameter reads a single <Parameter> element (and nested children).

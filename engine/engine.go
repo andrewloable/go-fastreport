@@ -364,10 +364,12 @@ func (e *ReportEngine) resetPageNumber() {
 	e.pageNo = e.report.InitialPageNumber
 }
 
-// limitPreparedPages enforces the MaxPages limit.
+// limitPreparedPages enforces the MaxPages limit by trimming both the counter
+// and the actual pages slice so they stay in sync.
 func (e *ReportEngine) limitPreparedPages() {
 	if e.pagesLimit > 0 && e.totalPages > e.pagesLimit {
 		e.totalPages = e.pagesLimit
+		e.preparedPages.TrimTo(e.pagesLimit)
 	}
 }
 

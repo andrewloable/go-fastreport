@@ -1,12 +1,17 @@
 package engine
 
 import (
+	"image/color"
+
 	"github.com/andrewloable/go-fastreport/band"
 	"github.com/andrewloable/go-fastreport/object"
 	"github.com/andrewloable/go-fastreport/preview"
 	"github.com/andrewloable/go-fastreport/report"
 	"github.com/andrewloable/go-fastreport/utils"
 )
+
+// defaultTextColor is used when a TextObject does not expose a text color.
+var defaultTextColor = color.RGBA{A: 255}
 
 // ── CanPrint ──────────────────────────────────────────────────────────────────
 
@@ -124,7 +129,16 @@ func calcBandRequiredHeight(bb *band.BandBase, baseHeight float32) float32 {
 		if objWidth <= 0 {
 			objWidth = bb.Width()
 		}
-		_, textH := utils.MeasureText(txt.Text(), txt.Font(), objWidth)
+
+		var textH float32
+		switch txt.TextRenderType() {
+		case object.TextRenderTypeHtmlTags, object.TextRenderTypeHtmlParagraph:
+			// Use HtmlTextRenderer for HTML-formatted text.
+			renderer := utils.NewHtmlTextRenderer(txt.Text(), txt.Font(), defaultTextColor)
+			textH = renderer.MeasureHeight(objWidth)
+		default:
+			_, textH = utils.MeasureText(txt.Text(), txt.Font(), objWidth)
+		}
 
 		declaredH := txt.Height()
 		usedH := textH

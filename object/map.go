@@ -24,6 +24,10 @@ type MapLayer struct {
 	AnalyticalValue string
 	// LabelColumn is the data column used for map labels.
 	LabelColumn string
+	// BoxAsString is the bounding-box serialization used by the map designer.
+	BoxAsString string
+	// Palette is the color-palette name applied to this layer.
+	Palette string
 }
 
 // NewMapLayer creates a MapLayer with defaults.
@@ -68,6 +72,12 @@ func (l *MapLayer) Serialize(w report.Writer) error {
 	if l.LabelColumn != "" {
 		w.WriteStr("LabelColumn", l.LabelColumn)
 	}
+	if l.BoxAsString != "" {
+		w.WriteStr("BoxAsString", l.BoxAsString)
+	}
+	if l.Palette != "" {
+		w.WriteStr("Palette", l.Palette)
+	}
 	return nil
 }
 
@@ -84,9 +94,8 @@ func (l *MapLayer) Deserialize(r report.Reader) error {
 	l.SpatialValue = r.ReadStr("SpatialValue", "")
 	l.AnalyticalValue = r.ReadStr("AnalyticalValue", "")
 	l.LabelColumn = r.ReadStr("LabelColumn", "")
-	// Drain additional dot-notation attributes (BoxAsString, Palette, color ranges, etc.)
-	_ = r.ReadStr("BoxAsString", "")
-	_ = r.ReadStr("Palette", "")
+	l.BoxAsString = r.ReadStr("BoxAsString", "")
+	l.Palette = r.ReadStr("Palette", "")
 	return nil
 }
 

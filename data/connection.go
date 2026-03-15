@@ -3,6 +3,8 @@ package data
 import (
 	"database/sql"
 	"fmt"
+
+	"github.com/andrewloable/go-fastreport/report"
 )
 
 // -----------------------------------------------------------------------
@@ -43,6 +45,40 @@ func NewCommandParameter(name string) *CommandParameter {
 	return &CommandParameter{Name: name, Direction: ParamDirectionInput}
 }
 
+// Serialize writes CommandParameter properties to w.
+func (p *CommandParameter) Serialize(w report.Writer) error {
+	if p.Name != "" {
+		w.WriteStr("Name", p.Name)
+	}
+	if p.DataType != "" {
+		w.WriteStr("DataType", p.DataType)
+	}
+	if p.Size != 0 {
+		w.WriteInt("Size", p.Size)
+	}
+	if p.Expression != "" {
+		w.WriteStr("Expression", p.Expression)
+	}
+	if p.DefaultValue != "" {
+		w.WriteStr("DefaultValue", p.DefaultValue)
+	}
+	if p.Direction != ParamDirectionInput {
+		w.WriteInt("Direction", int(p.Direction))
+	}
+	return nil
+}
+
+// Deserialize reads CommandParameter properties from r.
+func (p *CommandParameter) Deserialize(r report.Reader) error {
+	p.Name = r.ReadStr("Name", "")
+	p.DataType = r.ReadStr("DataType", "")
+	p.Size = r.ReadInt("Size", 0)
+	p.Expression = r.ReadStr("Expression", "")
+	p.DefaultValue = r.ReadStr("DefaultValue", "")
+	p.Direction = ParameterDirection(r.ReadInt("Direction", int(ParamDirectionInput)))
+	return nil
+}
+
 // -----------------------------------------------------------------------
 // DataConnectionBase
 // -----------------------------------------------------------------------
@@ -53,6 +89,8 @@ func NewCommandParameter(name string) *CommandParameter {
 // Concrete connection types (Postgres, MySQL, SQLite …) embed this struct
 // and provide a sql.DB via the Open() method.
 type DataConnectionBase struct {
+	DataComponentBase
+
 	// ConnectionString is the DSN or connection string.
 	ConnectionString string
 	// ConnectionStringExpression is a report expression that resolves to the DSN.
@@ -72,7 +110,10 @@ type DataConnectionBase struct {
 
 // NewDataConnectionBase creates a DataConnectionBase for the given sql driver.
 func NewDataConnectionBase(driverName string) *DataConnectionBase {
-	return &DataConnectionBase{driverName: driverName}
+	return &DataConnectionBase{
+		DataComponentBase: *NewDataComponentBase(""),
+		driverName:        driverName,
+	}
 }
 
 // DriverName returns the database/sql driver name.

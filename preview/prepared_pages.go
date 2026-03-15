@@ -192,6 +192,9 @@ const (
 	ObjectTypePolyLine
 	// ObjectTypePolygon is a closed polygon (PolygonObject).
 	ObjectTypePolygon
+	// ObjectTypeSVG is a raw SVG document stored as UTF-8 bytes in BlobStore.
+	// HTML exporters may emit it inline; PDF/image exporters draw a placeholder.
+	ObjectTypeSVG
 )
 
 // PreparedObject is a rendered report component snapshot.
@@ -232,6 +235,51 @@ type PreparedObject struct {
 	Border style.Border
 	// WordWrap indicates whether text wraps within the bounds.
 	WordWrap bool
+	// Checked is the checked state for ObjectTypeCheckBox.
+	Checked bool
+}
+
+// ── PreparedWatermark ─────────────────────────────────────────────────────────
+
+// WatermarkTextRotation mirrors reportpkg.WatermarkTextRotation.
+type WatermarkTextRotation int
+
+const (
+	WatermarkTextRotationHorizontal      WatermarkTextRotation = iota
+	WatermarkTextRotationVertical
+	WatermarkTextRotationForwardDiagonal
+	WatermarkTextRotationBackwardDiagonal
+)
+
+// WatermarkImageSize mirrors reportpkg.WatermarkImageSize.
+type WatermarkImageSize int
+
+const (
+	WatermarkImageSizeNormal  WatermarkImageSize = iota
+	WatermarkImageSizeCenter
+	WatermarkImageSizeStretch
+	WatermarkImageSizeZoom
+	WatermarkImageSizeTile
+)
+
+// PreparedWatermark holds the watermark properties for a single prepared page.
+// It is populated by the engine from the ReportPage.Watermark and attached
+// to PreparedPage so that exporters can render it without needing reportpkg.
+type PreparedWatermark struct {
+	Enabled bool
+
+	// Text watermark
+	Text          string
+	Font          style.Font
+	TextColor     color.RGBA
+	TextRotation  WatermarkTextRotation
+	ShowTextOnTop bool
+
+	// Image watermark (-1 = no image)
+	ImageBlobIdx     int
+	ImageSize        WatermarkImageSize
+	ImageTransparency float32
+	ShowImageOnTop   bool
 }
 
 // ── PreparedPage ──────────────────────────────────────────────────────────────
@@ -244,6 +292,8 @@ type PreparedPage struct {
 	Width, Height float32
 	// Bands holds the rendered bands in print order.
 	Bands []*PreparedBand
+	// Watermark holds the optional page watermark, or nil if none.
+	Watermark *PreparedWatermark
 }
 
 // AddBand appends a rendered band to the page.
@@ -387,6 +437,20 @@ func (pp *PreparedPages) RemoveLast() {
 	pp.pages = pp.pages[:len(pp.pages)-1]
 	if pp.curPage >= len(pp.pages) {
 		pp.curPage = len(pp.pages) - 1
+	}
+}
+
+// TrimTo keeps only the first n pages, discarding the rest.
+func (pp *PreparedPages) TrimTo(n int) {
+	if n < 0 {
+		n = 0
+	}
+	if n >= len(pp.pages) {
+		return
+	}
+	pp.pages = pp.pages[:n]
+	if pp.curPage >= n {
+		pp.curPage = n - 1
 	}
 }
 

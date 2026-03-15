@@ -106,9 +106,164 @@ func (a *AdvMatrixObject) Serialize(w report.Writer) error {
 	if a.DataSource != "" {
 		w.WriteStr("DataSource", a.DataSource)
 	}
-	// Physical table columns and rows are written as child XML elements;
-	// the Writer interface does not currently expose arbitrary element writing,
-	// so they are preserved in memory for downstream consumers.
+	// Write physical column definitions as "TableColumn" child elements.
+	for _, col := range a.TableColumns {
+		if err := w.WriteObjectNamed("TableColumn", col); err != nil {
+			return err
+		}
+	}
+	// Write physical row definitions (with their cells) as "TableRow" children.
+	for _, row := range a.TableRows {
+		if err := w.WriteObjectNamed("TableRow", row); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ── Serialize/Deserialize for sub-types ───────────────────────────────────────
+
+// Serialize writes AdvMatrixColumn properties.
+func (c *AdvMatrixColumn) Serialize(w report.Writer) error {
+	if c.Name != "" {
+		w.WriteStr("Name", c.Name)
+	}
+	if c.Width != 0 {
+		w.WriteFloat("Width", c.Width)
+	}
+	if c.AutoSize {
+		w.WriteBool("AutoSize", true)
+	}
+	return nil
+}
+
+// Deserialize reads AdvMatrixColumn properties.
+func (c *AdvMatrixColumn) Deserialize(r report.Reader) error {
+	c.Name = r.ReadStr("Name", "")
+	c.Width = r.ReadFloat("Width", 0)
+	c.AutoSize = r.ReadBool("AutoSize", false)
+	return nil
+}
+
+// Serialize writes AdvMatrixRow properties and its cell children.
+func (row *AdvMatrixRow) Serialize(w report.Writer) error {
+	if row.Name != "" {
+		w.WriteStr("Name", row.Name)
+	}
+	if row.Height != 0 {
+		w.WriteFloat("Height", row.Height)
+	}
+	if row.AutoSize {
+		w.WriteBool("AutoSize", true)
+	}
+	for _, cell := range row.Cells {
+		if err := w.WriteObjectNamed("TableCell", cell); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Deserialize reads AdvMatrixRow properties (cells deserialized via DeserializeChild).
+func (row *AdvMatrixRow) Deserialize(r report.Reader) error {
+	row.Name = r.ReadStr("Name", "")
+	row.Height = r.ReadFloat("Height", 0)
+	row.AutoSize = r.ReadBool("AutoSize", false)
+	return nil
+}
+
+// Serialize writes AdvMatrixCell properties and button children.
+func (cell *AdvMatrixCell) Serialize(w report.Writer) error {
+	if cell.Name != "" {
+		w.WriteStr("Name", cell.Name)
+	}
+	if cell.Width != 0 {
+		w.WriteFloat("Width", cell.Width)
+	}
+	if cell.Height != 0 {
+		w.WriteFloat("Height", cell.Height)
+	}
+	if cell.ColSpan != 1 && cell.ColSpan != 0 {
+		w.WriteInt("ColSpan", cell.ColSpan)
+	}
+	if cell.RowSpan != 1 && cell.RowSpan != 0 {
+		w.WriteInt("RowSpan", cell.RowSpan)
+	}
+	if cell.Text != "" {
+		w.WriteStr("Text", cell.Text)
+	}
+	if cell.HorzAlign != 0 {
+		w.WriteInt("HorzAlign", cell.HorzAlign)
+	}
+	if cell.VertAlign != 0 {
+		w.WriteInt("VertAlign", cell.VertAlign)
+	}
+	for _, btn := range cell.Buttons {
+		if err := w.WriteObjectNamed(btn.TypeName, btn); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Deserialize reads AdvMatrixCell properties.
+func (cell *AdvMatrixCell) Deserialize(r report.Reader) error {
+	cell.Name = r.ReadStr("Name", "")
+	cell.Width = r.ReadFloat("Width", 0)
+	cell.Height = r.ReadFloat("Height", 0)
+	cell.ColSpan = r.ReadInt("ColSpan", 1)
+	cell.RowSpan = r.ReadInt("RowSpan", 1)
+	cell.Text = r.ReadStr("Text", "")
+	cell.HorzAlign = r.ReadInt("HorzAlign", 0)
+	cell.VertAlign = r.ReadInt("VertAlign", 0)
+	if cell.ColSpan < 1 {
+		cell.ColSpan = 1
+	}
+	if cell.RowSpan < 1 {
+		cell.RowSpan = 1
+	}
+	return nil
+}
+
+// Serialize writes MatrixButton properties.
+func (btn *MatrixButton) Serialize(w report.Writer) error {
+	if btn.Name != "" {
+		w.WriteStr("Name", btn.Name)
+	}
+	if btn.Left != 0 {
+		w.WriteFloat("Left", btn.Left)
+	}
+	if btn.Width != 0 {
+		w.WriteFloat("Width", btn.Width)
+	}
+	if btn.Height != 0 {
+		w.WriteFloat("Height", btn.Height)
+	}
+	if btn.Dock != "" {
+		w.WriteStr("Dock", btn.Dock)
+	}
+	if btn.SymbolSize != 0 {
+		w.WriteFloat("SymbolSize", btn.SymbolSize)
+	}
+	if btn.Symbol != "" {
+		w.WriteStr("Symbol", btn.Symbol)
+	}
+	if btn.ShowCollapseExpandMenu {
+		w.WriteBool("ShowCollapseExpandMenu", true)
+	}
+	return nil
+}
+
+// Deserialize reads MatrixButton properties.
+func (btn *MatrixButton) Deserialize(r report.Reader) error {
+	btn.Name = r.ReadStr("Name", "")
+	btn.Left = r.ReadFloat("Left", 0)
+	btn.Width = r.ReadFloat("Width", 0)
+	btn.Height = r.ReadFloat("Height", 0)
+	btn.Dock = r.ReadStr("Dock", "")
+	btn.SymbolSize = r.ReadFloat("SymbolSize", 0)
+	btn.Symbol = r.ReadStr("Symbol", "")
+	btn.ShowCollapseExpandMenu = r.ReadBool("ShowCollapseExpandMenu", false)
 	return nil
 }
 

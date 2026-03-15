@@ -2,6 +2,7 @@ package engine
 
 import (
 	"bytes"
+	"encoding/base64"
 	"fmt"
 	"image"
 	"image/color"
@@ -55,6 +56,10 @@ func (e *ReportEngine) populateBandObjects2(objs *report.ObjectCollection, pb *p
 			if tbl, ok := obj.(*table.TableObject); ok {
 				e.populateTableObjects(tbl, tbl.Left(), tbl.Top(), pb)
 			}
+			// Render AdvMatrixObject physical cells as individual PreparedObjects.
+			if adv, ok := obj.(*object.AdvMatrixObject); ok {
+				e.populateAdvMatrixCells(adv, pb)
+			}
 			// Register deferred text evaluation if ProcessAt != Default.
 			if txt, ok := obj.(*object.TextObject); ok && txt.ProcessAt() != object.ProcessAtDefault {
 				state := processAtToEngineState(txt.ProcessAt())
@@ -63,9 +68,18 @@ func (e *ReportEngine) populateBandObjects2(objs *report.ObjectCollection, pb *p
 				capturedTxt := txt
 				capturedFmt := txt.Format()
 				pb.Objects[idx].Text = "" // placeholder: blank until deferred state fires
-				e.AddDeferredHandler(state, func() {
-					capturedPb.Objects[capturedIdx].Text = e.evalTextWithFormat(capturedTxt.Text(), capturedFmt)
-				})
+				// PageFinished and ColumnFinished handlers must re-fire on every
+				// page/column boundary. ReportFinished and other states fire once.
+				switch txt.ProcessAt() {
+				case object.ProcessAtPageFinished, object.ProcessAtColumnFinished:
+					e.AddRepeatingDeferredHandler(state, func() {
+						capturedPb.Objects[capturedIdx].Text = e.evalTextWithFormat(capturedTxt.Text(), capturedFmt)
+					})
+				default:
+					e.AddDeferredHandler(state, func() {
+						capturedPb.Objects[capturedIdx].Text = e.evalTextWithFormat(capturedTxt.Text(), capturedFmt)
+					})
+				}
 			}
 		}
 	}
@@ -157,6 +171,83 @@ func (e *ReportEngine) populateTableObjects(tbl *table.TableObject, originX, ori
 				VertAlign: int(cell.VertAlign()),
 				WordWrap:  cell.WordWrap(),
 				Border:    cell.Border(),
+			}
+			pb.Objects = append(pb.Objects, po)
+		}
+		rowY += rowH
+	}
+}
+
+// populateAdvMatrixCells renders the physical table cells of an AdvMatrixObject
+// as individual PreparedObjects. Each AdvMatrixRow holds AdvMatrixCell entries;
+// column widths come from TableColumns.  Absolute positions are computed from
+// the object's own Left/Top.
+func (e *ReportEngine) populateAdvMatrixCells(adv *object.AdvMatrixObject, pb *preview.PreparedBand) {
+	if len(adv.TableRows) == 0 {
+		return
+	}
+
+	// Build cumulative column X offsets.
+	colX := make([]float32, len(adv.TableColumns)+1)
+	for i, col := range adv.TableColumns {
+		colX[i+1] = colX[i] + col.Width
+	}
+
+	originX := adv.Left()
+	originY := adv.Top()
+	rowY := float32(0)
+
+	black := color.RGBA{A: 255}
+	white := color.RGBA{R: 255, G: 255, B: 255, A: 0}
+
+	for _, row := range adv.TableRows {
+		rowH := row.Height
+		if rowH <= 0 {
+			rowH = 20
+		}
+		for ci, cell := range row.Cells {
+			if cell == nil {
+				continue
+			}
+			// Compute cell X.
+			var cellX float32
+			if ci < len(colX) {
+				cellX = colX[ci]
+			}
+			// Compute cell width: use cell.Width if set, else span columns.
+			cellW := cell.Width
+			if cellW <= 0 {
+				colSpan := cell.ColSpan
+				if colSpan < 1 {
+					colSpan = 1
+				}
+				end := ci + colSpan
+				if end <= len(colX)-1 {
+					cellW = colX[end] - colX[ci]
+				} else if ci < len(colX)-1 {
+					cellW = colX[len(colX)-1] - colX[ci]
+				}
+			}
+			cellH := cell.Height
+			if cellH <= 0 {
+				cellH = rowH
+			}
+
+			text := e.evalText(cell.Text)
+			po := preview.PreparedObject{
+				Name:      cell.Name,
+				Kind:      preview.ObjectTypeText,
+				Left:      originX + cellX,
+				Top:       originY + rowY,
+				Width:     cellW,
+				Height:    cellH,
+				Text:      text,
+				BlobIdx:   -1,
+				TextColor: black,
+				FillColor: white,
+				HorzAlign: cell.HorzAlign,
+				VertAlign: cell.VertAlign,
+				WordWrap:  true,
 			}
 			pb.Objects = append(pb.Objects, po)
 		}
@@ -341,29 +432,27 @@ func (e *ReportEngine) buildPreparedObject(obj report.Base) *preview.PreparedObj
 
 	case *object.CheckBoxObject:
 		po.Kind = preview.ObjectTypeCheckBox
-		// Represent checkbox state as "true" / "false" text for now.
-		po.Text = fmt.Sprintf("%v", v.Checked())
+		po.Checked = v.Checked()
 
 	case *gauge.LinearGauge:
-		// Render as a text label showing the evaluated expression value.
-		po.Kind = preview.ObjectTypeText
-		po.TextColor = color.RGBA{A: 255}
-		po.Text = e.evalGaugeText(v.Expression, v.Value())
+		e.evalGaugeValue(&v.GaugeObject)
+		po.Kind = preview.ObjectTypePicture
+		po.BlobIdx = e.renderGaugeBlob(v.Name(), gauge.RenderLinear(v, int(geom.Width()), int(geom.Height())))
 
 	case *gauge.RadialGauge:
-		po.Kind = preview.ObjectTypeText
-		po.TextColor = color.RGBA{A: 255}
-		po.Text = e.evalGaugeText(v.Expression, v.Value())
+		e.evalGaugeValue(&v.GaugeObject)
+		po.Kind = preview.ObjectTypePicture
+		po.BlobIdx = e.renderGaugeBlob(v.Name(), gauge.RenderRadial(v, int(geom.Width()), int(geom.Height())))
 
 	case *gauge.SimpleGauge:
-		po.Kind = preview.ObjectTypeText
-		po.TextColor = color.RGBA{A: 255}
-		po.Text = e.evalGaugeText(v.Expression, v.Value())
+		e.evalGaugeValue(&v.GaugeObject)
+		po.Kind = preview.ObjectTypePicture
+		po.BlobIdx = e.renderGaugeBlob(v.Name(), gauge.RenderSimple(v, int(geom.Width()), int(geom.Height())))
 
 	case *gauge.SimpleProgressGauge:
-		po.Kind = preview.ObjectTypeText
-		po.TextColor = color.RGBA{A: 255}
-		po.Text = e.evalGaugeText(v.Expression, v.Value())
+		e.evalGaugeValue(&v.GaugeObject)
+		po.Kind = preview.ObjectTypePicture
+		po.BlobIdx = e.renderGaugeBlob(v.Name(), gauge.RenderSimpleProgress(v, int(geom.Width()), int(geom.Height())))
 
 	case *object.RichObject:
 		// Render RTF text as plain text; full RTF rendering is handled at export time.
@@ -372,16 +461,25 @@ func (e *ReportEngine) buildPreparedObject(obj report.Base) *preview.PreparedObj
 		po.Text = e.evalText(v.Text())
 
 	case *object.SVGObject:
-		// SVG is rendered as an embedded picture blob; the export layer decodes SvgData.
-		po.Kind = preview.ObjectTypePicture
+		// Store the raw SVG XML in BlobStore.  HTML exporters embed it inline;
+		// PDF/image exporters draw a placeholder box.
+		po.Kind = preview.ObjectTypeSVG
+		if v.SvgData != "" {
+			svgBytes := decodeSvgData(v.SvgData)
+			if len(svgBytes) > 0 && e.preparedPages != nil {
+				po.BlobIdx = e.preparedPages.BlobStore.Add(v.Name(), svgBytes)
+			}
+		}
 
 	case *object.SparklineObject:
 		// Sparkline chart rendered as a picture blob at export time.
 		po.Kind = preview.ObjectTypePicture
 
 	case *object.AdvMatrixObject:
-		// AdvMatrix rendering is not yet implemented; emit an empty picture placeholder.
-		po.Kind = preview.ObjectTypePicture
+		// Render the physical table layout as a grid of text PreparedObjects.
+		po.Kind = preview.ObjectTypeShape
+		po.ShapeKind = 0
+		// The individual cells will be emitted below via populateAdvMatrixCells.
 
 	case *object.DigitalSignatureObject:
 		// Render as a text placeholder showing the signature field.
@@ -469,6 +567,40 @@ func (e *ReportEngine) evalGaugeText(expr string, defaultVal float64) string {
 	return fmt.Sprintf("%g", defaultVal)
 }
 
+// evalGaugeValue evaluates the gauge Expression and updates SetValue if successful.
+func (e *ReportEngine) evalGaugeValue(g *gauge.GaugeObject) {
+	if g.Expression == "" || e.report == nil {
+		return
+	}
+	result, err := e.report.Calc(g.Expression)
+	if err != nil {
+		return
+	}
+	switch v := result.(type) {
+	case float64:
+		g.SetValue(v)
+	case float32:
+		g.SetValue(float64(v))
+	case int:
+		g.SetValue(float64(v))
+	case int64:
+		g.SetValue(float64(v))
+	}
+}
+
+// renderGaugeBlob encodes img as PNG, stores it in the BlobStore, and returns the index.
+// Returns -1 if the prepared pages or image is nil.
+func (e *ReportEngine) renderGaugeBlob(name string, img image.Image) int {
+	if img == nil || e.preparedPages == nil {
+		return -1
+	}
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		return -1
+	}
+	return e.preparedPages.BlobStore.Add(name, buf.Bytes())
+}
+
 // evalText evaluates a text template with [bracket] expressions.
 // Returns the raw text on error.
 func (e *ReportEngine) evalText(text string) string {
@@ -509,4 +641,24 @@ func renderBarcode(bc barcode.BarcodeBase, width, height int) (image.Image, erro
 		return r.Render(width, height)
 	}
 	return nil, fmt.Errorf("barcode type %T does not implement Render", bc)
+}
+
+// decodeSvgData decodes an SVG source stored as either:
+//   - raw UTF-8 SVG XML (starts with '<')
+//   - base64-encoded SVG XML
+//
+// Returns the raw SVG bytes, or nil on failure.
+func decodeSvgData(s string) []byte {
+	s = strings.TrimSpace(s)
+	if strings.HasPrefix(s, "<") {
+		return []byte(s)
+	}
+	// Try standard and URL-safe base64.
+	if b, err := base64.StdEncoding.DecodeString(s); err == nil {
+		return b
+	}
+	if b, err := base64.URLEncoding.DecodeString(s); err == nil {
+		return b
+	}
+	return nil
 }

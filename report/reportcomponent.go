@@ -139,23 +139,25 @@ func (rc *ReportComponentBase) StyleName() string { return rc.styleName }
 func (rc *ReportComponentBase) SetStyleName(s string) { rc.styleName = s }
 
 // ApplyStyle applies the visual overrides from a style.StyleEntry to the
-// component. Only properties marked as "changed" in the entry are overridden;
-// all other component properties are left as-is.
+// component. Both the modern Apply* flags and the legacy *Changed flags are
+// honoured; a property is applied when either the new flag or its legacy
+// equivalent is true.
+//
+// Subclasses (e.g. TextObject) should call this method first and then apply
+// their own font/text-color overrides, since ReportComponentBase does not hold
+// a font field directly.
 //
 // This is called by style.StyleSheet.ApplyToObject before rendering.
 func (rc *ReportComponentBase) ApplyStyle(entry *style.StyleEntry) {
 	if entry == nil {
 		return
 	}
-	if entry.FontChanged {
-		// Update the text font if the component is a TextObject.
-		// ReportComponentBase does not hold the font directly; subclasses
-		// (e.g. TextObject) override this as needed.
-	}
-	if entry.FillColorChanged {
+	// Fill: apply when ApplyFill or the legacy FillColorChanged is true.
+	if entry.ApplyFill || entry.FillColorChanged {
 		rc.fill = &style.SolidFill{Color: entry.FillColor}
 	}
-	if entry.BorderColorChanged {
+	// Border colour: apply when ApplyBorder or the legacy BorderColorChanged is true.
+	if entry.ApplyBorder || entry.BorderColorChanged {
 		b := rc.border
 		for i := range b.Lines {
 			b.Lines[i].Color = entry.BorderColor

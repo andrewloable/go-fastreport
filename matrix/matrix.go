@@ -112,6 +112,7 @@ type accumulator struct {
 	min      float64
 	max      float64
 	minSet   bool
+	maxSet   bool
 	distinct map[any]struct{}
 }
 
@@ -130,8 +131,9 @@ func (a *accumulator) add(v float64, raw any) {
 		a.min = v
 		a.minSet = true
 	}
-	if !a.minSet || v > a.max {
+	if !a.maxSet || v > a.max {
 		a.max = v
+		a.maxSet = true
 	}
 	if a.distinct != nil {
 		a.distinct[raw] = struct{}{}

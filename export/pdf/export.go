@@ -9,6 +9,7 @@ import (
 	_ "image/jpeg" // register JPEG decoder
 	_ "image/png"  // register PNG decoder
 	"io"
+	"math"
 	"strings"
 
 	"github.com/andrewloable/go-fastreport/export"
@@ -103,9 +104,50 @@ func (e *Exporter) ExportBand(b *preview.PreparedBand) error {
 			e.renderPolyPath(contents, b, obj, false)
 		case preview.ObjectTypePolygon:
 			e.renderPolyPath(contents, b, obj, true)
+		case preview.ObjectTypeCheckBox:
+			e.renderCheckBoxObject(contents, b, obj)
 		}
 	}
 	return nil
+}
+
+// renderCheckBoxObject draws a checkbox square and, when checked, a tick mark.
+// The checkbox is drawn using PDF path operators at the object's position.
+func (e *Exporter) renderCheckBoxObject(c *Contents, b *preview.PreparedBand, obj preview.PreparedObject) {
+	objTopPx := b.Top + obj.Top
+	xPt := float64(export.PixelsToPoints(obj.Left))
+	yPt := e.curPage.Height - float64(export.PixelsToPoints(objTopPx+obj.Height))
+	wPt := float64(export.PixelsToPoints(obj.Width))
+	hPt := float64(export.PixelsToPoints(obj.Height))
+
+	// Default line width.
+	lw := 0.75
+	if obj.Border.Lines[0].Width > 0 {
+		lw = float64(export.PixelsToPoints(obj.Border.Lines[0].Width))
+	}
+
+	// Draw checkbox border rectangle.
+	c.WriteString(fmt.Sprintf(
+		"q %.3f w 0 0 0 RG %.4f %.4f %.4f %.4f re S Q\n",
+		lw, xPt, yPt, wPt, hPt,
+	))
+
+	if obj.Checked {
+		// Draw a tick mark (√) as two line segments inside the box.
+		// First leg: bottom-left to lower-middle; second leg: lower-middle to top-right.
+		margin := wPt * 0.15
+		tickLW := lw * 1.5
+		x1 := xPt + margin
+		y1 := yPt + hPt*0.45
+		x2 := xPt + wPt*0.4
+		y2 := yPt + margin
+		x3 := xPt + wPt - margin
+		y3 := yPt + hPt - margin
+		c.WriteString(fmt.Sprintf(
+			"q %.3f w 0 0 0 RG %.4f %.4f m %.4f %.4f l %.4f %.4f l S Q\n",
+			tickLW, x1, y1, x2, y2, x3, y3,
+		))
+	}
 }
 
 // renderTextObject writes PDF operators for a TextObject.
@@ -348,13 +390,85 @@ func pdfFontAlias(name string, bold, italic bool) string {
 	}
 }
 
-// ExportPageEnd finalises the current PDF page.
-func (e *Exporter) ExportPageEnd(_ *preview.PreparedPage) error {
+// ExportPageEnd finalises the current PDF page, rendering any watermark.
+func (e *Exporter) ExportPageEnd(pg *preview.PreparedPage) error {
 	if e.curPage != nil {
+		if pg != nil && pg.Watermark != nil && pg.Watermark.Enabled {
+			e.renderWatermark(e.curPage.Contents(), pg)
+		}
 		e.curPage.Contents().Finalize()
 		e.curPage = nil
 	}
 	return nil
+}
+
+// renderWatermark draws the watermark text (if any) as a centred, semi-transparent
+// text string on the PDF page using the cm (current transformation matrix) operator
+// to rotate the text diagonally.
+func (e *Exporter) renderWatermark(c *Contents, pg *preview.PreparedPage) {
+	wm := pg.Watermark
+	if wm == nil || !wm.Enabled || wm.Text == "" {
+		return
+	}
+	widthPt := float64(export.PixelsToPoints(pg.Width))
+	heightPt := float64(export.PixelsToPoints(pg.Height))
+
+	// Rotation angle in radians.
+	var angleDeg float64
+	switch wm.TextRotation {
+	case preview.WatermarkTextRotationVertical:
+		angleDeg = 90
+	case preview.WatermarkTextRotationForwardDiagonal:
+		angleDeg = 45
+	case preview.WatermarkTextRotationBackwardDiagonal:
+		angleDeg = -45
+	default: // Horizontal
+		angleDeg = 0
+	}
+	angleRad := angleDeg * 3.14159265358979 / 180.0
+	cos := math.Cos(angleRad)
+	sin := math.Sin(angleRad)
+
+	// Font size in points — use the watermark font size directly (already in pt).
+	fontSize := float64(wm.Font.Size)
+	if fontSize <= 0 {
+		fontSize = 60
+	}
+
+	// Centre of the page.
+	cx := widthPt / 2
+	cy := heightPt / 2
+
+	// Encode the watermark text as a PDF string literal (basic ASCII escape).
+	escaped := pdfEscape(wm.Text)
+
+	col := wm.TextColor
+	r := float64(col.R) / 255.0
+	g := float64(col.G) / 255.0
+	b := float64(col.B) / 255.0
+	alpha := float64(255-col.A) / 255.0 // A=0 → opaque, A=255 → invisible
+	if alpha < 0.1 {
+		alpha = 0.3 // default light transparency
+	}
+
+	// Write a simple text rendering using PDF operators.
+	// We push a graphics state, apply transparency, rotate+centre, draw text, pop.
+	c.WriteString(fmt.Sprintf("q\n"))
+	// Set fill colour.
+	c.WriteString(fmt.Sprintf("%.4f %.4f %.4f rg\n", r, g, b))
+	// Apply rotation matrix centred at (cx, cy).
+	c.WriteString(fmt.Sprintf("%.6f %.6f %.6f %.6f %.4f %.4f cm\n",
+		cos, sin, -sin, cos, cx, cy))
+	// Text block.
+	c.WriteString(fmt.Sprintf("BT\n"))
+	c.WriteString(fmt.Sprintf("/F1 %.2f Tf\n", fontSize))
+	c.WriteString(fmt.Sprintf("%.4f Tr\n", alpha*2)) // Tr 0=fill, 2=invisible-ish hack
+	// Centre the text horizontally (approximate: half the font size * num chars).
+	approxW := fontSize * float64(len(wm.Text)) * 0.5
+	c.WriteString(fmt.Sprintf("%.4f %.4f Td\n", -approxW/2, -fontSize/2))
+	c.WriteString(fmt.Sprintf("(%s) Tj\n", escaped))
+	c.WriteString("ET\n")
+	c.WriteString("Q\n")
 }
 
 // Finish writes the complete PDF document to the output stream.

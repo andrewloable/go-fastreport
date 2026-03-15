@@ -38,6 +38,10 @@ func (e *ReportEngine) startPage(pg *reportpkg.ReportPage, isFirst bool) {
 
 	if e.preparedPages != nil {
 		e.preparedPages.AddPage(e.pageWidth, e.pageHeight, e.pageNo)
+		// Attach watermark metadata to the prepared page.
+		if pg.Watermark != nil && pg.Watermark.Enabled {
+			e.attachWatermark(pg)
+		}
 	}
 
 	// Page-level outline entry.
@@ -206,4 +210,33 @@ func (e *ReportEngine) runBands(bands []report.Base) error {
 		}
 	}
 	return nil
+}
+
+// attachWatermark converts the ReportPage watermark into a PreparedWatermark and
+// attaches it to the most recently added PreparedPage.
+func (e *ReportEngine) attachWatermark(pg *reportpkg.ReportPage) {
+	if e.preparedPages == nil {
+		return
+	}
+	cur := e.preparedPages.CurrentPage()
+	if cur == nil {
+		return
+	}
+	wm := pg.Watermark
+	pw := &preview.PreparedWatermark{
+		Enabled:           wm.Enabled,
+		Text:              wm.Text,
+		Font:              wm.Font,
+		TextColor:         wm.TextFillColor,
+		TextRotation:      preview.WatermarkTextRotation(wm.TextRotation),
+		ShowTextOnTop:     wm.ShowTextOnTop,
+		ImageBlobIdx:      -1,
+		ImageSize:         preview.WatermarkImageSize(wm.ImageSize),
+		ImageTransparency: wm.ImageTransparency,
+		ShowImageOnTop:    wm.ShowImageOnTop,
+	}
+	if len(wm.ImageData) > 0 {
+		pw.ImageBlobIdx = e.preparedPages.BlobStore.Add("__wm_"+pg.Name(), wm.ImageData)
+	}
+	cur.Watermark = pw
 }

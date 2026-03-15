@@ -275,3 +275,30 @@ func TestEncodeMatrix_NumericText(t *testing.T) {
 		t.Errorf("matrix too small: %d rows", len(matrix))
 	}
 }
+
+func TestEncode_NilForegroundColor_TreatedAsDefault(t *testing.T) {
+	// Setting ForegroundColor to nil → isDefaultColors returns true via the
+	// `if fg == nil || bg == nil { return true }` branch.
+	e := frqr.NewEncoder()
+	e.ForegroundColor = nil // triggers nil check
+	img, err := e.Encode("nil color test", 100)
+	if err != nil {
+		t.Fatalf("Encode with nil ForegroundColor: %v", err)
+	}
+	if img == nil {
+		t.Error("image should not be nil")
+	}
+}
+
+func TestEncodeMatrix_UnknownECLevel(t *testing.T) {
+	// Unknown EC level falls back to M in EncodeMatrix.
+	e := frqr.NewEncoder()
+	e.ECLevel = "Z" // unknown → default M
+	matrix, err := e.EncodeMatrix("test unknown ec")
+	if err != nil {
+		t.Fatalf("EncodeMatrix unknown EC: %v", err)
+	}
+	if len(matrix) == 0 {
+		t.Error("matrix should not be empty")
+	}
+}

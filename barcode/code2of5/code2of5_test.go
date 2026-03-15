@@ -136,3 +136,12 @@ func TestEncode_CustomColors(t *testing.T) {
 		t.Fatal("Encode with custom colors returned nil image")
 	}
 }
+
+func TestEncode_NonDigit_Error(t *testing.T) {
+	// Non-digit input → boomtwooffive.Encode returns error.
+	enc := code2of5.New()
+	_, err := enc.Encode("ABCD", 200, 100)
+	if err == nil {
+		t.Error("expected error for non-digit content in code2of5")
+	}
+}

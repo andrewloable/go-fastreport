@@ -1,6 +1,7 @@
 package report
 
 import (
+	"image/color"
 	"testing"
 
 	"github.com/andrewloable/go-fastreport/style"
@@ -390,3 +391,132 @@ func (r *testReader) ReadFloat(key string, def float32) float32 {
 
 func (r *testReader) NextChild() (string, bool) { return "", false }
 func (r *testReader) FinishChild() error         { return nil }
+
+// ── utils.go ──────────────────────────────────────────────────────────────────
+
+func TestFormatFloat(t *testing.T) {
+	got := FormatFloat(3.14)
+	if got == "" {
+		t.Error("FormatFloat returned empty string")
+	}
+}
+
+func TestParseFloat_Valid(t *testing.T) {
+	got := ParseFloat("12.5")
+	if got != 12.5 {
+		t.Errorf("ParseFloat(\"12.5\") = %v, want 12.5", got)
+	}
+}
+
+func TestParseFloat_Invalid(t *testing.T) {
+	got := ParseFloat("notanumber")
+	if got != 0 {
+		t.Errorf("ParseFloat(\"notanumber\") = %v, want 0", got)
+	}
+}
+
+func TestSplitComma(t *testing.T) {
+	parts := SplitComma("a, b, c")
+	if len(parts) != 3 || parts[0] != "a" || parts[1] != "b" || parts[2] != "c" {
+		t.Errorf("SplitComma = %v, want [a b c]", parts)
+	}
+}
+
+// ── ApplyStyle ────────────────────────────────────────────────────────────────
+
+func TestApplyStyle_Nil(t *testing.T) {
+	rc := NewReportComponentBase()
+	rc.ApplyStyle(nil) // should not panic
+}
+
+func TestApplyStyle_WithFill(t *testing.T) {
+	rc := NewReportComponentBase()
+	fillColor := color.RGBA{R: 255, G: 0, B: 0, A: 255}
+	entry := &style.StyleEntry{
+		ApplyFill: true,
+		FillColor: fillColor,
+	}
+	rc.ApplyStyle(entry)
+	sf, ok := rc.Fill().(*style.SolidFill)
+	if !ok {
+		t.Fatalf("Fill type = %T, want *style.SolidFill", rc.Fill())
+	}
+	if sf.Color != fillColor {
+		t.Errorf("Fill color = %v, want %v", sf.Color, fillColor)
+	}
+}
+
+func TestApplyStyle_WithBorder(t *testing.T) {
+	rc := NewReportComponentBase()
+	want := color.RGBA{R: 0, G: 128, B: 0, A: 255}
+	entry := &style.StyleEntry{
+		ApplyBorder: true,
+		BorderColor: want,
+	}
+	rc.ApplyStyle(entry)
+	b := rc.Border()
+	for i, l := range b.Lines {
+		if l.Color != want {
+			t.Errorf("Lines[%d].Color = %v, want %v", i, l.Color, want)
+		}
+	}
+}
+
+// ── Hyperlink Serialize/Deserialize ───────────────────────────────────────────
+
+func TestReportComponentBase_Serialize_Hyperlink(t *testing.T) {
+	rc := NewReportComponentBase()
+	h := &Hyperlink{
+		Kind:             "URL",
+		Expression:       "[URL]",
+		Value:            "https://example.com",
+		Target:           "_blank",
+		DetailPageName:   "detail",
+		DetailReportName: "report.frx",
+		ReportParameter:  "ID",
+	}
+	rc.SetHyperlink(h)
+	w := newTestWriter()
+	if err := rc.Serialize(w); err != nil {
+		t.Fatalf("Serialize error: %v", err)
+	}
+	checkStr := func(key, want string) {
+		t.Helper()
+		if v, ok := w.data[key]; !ok || v != want {
+			t.Errorf("key %q = %v, want %q", key, v, want)
+		}
+	}
+	checkStr("Hyperlink.Kind", "URL")
+	checkStr("Hyperlink.Expression", "[URL]")
+	checkStr("Hyperlink.Value", "https://example.com")
+	checkStr("Hyperlink.Target", "_blank")
+	checkStr("Hyperlink.DetailPageName", "detail")
+	checkStr("Hyperlink.DetailReportName", "report.frx")
+	checkStr("Hyperlink.ReportParameter", "ID")
+}
+
+func TestReportComponentBase_Deserialize_Hyperlink(t *testing.T) {
+	rc := NewReportComponentBase()
+	r := newTestReader(map[string]any{
+		"Hyperlink.Kind":             "URL",
+		"Hyperlink.Expression":       "[MyURL]",
+		"Hyperlink.Value":            "https://example.org",
+		"Hyperlink.Target":           "_self",
+		"Hyperlink.DetailPageName":   "pg2",
+		"Hyperlink.DetailReportName": "sub.frx",
+		"Hyperlink.ReportParameter":  "PID",
+	})
+	if err := rc.Deserialize(r); err != nil {
+		t.Fatalf("Deserialize error: %v", err)
+	}
+	h := rc.Hyperlink()
+	if h == nil {
+		t.Fatal("Hyperlink should not be nil after deserialize with values")
+	}
+	if h.Kind != "URL" {
+		t.Errorf("Kind = %q, want URL", h.Kind)
+	}
+	if h.Expression != "[MyURL]" {
+		t.Errorf("Expression = %q, want [MyURL]", h.Expression)
+	}
+}

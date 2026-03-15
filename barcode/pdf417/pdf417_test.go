@@ -96,3 +96,26 @@ func TestEncode_LongText(t *testing.T) {
 		t.Error("image width should be 400")
 	}
 }
+
+func TestEncode_ZeroSecurityLevel_UsesDefault(t *testing.T) {
+	// SecurityLevel=0 → covered by `if sl == 0 { sl = 2 }` branch.
+	e := pdf417.New()
+	e.SecurityLevel = 0
+	img, err := e.Encode("zero security level", 300, 100)
+	if err != nil {
+		t.Fatalf("Encode with SecurityLevel=0: %v", err)
+	}
+	if img == nil {
+		t.Error("image should not be nil")
+	}
+}
+
+func TestEncode_SecurityLevelTooHigh_Error(t *testing.T) {
+	// SecurityLevel=9 is out of range (0–8 valid) → boombuler pdf417 returns error.
+	e := pdf417.New()
+	e.SecurityLevel = 9
+	_, err := e.Encode("overflow", 300, 100)
+	if err == nil {
+		t.Error("expected error for SecurityLevel=9")
+	}
+}

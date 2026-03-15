@@ -4,6 +4,7 @@ import (
 	"bytes"
 	stdimage "image"
 	stdcolor "image/color"
+	"image/jpeg"
 	"image/png"
 	"strings"
 	"testing"
@@ -182,6 +183,19 @@ func TestExporter_PictureObject(t *testing.T) {
 	if !strings.Contains(out, " Do ") && !strings.Contains(out, " Do\n") {
 		t.Error("expected 'Do' operator in PDF content stream for image")
 	}
+}
+
+// buildJPEG creates a w×h solid white JPEG using Go's standard encoder.
+func buildJPEG(w, h int) []byte {
+	img := stdimage.NewRGBA(stdimage.Rect(0, 0, w, h))
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			img.SetRGBA(x, y, stdcolor.RGBA{R: 255, G: 255, B: 255, A: 255})
+		}
+	}
+	var buf bytes.Buffer
+	_ = jpeg.Encode(&buf, img, nil)
+	return buf.Bytes()
 }
 
 // buildPNG creates a w×h solid white RGB PNG using Go's standard encoder.

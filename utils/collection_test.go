@@ -195,3 +195,39 @@ func TestCollectionSetOrderSamePos(t *testing.T) {
 		t.Errorf("SetOrder same position changed order: %v, %v", c.Get(0), c.Get(1))
 	}
 }
+
+func TestCollectionSetOrder_NotFound(t *testing.T) {
+	c := &utils.Collection[int]{}
+	c.Add(1)
+	c.Add(2)
+	// item 99 not in collection → idx < 0 → no-op
+	c.SetOrder(99, 0, eqInt)
+	if c.Get(0) != 1 || c.Get(1) != 2 {
+		t.Errorf("SetOrder not-found changed collection: %v, %v", c.Get(0), c.Get(1))
+	}
+}
+
+func TestCollectionSetOrder_OrderTooLarge(t *testing.T) {
+	c := &utils.Collection[int]{}
+	c.Add(1)
+	c.Add(2)
+	c.Add(3)
+	// Move item 1 to order=99 → clamp to len
+	c.SetOrder(1, 99, eqInt)
+	// item 1 should now be at the end
+	if c.Get(c.Len()-1) != 1 {
+		t.Errorf("SetOrder large order: last item = %v, want 1", c.Get(c.Len()-1))
+	}
+}
+
+func TestCollectionSetOrder_NegativeOrder(t *testing.T) {
+	c := &utils.Collection[int]{}
+	c.Add(1)
+	c.Add(2)
+	c.Add(3)
+	// Move item 3 to order=-1 → clamp to 0
+	c.SetOrder(3, -1, eqInt)
+	if c.Get(0) != 3 {
+		t.Errorf("SetOrder negative order: first item = %v, want 3", c.Get(0))
+	}
+}

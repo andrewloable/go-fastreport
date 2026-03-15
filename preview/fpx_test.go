@@ -2,12 +2,19 @@ package preview_test
 
 import (
 	"bytes"
+	"encoding/gob"
+	"errors"
 	"image/color"
 	"testing"
 
 	"github.com/andrewloable/go-fastreport/preview"
 	"github.com/andrewloable/go-fastreport/style"
 )
+
+// failWriter rejects all writes.
+type failWriter struct{}
+
+func (f *failWriter) Write(p []byte) (int, error) { return 0, errors.New("write failed") }
 
 func buildTestPages() *preview.PreparedPages {
 	pp := preview.New()
@@ -215,3 +222,67 @@ func TestFPX_BadMagic(t *testing.T) {
 		t.Error("Load with bad magic: expected error, got nil")
 	}
 }
+
+func TestFPX_Save_Error(t *testing.T) {
+	pp := preview.New()
+	err := pp.Save(&failWriter{})
+	if err == nil {
+		t.Error("Save with failing writer: expected error")
+	}
+}
+
+func TestFPX_Load_WrongMagic(t *testing.T) {
+	// Encode a gob-valid struct with just a Magic field containing a wrong value.
+	// Gob matches fields by name, so fpxFile.Magic will be set to "WRONG" while
+	// all other fields remain at their zero values — triggering the magic check.
+	type fakeHeader struct {
+		Magic string
+	}
+	var buf bytes.Buffer
+	if err := gob.NewEncoder(&buf).Encode(fakeHeader{Magic: "WRONG_MAGIC_STRING"}); err != nil {
+		t.Fatalf("gob encode: %v", err)
+	}
+	_, err := preview.Load(&buf)
+	if err == nil {
+		t.Error("Load with wrong magic: expected error, got nil")
+	}
+}
+
+func TestFPX_BorderWithLines_RoundTrip(t *testing.T) {
+	pp := preview.New()
+	pp.AddPage(595, 842, 1)
+	_ = pp.AddBand(&preview.PreparedBand{
+		Name:   "b",
+		Top:    0,
+		Height: 20,
+		Objects: []preview.PreparedObject{
+			{
+				Kind: preview.ObjectTypeText,
+				Text: "bordered",
+				Border: style.Border{
+					Lines: [4]*style.BorderLine{
+						{Color: color.RGBA{0, 0, 0, 255}, Style: style.LineStyleSolid, Width: 1},
+						nil, nil, nil,
+					},
+				},
+			},
+		},
+	})
+
+	var buf bytes.Buffer
+	if err := pp.Save(&buf); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	loaded, err := preview.Load(&buf)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	line := loaded.GetPage(0).Bands[0].Objects[0].Border.Lines[0]
+	if line == nil {
+		t.Fatal("border line 0 should not be nil after round-trip")
+	}
+	if line.Width != 1 {
+		t.Errorf("line.Width = %v, want 1", line.Width)
+	}
+}
+

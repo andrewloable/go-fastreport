@@ -118,3 +118,20 @@ func TestEncode_CustomColors(t *testing.T) {
 		t.Fatal("Encode with custom colors returned nil image")
 	}
 }
+
+func TestEncode_WrongLength_Error(t *testing.T) {
+	// 5-digit code: not empty, dimensions ok, but boomean.Encode rejects wrong length.
+	enc := ean.New()
+	_, err := enc.Encode("12345", 200, 100)
+	if err == nil {
+		t.Error("expected error from boomean for 5-digit code (wrong length)")
+	}
+}
+
+func TestValidate_NonDigits_CorrectLength_Error(t *testing.T) {
+	// 7-char string with non-digit → passes length check, fails digit check.
+	enc := ean.New()
+	if err := enc.Validate("123456A"); err == nil {
+		t.Error("expected error for non-digit char in 7-char code")
+	}
+}

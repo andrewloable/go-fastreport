@@ -120,3 +120,29 @@ func TestEncode_LongText(t *testing.T) {
 		t.Error("image width should be 300")
 	}
 }
+
+func TestEncode_ZeroECC_UsesDefault(t *testing.T) {
+	// MinECCPercent = 0 → covered by `if ecc <= 0 { ecc = 23 }` branch.
+	e := aztec.New()
+	e.MinECCPercent = 0
+	img, err := e.Encode("test", 100)
+	if err != nil {
+		t.Fatalf("Encode with zero ECC: %v", err)
+	}
+	if img == nil {
+		t.Error("image should not be nil")
+	}
+}
+
+func TestEncodeMatrix_ZeroECC_UsesDefault(t *testing.T) {
+	// Same branch in EncodeMatrix.
+	e := aztec.New()
+	e.MinECCPercent = 0
+	matrix, err := e.EncodeMatrix("test")
+	if err != nil {
+		t.Fatalf("EncodeMatrix with zero ECC: %v", err)
+	}
+	if len(matrix) == 0 {
+		t.Error("matrix should not be empty")
+	}
+}

@@ -66,3 +66,85 @@ func TestShowReprintHeaders_NoPanic(t *testing.T) {
 	// Empty list — should be a no-op.
 	e.ShowReprintHeaders()
 }
+
+func TestAddReprintDataHeader_NilSafe(t *testing.T) {
+	e := newReprintEngine(t)
+	e.AddReprintDataHeader(nil) // should not panic
+	if e.ReprintHeaderCount() != 0 {
+		t.Errorf("nil AddReprintDataHeader should not add entry")
+	}
+}
+
+func TestAddReprintDataHeader_Registers(t *testing.T) {
+	e := newReprintEngine(t)
+	dh := band.NewDataHeaderBand()
+	dh.SetName("DH")
+	dh.SetHeight(10)
+	dh.SetVisible(true)
+	e.AddReprintDataHeader(dh)
+	if e.ReprintHeaderCount() != 1 {
+		t.Errorf("ReprintHeaderCount = %d, want 1", e.ReprintHeaderCount())
+	}
+}
+
+func TestAddReprintGroupHeader_NilSafe(t *testing.T) {
+	e := newReprintEngine(t)
+	e.AddReprintGroupHeader(nil) // should not panic
+}
+
+func TestAddReprintGroupHeader_Registers(t *testing.T) {
+	e := newReprintEngine(t)
+	gh := band.NewGroupHeaderBand()
+	gh.SetName("GH")
+	gh.SetHeight(10)
+	e.AddReprintGroupHeader(gh)
+	if e.ReprintHeaderCount() != 1 {
+		t.Errorf("ReprintHeaderCount = %d, want 1 after AddReprintGroupHeader", e.ReprintHeaderCount())
+	}
+}
+
+func TestAddReprintDataFooter_NilSafe(t *testing.T) {
+	e := newReprintEngine(t)
+	e.AddReprintDataFooter(nil) // should not panic
+}
+
+func TestAddReprintDataFooter_Registers(t *testing.T) {
+	e := newReprintEngine(t)
+	df := band.NewDataFooterBand()
+	df.SetName("DF")
+	df.SetHeight(10)
+	e.AddReprintDataFooter(df)
+	if e.ReprintFooterCount() != 1 {
+		t.Errorf("ReprintFooterCount = %d, want 1 after AddReprintDataFooter", e.ReprintFooterCount())
+	}
+}
+
+func TestAddReprintGroupFooter_NilSafe(t *testing.T) {
+	e := newReprintEngine(t)
+	e.AddReprintGroupFooter(nil) // should not panic
+}
+
+func TestAddReprintGroupFooter_Registers(t *testing.T) {
+	e := newReprintEngine(t)
+	gf := band.NewGroupFooterBand()
+	gf.SetName("GF")
+	gf.SetHeight(10)
+	e.AddReprintGroupFooter(gf)
+	if e.ReprintFooterCount() != 1 {
+		t.Errorf("ReprintFooterCount = %d, want 1 after AddReprintGroupFooter", e.ReprintFooterCount())
+	}
+}
+
+func TestReprintHeaderCount(t *testing.T) {
+	e := newReprintEngine(t)
+	if e.ReprintHeaderCount() != 0 {
+		t.Errorf("initial ReprintHeaderCount = %d, want 0", e.ReprintHeaderCount())
+	}
+	dh := band.NewDataHeaderBand()
+	dh.SetName("DH")
+	dh.SetHeight(10)
+	e.AddReprintDataHeader(dh)
+	if e.ReprintHeaderCount() != 1 {
+		t.Errorf("ReprintHeaderCount after add = %d, want 1", e.ReprintHeaderCount())
+	}
+}

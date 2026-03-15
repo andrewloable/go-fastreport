@@ -2,6 +2,7 @@ package utils
 
 import (
 	"bytes"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -91,5 +92,48 @@ func TestUnzipStreamInvalidInput(t *testing.T) {
 	err := UnzipStream(&out, strings.NewReader("garbage"))
 	if err == nil {
 		t.Fatal("expected error for invalid deflate stream, got nil")
+	}
+}
+
+// errReader returns an error after the specified number of bytes.
+type errReader struct {
+	data []byte
+	pos  int
+	fail int // fail after this many bytes read
+}
+
+func (r *errReader) Read(p []byte) (int, error) {
+	if r.pos >= r.fail {
+		return 0, fmt.Errorf("simulated read error")
+	}
+	n := copy(p, r.data[r.pos:])
+	if r.pos+n > r.fail {
+		n = r.fail - r.pos
+	}
+	r.pos += n
+	if r.pos >= r.fail {
+		return n, fmt.Errorf("simulated read error")
+	}
+	return n, nil
+}
+
+func TestZipStreamReaderError(t *testing.T) {
+	// errReader will error after 0 bytes, so io.Copy from it will fail.
+	var out bytes.Buffer
+	er := &errReader{data: []byte("some data"), fail: 0}
+	err := ZipStream(&out, er)
+	if err == nil {
+		t.Fatal("expected error from ZipStream with failing reader, got nil")
+	}
+}
+
+func TestZipDataReaderError(t *testing.T) {
+	// ZipData uses ZipStream internally; this tests the error propagation.
+	// We can't inject an errReader into ZipData directly, so test via ZipStream.
+	var out bytes.Buffer
+	er := &errReader{data: []byte("hello world"), fail: 3}
+	err := ZipStream(&out, er)
+	if err == nil {
+		t.Fatal("expected error from ZipStream with partially-failing reader")
 	}
 }

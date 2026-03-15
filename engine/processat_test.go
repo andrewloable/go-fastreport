@@ -61,6 +61,28 @@ func TestAddStateHandler_PersistentCallback(t *testing.T) {
 	}
 }
 
+func TestAddRepeatingDeferredHandler_FiresOnEveryOccurrence(t *testing.T) {
+	e := newProcessAtEngine(t)
+	count := 0
+	e.AddRepeatingDeferredHandler(engine.EngineStatePageFinished, func() { count++ })
+	e.OnStateChanged(nil, engine.EngineStatePageFinished)
+	e.OnStateChanged(nil, engine.EngineStatePageFinished)
+	e.OnStateChanged(nil, engine.EngineStatePageFinished)
+	if count != 3 {
+		t.Errorf("repeating handler fired %d times, want 3", count)
+	}
+}
+
+func TestAddRepeatingDeferredHandler_DoesNotFireOnOtherState(t *testing.T) {
+	e := newProcessAtEngine(t)
+	count := 0
+	e.AddRepeatingDeferredHandler(engine.EngineStatePageFinished, func() { count++ })
+	e.OnStateChanged(nil, engine.EngineStateReportFinished)
+	if count != 0 {
+		t.Errorf("repeating handler should not fire on other state, count = %d", count)
+	}
+}
+
 func TestClearDeferredHandlers_RemovesAll(t *testing.T) {
 	e := newProcessAtEngine(t)
 	fired := false

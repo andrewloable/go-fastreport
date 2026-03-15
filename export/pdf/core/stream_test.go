@@ -199,3 +199,4 @@ func TestZlibCompress_Empty(t *testing.T) {
 		t.Fatalf("expected empty decompressed output, got %q", got)
 	}
 }
+

@@ -212,3 +212,48 @@ func TestFileStorageService_AbsolutePathIgnoresBase(t *testing.T) {
 func TestFileStorageService_ImplementsInterface(t *testing.T) {
 	var _ utils.StorageService = (*utils.FileStorageService)(nil)
 }
+
+func TestFileStorageService_Save_MkdirAllError(t *testing.T) {
+	dir := t.TempDir()
+	// Create a file where a subdirectory would be needed.
+	blockPath := filepath.Join(dir, "blocker")
+	if err := os.WriteFile(blockPath, []byte("x"), 0o644); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	fs := utils.NewFileStorageService(dir)
+	// Try to save inside "blocker" as if it were a directory.
+	err := fs.Save(filepath.Join("blocker", "report.frx"), []byte("data"))
+	if err == nil {
+		t.Error("expected MkdirAll error when path component is a file, got nil")
+	}
+}
+
+func TestFileStorageService_Writer_MkdirAllError(t *testing.T) {
+	dir := t.TempDir()
+	blockPath := filepath.Join(dir, "blocker")
+	if err := os.WriteFile(blockPath, []byte("x"), 0o644); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	fs := utils.NewFileStorageService(dir)
+	_, err := fs.Writer(filepath.Join("blocker", "out.frx"))
+	if err == nil {
+		t.Error("expected MkdirAll error when path component is a file, got nil")
+	}
+}
+
+func TestFileStorageService_Reader_MissingFile(t *testing.T) {
+	dir := t.TempDir()
+	fs := utils.NewFileStorageService(dir)
+	_, err := fs.Reader("nonexistent.frx")
+	if err == nil {
+		t.Error("expected error for missing file, got nil")
+	}
+}
+
+func TestMemoryStorageService_Reader_Missing(t *testing.T) {
+	m := utils.NewMemoryStorageService()
+	_, err := m.Reader("missing.frx")
+	if err == nil {
+		t.Error("expected error for missing key in Reader, got nil")
+	}
+}

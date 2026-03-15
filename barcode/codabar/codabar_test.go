@@ -102,3 +102,12 @@ func TestEncode_CustomColors(t *testing.T) {
 		t.Fatal("Encode with custom colors returned nil image")
 	}
 }
+
+func TestEncode_InvalidStartStop_Error(t *testing.T) {
+	// Content "12345" has no valid Codabar start/stop characters → boombuler error.
+	enc := codabar.New()
+	_, err := enc.Encode("12345", 200, 100)
+	if err == nil {
+		t.Error("expected error for content without valid Codabar start/stop chars")
+	}
+}

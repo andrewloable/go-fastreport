@@ -8,6 +8,7 @@ import (
 
 	"github.com/andrewloable/go-fastreport/export"
 	"github.com/andrewloable/go-fastreport/preview"
+	"github.com/andrewloable/go-fastreport/report"
 )
 
 // ── ParsePageNumbers ───────────────────────────────────────────────────────────
@@ -396,5 +397,344 @@ func TestRound(t *testing.T) {
 	}
 	if export.Round(2.5, 0) != 3 {
 		t.Errorf("Round(2.5, 0) = %v", export.Round(2.5, 0))
+	}
+}
+
+// ── ParsePageNumbers edge cases ───────────────────────────────────────────────
+
+func TestParsePageNumbers_EmptyPart_TrailingComma(t *testing.T) {
+	// "1,,3" has an empty middle part → the `if part == ""` branch.
+	result, err := export.ParsePageNumbers("1,,3", 10)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if fmt.Sprint(result) != "[0 2]" {
+		t.Errorf("got %v, want [0 2]", result)
+	}
+}
+
+func TestParsePageNumbers_ReversedRange(t *testing.T) {
+	// "5-2" → reversed; should be treated as "2-5".
+	result, err := export.ParsePageNumbers("5-2", 10)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if fmt.Sprint(result) != "[1 2 3 4]" {
+		t.Errorf("got %v, want [1 2 3 4]", result)
+	}
+}
+
+func TestParsePageNumbers_InvalidRangeStart(t *testing.T) {
+	_, err := export.ParsePageNumbers("x-3", 10)
+	if err == nil {
+		t.Error("expected error for invalid range start")
+	}
+}
+
+func TestParsePageNumbers_InvalidRangeEnd(t *testing.T) {
+	_, err := export.ParsePageNumbers("1-z", 10)
+	if err == nil {
+		t.Error("expected error for invalid range end")
+	}
+}
+
+// ── preparePageIndices edge cases ─────────────────────────────────────────────
+
+func TestExport_CustomPageNumbers_Empty_AllPages(t *testing.T) {
+	// PageRangeCustom with empty PageNumbers → ParsePageNumbers returns nil → all pages.
+	pp := buildPreparedPages(3, []string{"B"})
+	base := export.NewExportBase()
+	base.PageRange = export.PageRangeCustom
+	base.PageNumbers = "" // empty → all pages
+	rec := newRecorder(new(bytes.Buffer))
+	if err := base.Export(pp, rec.w, rec); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(rec.pageBegin) != 3 {
+		t.Errorf("expected 3 pages, got %d", len(rec.pageBegin))
+	}
+}
+
+func TestExport_CustomPageNumbers_InvalidError(t *testing.T) {
+	// PageRangeCustom with invalid PageNumbers → preparePageIndices error.
+	pp := buildPreparedPages(3, []string{"B"})
+	base := export.NewExportBase()
+	base.PageRange = export.PageRangeCustom
+	base.PageNumbers = "bad"
+	rec := newRecorder(new(bytes.Buffer))
+	err := base.Export(pp, rec.w, rec)
+	if err == nil {
+		t.Error("expected error for invalid page numbers")
+	}
+}
+
+// ── Export error paths ────────────────────────────────────────────────────────
+
+type pageBeginErrExporter struct {
+	export.NoopExporter
+}
+
+func (e *pageBeginErrExporter) ExportPageBegin(_ *preview.PreparedPage) error {
+	return fmt.Errorf("pageBegin error")
+}
+
+type pageEndErrExporter struct {
+	export.NoopExporter
+}
+
+func (e *pageEndErrExporter) ExportPageEnd(_ *preview.PreparedPage) error {
+	return fmt.Errorf("pageEnd error")
+}
+
+type finishErrExporter struct {
+	export.NoopExporter
+}
+
+func (e *finishErrExporter) Finish() error {
+	return fmt.Errorf("finish error")
+}
+
+func TestExport_PageBeginError(t *testing.T) {
+	pp := buildPreparedPages(1, []string{"B"})
+	base := export.NewExportBase()
+	err := base.Export(pp, new(bytes.Buffer), &pageBeginErrExporter{})
+	if err == nil || !strings.Contains(err.Error(), "pageBegin") {
+		t.Errorf("expected pageBegin error, got %v", err)
+	}
+}
+
+func TestExport_PageEndError(t *testing.T) {
+	pp := buildPreparedPages(1, []string{"B"})
+	base := export.NewExportBase()
+	err := base.Export(pp, new(bytes.Buffer), &pageEndErrExporter{})
+	if err == nil || !strings.Contains(err.Error(), "pageEnd") {
+		t.Errorf("expected pageEnd error, got %v", err)
+	}
+}
+
+func TestExport_FinishError(t *testing.T) {
+	pp := buildPreparedPages(1, []string{"B"})
+	base := export.NewExportBase()
+	err := base.Export(pp, new(bytes.Buffer), &finishErrExporter{})
+	if err == nil || !strings.Contains(err.Error(), "finish") {
+		t.Errorf("expected finish error, got %v", err)
+	}
+}
+
+// ── Pages() ───────────────────────────────────────────────────────────────────
+
+func TestExportBase_Pages(t *testing.T) {
+	pp := buildPreparedPages(3, []string{"B"})
+	base := export.NewExportBase()
+	rec := newRecorder(new(bytes.Buffer))
+	if err := base.Export(pp, rec.w, rec); err != nil {
+		t.Fatalf("Export: %v", err)
+	}
+	pages := base.Pages()
+	if len(pages) != 3 {
+		t.Errorf("Pages() len = %d, want 3", len(pages))
+	}
+}
+
+// ── NoopExporter ──────────────────────────────────────────────────────────────
+
+func TestNoopExporter_AllMethods(t *testing.T) {
+	n := export.NoopExporter{}
+	if err := n.Start(); err != nil {
+		t.Errorf("Start: %v", err)
+	}
+	if err := n.ExportPageBegin(nil); err != nil {
+		t.Errorf("ExportPageBegin: %v", err)
+	}
+	if err := n.ExportBand(nil); err != nil {
+		t.Errorf("ExportBand: %v", err)
+	}
+	if err := n.ExportPageEnd(nil); err != nil {
+		t.Errorf("ExportPageEnd: %v", err)
+	}
+	if err := n.Finish(); err != nil {
+		t.Errorf("Finish: %v", err)
+	}
+}
+
+// ── ExportsOptions ────────────────────────────────────────────────────────────
+
+func TestExportsOptions_IsAllowed_EmptyList(t *testing.T) {
+	o := export.NewExportsOptions()
+	if !o.IsAllowed(export.ExportFormatPDF) {
+		t.Error("empty AllowedExports should allow all formats")
+	}
+}
+
+func TestExportsOptions_IsAllowed_WithList(t *testing.T) {
+	o := export.NewExportsOptions()
+	o.AllowedExports = []export.ExportFormat{export.ExportFormatHTML}
+	if !o.IsAllowed(export.ExportFormatHTML) {
+		t.Error("HTML should be allowed")
+	}
+	if o.IsAllowed(export.ExportFormatPDF) {
+		t.Error("PDF should not be allowed")
+	}
+}
+
+func TestExportsOptions_IsHidden(t *testing.T) {
+	o := export.NewExportsOptions()
+	o.HideExports = []export.ExportFormat{export.ExportFormatImage}
+	if !o.IsHidden(export.ExportFormatImage) {
+		t.Error("Image should be hidden")
+	}
+	if o.IsHidden(export.ExportFormatPDF) {
+		t.Error("PDF should not be hidden")
+	}
+}
+
+// mockWriter implements report.Writer for testing Serialize.
+type mockWriter struct {
+	strs  map[string]string
+	bools map[string]bool
+}
+
+func newMockWriter() *mockWriter {
+	return &mockWriter{strs: make(map[string]string), bools: make(map[string]bool)}
+}
+
+func (w *mockWriter) WriteStr(name, value string)              { w.strs[name] = value }
+func (w *mockWriter) WriteInt(name string, value int)           {}
+func (w *mockWriter) WriteBool(name string, value bool)         { w.bools[name] = value }
+func (w *mockWriter) WriteFloat(name string, value float32)     {}
+func (w *mockWriter) WriteObject(obj report.Serializable) error { return nil }
+func (w *mockWriter) WriteObjectNamed(_ string, _ report.Serializable) error { return nil }
+
+// mockReader implements report.Reader for testing Deserialize.
+type mockReader struct {
+	strs  map[string]string
+	bools map[string]bool
+}
+
+func newMockReader(strs map[string]string, bools map[string]bool) *mockReader {
+	return &mockReader{strs: strs, bools: bools}
+}
+
+func (r *mockReader) ReadStr(name, def string) string {
+	if v, ok := r.strs[name]; ok {
+		return v
+	}
+	return def
+}
+func (r *mockReader) ReadInt(name string, def int) int       { return def }
+func (r *mockReader) ReadBool(name string, def bool) bool {
+	if v, ok := r.bools[name]; ok {
+		return v
+	}
+	return def
+}
+func (r *mockReader) ReadFloat(name string, def float32) float32 { return def }
+func (r *mockReader) NextChild() (string, bool)                  { return "", false }
+func (r *mockReader) FinishChild() error                         { return nil }
+
+func TestExportsOptions_Serialize(t *testing.T) {
+	o := export.NewExportsOptions()
+	o.DefaultFormat = export.ExportFormatHTML // not PDF → should be written
+	o.ShowProgress = false                    // not default → should be written
+	o.OpenAfterExport = true                  // not default → should be written
+
+	w := newMockWriter()
+	o.Serialize(w)
+
+	if w.strs["ExportsOptions.DefaultFormat"] != "HTML" {
+		t.Errorf("DefaultFormat not serialized, got %q", w.strs["ExportsOptions.DefaultFormat"])
+	}
+	if w.bools["ExportsOptions.ShowProgress"] != false {
+		t.Error("ShowProgress not serialized")
+	}
+	if w.bools["ExportsOptions.OpenAfterExport"] != true {
+		t.Error("OpenAfterExport not serialized")
+	}
+}
+
+func TestExportsOptions_Deserialize(t *testing.T) {
+	o := export.NewExportsOptions()
+	r := newMockReader(
+		map[string]string{"ExportsOptions.DefaultFormat": "Image"},
+		map[string]bool{"ExportsOptions.ShowProgress": false, "ExportsOptions.OpenAfterExport": true},
+	)
+	o.Deserialize(r)
+
+	if o.DefaultFormat != export.ExportFormatImage {
+		t.Errorf("DefaultFormat = %q, want Image", o.DefaultFormat)
+	}
+	if o.ShowProgress {
+		t.Error("ShowProgress should be false")
+	}
+	if !o.OpenAfterExport {
+		t.Error("OpenAfterExport should be true")
+	}
+}
+
+// ── Utils — missing branches ──────────────────────────────────────────────────
+
+func TestPointsToPixels(t *testing.T) {
+	px := export.PointsToPixels(72)
+	if px < 95.9 || px > 96.1 {
+		t.Errorf("PointsToPixels(72) = %v, want ~96", px)
+	}
+}
+
+func TestPixelsToInches(t *testing.T) {
+	in := export.PixelsToInches(96)
+	if in < 0.99 || in > 1.01 {
+		t.Errorf("PixelsToInches(96) = %v, want ~1.0", in)
+	}
+}
+
+func TestInchesToPixels(t *testing.T) {
+	px := export.InchesToPixels(1)
+	if px < 95.9 || px > 96.1 {
+		t.Errorf("InchesToPixels(1) = %v, want ~96", px)
+	}
+}
+
+func TestHTMLString_NBSP(t *testing.T) {
+	// \u00a0 non-breaking space → "&nbsp;"
+	got := export.HTMLString("a\u00a0b")
+	if !strings.Contains(got, "&nbsp;") {
+		t.Errorf("HTMLString with NBSP: got %q, want &nbsp; entity", got)
+	}
+}
+
+func TestXMLString_CR_Tab(t *testing.T) {
+	got := export.XMLString("a\rb\tc")
+	if !strings.Contains(got, "&#xD;") {
+		t.Errorf("XMLString CR not escaped: %q", got)
+	}
+	if !strings.Contains(got, "&#x9;") {
+		t.Errorf("XMLString TAB not escaped: %q", got)
+	}
+}
+
+func TestHTMLColorToRGB_ShortForm(t *testing.T) {
+	// 3-char short form "#FFF" → expands to "FFFFFF" → white
+	r, g, b, ok := export.HTMLColorToRGB("#FFF")
+	if !ok {
+		t.Fatal("expected ok=true for #FFF")
+	}
+	if r != 255 || g != 255 || b != 255 {
+		t.Errorf("got %d %d %d, want 255 255 255", r, g, b)
+	}
+}
+
+func TestHTMLColorToRGB_ShortForm_Invalid(t *testing.T) {
+	// 3-char with invalid hex → err in Sscanf
+	_, _, _, ok := export.HTMLColorToRGB("#GGG")
+	if ok {
+		t.Error("invalid 3-char color should return ok=false")
+	}
+}
+
+func TestHTMLColorToRGB_WrongLength(t *testing.T) {
+	// 5-char → not case-3 or case-6 → default return (0,0,0,false)
+	_, _, _, ok := export.HTMLColorToRGB("#12345")
+	if ok {
+		t.Error("5-char color should return ok=false")
 	}
 }

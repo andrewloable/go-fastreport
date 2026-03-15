@@ -3,6 +3,7 @@ package serial
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"strings"
 	"testing"
 
@@ -697,5 +698,384 @@ func TestWriteObjectPropagatesSerializeErrorViaInterface(t *testing.T) {
 	err := w.WriteObject(&errObj{})
 	if err == nil {
 		t.Error("expected error propagated from WriteObject")
+	}
+}
+
+// ── NewReaderWithPassword ──────────────────────────────────────────────────────
+
+func TestNewReaderWithPassword_PlainXML(t *testing.T) {
+	src := `<Report Name="test"/>`
+	r, encrypted, err := NewReaderWithPassword(strings.NewReader(src), "anypassword")
+	if err != nil {
+		t.Fatalf("NewReaderWithPassword: %v", err)
+	}
+	if encrypted {
+		t.Error("expected encrypted=false for plain XML")
+	}
+	typeName, ok := r.ReadObjectHeader()
+	if !ok || typeName != "Report" {
+		t.Errorf("ReadObjectHeader: got %q ok=%v, want Report true", typeName, ok)
+	}
+	if got := r.ReadStr("Name", ""); got != "test" {
+		t.Errorf("Name = %q, want test", got)
+	}
+}
+
+// ── ReadObjectHeader — CharData token skipping ─────────────────────────────────
+
+func TestReadObjectHeaderSkipsCharData(t *testing.T) {
+	// Whitespace before the root element is CharData — should be skipped.
+	src := "   \n  <Root Attr=\"val\"/>"
+	r := NewReader(strings.NewReader(src))
+	typeName, ok := r.ReadObjectHeader()
+	if !ok || typeName != "Root" {
+		t.Errorf("got typeName=%q ok=%v, want Root true", typeName, ok)
+	}
+	if got := r.ReadStr("Attr", ""); got != "val" {
+		t.Errorf("Attr = %q, want val", got)
+	}
+}
+
+// ── NextChild — CharData skipping ─────────────────────────────────────────────
+
+func TestNextChildSkipsCharData(t *testing.T) {
+	// Text content between elements should be skipped.
+	src := "<Parent>  <Child1/>  <Child2/>  </Parent>"
+	r := NewReader(strings.NewReader(src))
+	r.ReadObjectHeader() // <Parent>
+
+	names := []string{}
+	for {
+		name, ok := r.NextChild()
+		if !ok {
+			break
+		}
+		names = append(names, name)
+		if err := r.FinishChild(); err != nil {
+			t.Fatalf("FinishChild: %v", err)
+		}
+	}
+	if len(names) != 2 {
+		t.Errorf("got %d children %v, want 2", len(names), names)
+	}
+}
+
+// ── SkipElement — nested elements and error path ──────────────────────────────
+
+func TestSkipElement_NoChildren(t *testing.T) {
+	// Skip a self-closing element — skipRemainingContent immediately finds end.
+	src := `<Parent><Empty/><Keep Name="k"/></Parent>`
+	r := NewReader(strings.NewReader(src))
+	r.ReadObjectHeader() // <Parent>
+
+	name, ok := r.NextChild()
+	if !ok || name != "Empty" {
+		t.Fatalf("expected Empty, got %q ok=%v", name, ok)
+	}
+	if err := r.SkipElement(); err != nil {
+		t.Fatalf("SkipElement Empty: %v", err)
+	}
+	if err := r.FinishChild(); err != nil {
+		t.Fatalf("FinishChild Empty: %v", err)
+	}
+
+	name2, ok2 := r.NextChild()
+	if !ok2 || name2 != "Keep" {
+		t.Errorf("expected Keep, got %q ok=%v", name2, ok2)
+	}
+	if err := r.FinishChild(); err != nil {
+		t.Fatalf("FinishChild Keep: %v", err)
+	}
+}
+
+func TestSkipElement_ErrorPath(t *testing.T) {
+	// Use a pipe that closes with error mid-stream, so skipRemainingContent fails.
+	pr, pw := io.Pipe()
+	go func() {
+		pw.Write([]byte(`<Parent><Child>`)) //nolint:errcheck
+		pw.CloseWithError(fmt.Errorf("stream closed"))
+	}()
+
+	r := NewReader(pr)
+	_, ok := r.ReadObjectHeader() // <Parent>
+	if !ok {
+		t.Skip("ReadObjectHeader failed on pipe")
+	}
+	name, ok := r.NextChild()
+	if !ok || name != "Child" {
+		t.Skipf("didn't get Child: %q ok=%v", name, ok)
+	}
+	err := r.SkipElement()
+	if err == nil {
+		t.Error("expected error from SkipElement on truncated stream, got nil")
+	}
+}
+
+// ── FinishChild — done=true path (end-element already consumed) ────────────────
+
+func TestFinishChild_DonePath(t *testing.T) {
+	// When NextChild returns ("", false), r.done=true. Subsequent FinishChild
+	// should not try to skip remaining content (already consumed end tag).
+	src := `<Parent><Child Label="x"/></Parent>`
+	r := NewReader(strings.NewReader(src))
+	r.ReadObjectHeader() // <Parent>
+
+	name, ok := r.NextChild()
+	if !ok || name != "Child" {
+		t.Fatalf("expected Child: %q ok=%v", name, ok)
+	}
+
+	// Exhaust children — this reads </Parent> and sets done=true.
+	_, ok2 := r.NextChild()
+	if ok2 {
+		t.Fatal("expected no more children")
+	}
+
+	// FinishChild should use the done=true fast-path (no skipRemainingContent).
+	if err := r.FinishChild(); err != nil {
+		t.Fatalf("FinishChild done path: %v", err)
+	}
+}
+
+func TestFinishChild_SkippedPath(t *testing.T) {
+	// When SkipElement is called first, r.skipped=true. FinishChild should
+	// restore state without calling skipRemainingContent again.
+	src := `<Parent><Child><Deep/></Child><Next/></Parent>`
+	r := NewReader(strings.NewReader(src))
+	r.ReadObjectHeader() // <Parent>
+
+	name, ok := r.NextChild()
+	if !ok || name != "Child" {
+		t.Fatalf("expected Child: %q ok=%v", name, ok)
+	}
+	if err := r.SkipElement(); err != nil {
+		t.Fatalf("SkipElement: %v", err)
+	}
+	// After SkipElement, skipped=true, so FinishChild skips skipRemainingContent.
+	if err := r.FinishChild(); err != nil {
+		t.Fatalf("FinishChild skipped: %v", err)
+	}
+
+	name2, ok2 := r.NextChild()
+	if !ok2 || name2 != "Next" {
+		t.Errorf("expected Next sibling, got %q ok=%v", name2, ok2)
+	}
+	if err := r.FinishChild(); err != nil {
+		t.Fatalf("FinishChild Next: %v", err)
+	}
+}
+
+// ── typeNameOf — no package separator ─────────────────────────────────────────
+
+type noPackageObj struct{}
+
+func (n *noPackageObj) Serialize(w report.Writer) error   { return nil }
+func (n *noPackageObj) Deserialize(r report.Reader) error { return nil }
+
+func TestTypeNameOf_NoPackageSeparator(t *testing.T) {
+	// typeNameOf falls back to fmt.Sprintf("%T",...) which for types in the
+	// same package includes "serial." prefix. The loop finds '.' and strips it.
+	// For a type *without* '.', the whole name is returned.
+	// Since all Go named types have package prefixes, this tests the normal path.
+	obj := &noPackageObj{}
+	got := typeNameOf(obj)
+	if got == "" {
+		t.Error("typeNameOf returned empty string")
+	}
+}
+
+// ── BeginObject with pending attributes ───────────────────────────────────────
+
+func TestBeginObject_WithPendingAttributes(t *testing.T) {
+	var buf bytes.Buffer
+	w := NewWriter(&buf)
+	if err := w.BeginObject("Parent"); err != nil {
+		t.Fatal(err)
+	}
+	w.WriteStr("ParentAttr", "pval")
+	// BeginObject for child triggers flushPending for Parent.
+	if err := w.BeginObject("Child"); err != nil {
+		t.Fatal(err)
+	}
+	w.WriteStr("ChildAttr", "cval")
+	if err := w.EndObject(); err != nil { // close Child
+		t.Fatal(err)
+	}
+	if err := w.EndObject(); err != nil { // close Parent
+		t.Fatal(err)
+	}
+	if err := w.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, `ParentAttr="pval"`) {
+		t.Errorf("expected ParentAttr in output:\n%s", out)
+	}
+	if !strings.Contains(out, `ChildAttr="cval"`) {
+		t.Errorf("expected ChildAttr in output:\n%s", out)
+	}
+}
+
+// ── EndObject — element already flushed (has children) ───────────────────────
+
+func TestEndObject_AlreadyFlushed(t *testing.T) {
+	var buf bytes.Buffer
+	w := NewWriter(&buf)
+	if err := w.BeginObject("Parent"); err != nil {
+		t.Fatal(err)
+	}
+	// Open a child to force Parent's start tag to be flushed.
+	if err := w.BeginObject("Child"); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.EndObject(); err != nil { // close Child
+		t.Fatal(err)
+	}
+	// Parent is already flushed — EndObject should go straight to EndElement.
+	if err := w.EndObject(); err != nil {
+		t.Fatalf("EndObject on flushed parent: %v", err)
+	}
+	if err := w.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, `</Parent>`) {
+		t.Errorf("expected </Parent> in output:\n%s", out)
+	}
+}
+
+// ── WriteObject — uses TypeNamer ───────────────────────────────────────────────
+
+func TestWriteObject_UsesTypeNameOfFallback(t *testing.T) {
+	// anonymousObj does NOT implement TypeNamer — typeNameOf falls back.
+	obj := &anonymousObj{}
+	var buf bytes.Buffer
+	w := NewWriter(&buf)
+	if err := w.WriteObject(obj); err != nil {
+		t.Fatalf("WriteObject: %v", err)
+	}
+	if err := w.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(buf.String(), "anonymousObj") {
+		t.Errorf("expected type name in output:\n%s", buf.String())
+	}
+}
+
+// ── WriteObjectNamed — covers BeginObject + Serialize + EndObject path ────────
+
+func TestWriteObjectNamed_PendingAttrs(t *testing.T) {
+	child := &childObject{Label: "lbl2", Value: 22}
+	var buf bytes.Buffer
+	w := NewWriter(&buf)
+	if err := w.WriteObjectNamed("ChildObject", child); err != nil {
+		t.Fatalf("WriteObjectNamed: %v", err)
+	}
+	if err := w.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, `Label="lbl2"`) {
+		t.Errorf("expected Label in output:\n%s", out)
+	}
+}
+
+// ── NewReaderWithPassword — error path ────────────────────────────────────────
+
+func TestNewReaderWithPassword_Error(t *testing.T) {
+	// Close the pipe with an error immediately so PeekAndDecrypt fails.
+	pr, pw := io.Pipe()
+	pw.CloseWithError(fmt.Errorf("simulated read error"))
+	_, _, err := NewReaderWithPassword(pr, "password")
+	if err == nil {
+		t.Error("expected error when underlying reader fails, got nil")
+	}
+}
+
+// ── ReadObjectHeader — EndElement case ────────────────────────────────────────
+
+func TestReadObjectHeaderEndElementCase(t *testing.T) {
+	// After ReadObjectHeader reads the StartElement of a self-closing element,
+	// calling it again reads the matching EndElement → returns ("", false).
+	src := `<First/><Second/>`
+	r := NewReader(strings.NewReader(src))
+
+	typeName, ok := r.ReadObjectHeader() // reads StartElement{First}
+	if !ok || typeName != "First" {
+		t.Fatalf("first ReadObjectHeader: got %q ok=%v, want First true", typeName, ok)
+	}
+	// Decoder has EndElement{First} pending.
+	typeName2, ok2 := r.ReadObjectHeader() // reads EndElement{First} → case xml.EndElement
+	if ok2 {
+		t.Errorf("second ReadObjectHeader on EndElement: expected ok=false, got true (%q)", typeName2)
+	}
+}
+
+// ── NextChild — error/EOF path ─────────────────────────────────────────────────
+
+func TestNextChild_ErrorPath(t *testing.T) {
+	// Pipe closes with error mid-stream — NextChild must handle the err path.
+	pr, pw := io.Pipe()
+	go func() {
+		pw.Write([]byte(`<Parent>`)) //nolint:errcheck
+		pw.CloseWithError(fmt.Errorf("stream broken"))
+	}()
+
+	r := NewReader(pr)
+	_, ok := r.ReadObjectHeader() // reads <Parent>
+	if !ok {
+		t.Skip("ReadObjectHeader failed; pipe may have been too slow")
+	}
+	// NextChild tries to read the next token — gets an error from the broken pipe.
+	_, ok2 := r.NextChild()
+	if ok2 {
+		t.Error("expected ok=false when NextChild encounters a read error")
+	}
+}
+
+// ── FinishChild — skipRemainingContent error ───────────────────────────────────
+
+func TestFinishChild_SkipRemainingContentError(t *testing.T) {
+	// Enter a child element, then break the stream before the end tag is
+	// available so that FinishChild's skipRemainingContent returns an error.
+	pr, pw := io.Pipe()
+	go func() {
+		pw.Write([]byte(`<Parent><Child>`)) //nolint:errcheck
+		pw.CloseWithError(fmt.Errorf("stream closed"))
+	}()
+
+	r := NewReader(pr)
+	_, ok := r.ReadObjectHeader() // <Parent>
+	if !ok {
+		t.Skip("ReadObjectHeader failed")
+	}
+	name, ok2 := r.NextChild() // <Child>
+	if !ok2 || name != "Child" {
+		t.Skipf("NextChild did not return Child: %q ok=%v", name, ok2)
+	}
+	// FinishChild must call skipRemainingContent (skipped=false, done=false),
+	// which tries to read </Child> but gets an error instead.
+	err := r.FinishChild()
+	if err == nil {
+		t.Error("expected error from FinishChild when stream breaks, got nil")
+	}
+}
+
+// ── flushPending — empty stack (no-op) ────────────────────────────────────────
+
+func TestFlushPending_EmptyStack(t *testing.T) {
+	// flushPending with empty stack returns nil (no-op).
+	var buf bytes.Buffer
+	w := NewWriter(&buf)
+	// Call BeginObject without anything on the stack first — flushPending
+	// is called internally and should return nil for empty stack.
+	if err := w.BeginObject("OnlyOne"); err != nil {
+		t.Fatalf("BeginObject: %v", err)
+	}
+	if err := w.EndObject(); err != nil {
+		t.Fatalf("EndObject: %v", err)
+	}
+	if err := w.Flush(); err != nil {
+		t.Fatal(err)
 	}
 }

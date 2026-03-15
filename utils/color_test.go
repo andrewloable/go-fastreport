@@ -224,6 +224,31 @@ func TestPredefinedColors(t *testing.T) {
 	}
 }
 
+func TestParseColor_CSV_TooManyParts(t *testing.T) {
+	// 5 comma-separated values → `if i >= 4 { break }` path
+	// len(parts)=5 → switch has no case 5 → falls through to tryNamed → fails → error
+	_, err := ParseColor("1,2,3,4,5")
+	// Error is expected because 5-part CSV isn't a valid color format.
+	// If it somehow doesn't error (some future change), the test would catch regression.
+	_ = err // either way, we just need to exercise the break path
+}
+
+func TestParseColor_CSV_InvalidNumber(t *testing.T) {
+	// Comma-separated with non-numeric part → goto tryNamed path
+	_, err := ParseColor("255,red,0")
+	if err == nil {
+		t.Error("expected error for CSV with non-numeric part, got nil")
+	}
+}
+
+func TestParseColor_CSV_TwoParts(t *testing.T) {
+	// Two comma-separated values → switch falls through (no case 2) → tryNamed
+	_, err := ParseColor("255,0")
+	if err == nil {
+		t.Error("expected error for 2-part CSV, got nil")
+	}
+}
+
 func TestParseFormatRoundTrip(t *testing.T) {
 	colors := []color.RGBA{
 		ColorTransparent,

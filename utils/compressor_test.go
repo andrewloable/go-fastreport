@@ -101,11 +101,25 @@ func TestDecompressInvalidBase64(t *testing.T) {
 }
 
 func TestDecompressInvalidGzip(t *testing.T) {
-	// Craft bytes starting with GZip magic but otherwise invalid.
+	// Craft bytes starting with GZip magic but otherwise invalid (header too short).
 	bad := []byte{0x1F, 0x8B, 0x00, 0x01, 0x02, 0x03}
 	encoded := base64.StdEncoding.EncodeToString(bad)
 	_, err := Decompress(encoded)
 	if err == nil {
 		t.Fatal("expected error for invalid gzip body, got nil")
+	}
+}
+
+func TestDecompressCorruptGzipBody(t *testing.T) {
+	// Valid 10-byte gzip header + invalid deflate body → io.ReadAll error.
+	// Header: magic(2) + method(1) + flags(1) + mtime(4) + xfl(1) + os(1)
+	header := []byte{0x1F, 0x8B, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF}
+	// Garbage deflate bytes that will fail decompression.
+	body := []byte{0xFF, 0xFF, 0xFF, 0xFF}
+	bad := append(header, body...)
+	encoded := base64.StdEncoding.EncodeToString(bad)
+	_, err := Decompress(encoded)
+	if err == nil {
+		t.Fatal("expected error for corrupt gzip body, got nil")
 	}
 }

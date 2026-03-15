@@ -5,7 +5,9 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/andrewloable/go-fastreport/export"
 	"github.com/andrewloable/go-fastreport/preview"
 	"github.com/andrewloable/go-fastreport/web"
 )
@@ -334,5 +336,284 @@ func TestHandlers_RegisteredOnMux(t *testing.T) {
 		if rec.Code != http.StatusOK {
 			t.Errorf("GET %s: status = %d, want 200", path, rec.Code)
 		}
+	}
+}
+
+// ── DefaultCORSConfig ─────────────────────────────────────────────────────────
+
+func TestDefaultCORSConfig_Fields(t *testing.T) {
+	cfg := web.DefaultCORSConfig()
+	if len(cfg.AllowedOrigins) == 0 || cfg.AllowedOrigins[0] != "*" {
+		t.Errorf("AllowedOrigins = %v, want [*]", cfg.AllowedOrigins)
+	}
+	if len(cfg.AllowedMethods) == 0 {
+		t.Error("AllowedMethods should not be empty")
+	}
+	if len(cfg.AllowedHeaders) == 0 {
+		t.Error("AllowedHeaders should not be empty")
+	}
+}
+
+// ── WithCORS ──────────────────────────────────────────────────────────────────
+
+func corsBase() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+}
+
+func TestWithCORS_AllowedOrigin_SetsHeader(t *testing.T) {
+	h := web.WithCORS(corsBase(), web.DefaultCORSConfig())
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Header.Set("Origin", "http://example.com")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if acao := rec.Header().Get("Access-Control-Allow-Origin"); acao == "" {
+		t.Error("Access-Control-Allow-Origin should be set for allowed origin")
+	}
+	if rec.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200", rec.Code)
+	}
+}
+
+func TestWithCORS_OptionsPreflight_Returns204(t *testing.T) {
+	h := web.WithCORS(corsBase(), web.DefaultCORSConfig())
+	req := httptest.NewRequest("OPTIONS", "/", nil)
+	req.Header.Set("Origin", "http://example.com")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Errorf("OPTIONS status = %d, want 204", rec.Code)
+	}
+}
+
+func TestWithCORS_NonAllowedOrigin_NoCORSHeaders(t *testing.T) {
+	cfg := web.CORSConfig{
+		AllowedOrigins: []string{"http://trusted.com"},
+		AllowedMethods: []string{"GET"},
+	}
+	h := web.WithCORS(corsBase(), cfg)
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Header.Set("Origin", "http://evil.com")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if acao := rec.Header().Get("Access-Control-Allow-Origin"); acao != "" {
+		t.Errorf("non-allowed origin should not get CORS headers, got %q", acao)
+	}
+	if rec.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200", rec.Code)
+	}
+}
+
+func TestWithCORS_NoOriginHeader_PassesThrough(t *testing.T) {
+	h := web.WithCORS(corsBase(), web.DefaultCORSConfig())
+	req := httptest.NewRequest("GET", "/", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200", rec.Code)
+	}
+}
+
+func TestWithCORS_EmptyAllowedMethods_DefaultsApplied(t *testing.T) {
+	cfg := web.CORSConfig{
+		AllowedOrigins: []string{"*"},
+		AllowedMethods: []string{}, // empty — should default to GET, OPTIONS
+	}
+	h := web.WithCORS(corsBase(), cfg)
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Header.Set("Origin", "http://example.com")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if acam := rec.Header().Get("Access-Control-Allow-Methods"); acam == "" {
+		t.Error("Access-Control-Allow-Methods should be set with default methods")
+	}
+}
+
+func TestWithCORS_AllowCredentials_SetsHeader(t *testing.T) {
+	cfg := web.CORSConfig{
+		AllowedOrigins:   []string{"*"},
+		AllowedMethods:   []string{"GET"},
+		AllowCredentials: true,
+	}
+	h := web.WithCORS(corsBase(), cfg)
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Header.Set("Origin", "http://example.com")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if v := rec.Header().Get("Access-Control-Allow-Credentials"); v != "true" {
+		t.Errorf("Access-Control-Allow-Credentials = %q, want true", v)
+	}
+}
+
+func TestWithCORS_MaxAge_SetsHeader(t *testing.T) {
+	cfg := web.CORSConfig{
+		AllowedOrigins: []string{"*"},
+		AllowedMethods: []string{"GET"},
+		MaxAge:         300,
+	}
+	h := web.WithCORS(corsBase(), cfg)
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Header.Set("Origin", "http://example.com")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if v := rec.Header().Get("Access-Control-Max-Age"); v == "" {
+		t.Error("Access-Control-Max-Age should be set when MaxAge > 0")
+	}
+}
+
+func TestWithCORS_EmptyAllowedOrigins_NoCORSHeaders(t *testing.T) {
+	cfg := web.CORSConfig{
+		AllowedOrigins: []string{},
+		AllowedMethods: []string{"GET"},
+	}
+	h := web.WithCORS(corsBase(), cfg)
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Header.Set("Origin", "http://example.com")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if acao := rec.Header().Get("Access-Control-Allow-Origin"); acao != "" {
+		t.Errorf("empty AllowedOrigins should produce no CORS header, got %q", acao)
+	}
+}
+
+// ── WithHTMLScale ─────────────────────────────────────────────────────────────
+
+func TestHTMLHandler_WithHTMLScale_StatusOK(t *testing.T) {
+	h := web.HTMLHandler(buildPages(1), web.WithHTMLScale(2.0))
+	rec := get(h, "/report.html")
+	if rec.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200", rec.Code)
+	}
+}
+
+func TestNewHandler_HTMLOpts_WithHTMLScale(t *testing.T) {
+	h := web.NewHandler(buildPages(1), web.FormatHTML, web.HandlerOptions{
+		HTMLOpts: []web.HTMLOption{web.WithHTMLScale(1.5)},
+	})
+	rec := get(h, "/")
+	if rec.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200", rec.Code)
+	}
+}
+
+// ── WithTimeout ───────────────────────────────────────────────────────────────
+
+func TestWithTimeout_ContextDeadlineSet(t *testing.T) {
+	final := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, ok := r.Context().Deadline(); !ok {
+			t.Error("expected context deadline to be set by WithTimeout")
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+	h := web.WithTimeout(5 * time.Second)(final)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("GET", "/", nil))
+	if rec.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200", rec.Code)
+	}
+}
+
+func TestNewHandler_WithTimeoutOption(t *testing.T) {
+	h := web.NewHandler(buildPages(1), web.FormatHTML, web.HandlerOptions{
+		Timeout: 5 * time.Second,
+	})
+	rec := get(h, "/")
+	if rec.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200", rec.Code)
+	}
+}
+
+// ── WithPageRange ─────────────────────────────────────────────────────────────
+
+func TestWithPageRange_Middleware_PassesThrough(t *testing.T) {
+	final := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	h := web.WithPageRange(export.PageRangeCustom, "1-3")(final)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("GET", "/", nil))
+	if rec.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200", rec.Code)
+	}
+}
+
+// ── applyDisposition branches ─────────────────────────────────────────────────
+
+func TestNewHandler_AttachmentDefaultName(t *testing.T) {
+	// Disposition=attachment, Filename="" → uses format default name "report.html"
+	h := web.NewHandler(buildPages(1), web.FormatHTML, web.HandlerOptions{
+		Disposition: "attachment",
+		Filename:    "",
+	})
+	rec := get(h, "/")
+	cd := rec.Header().Get("Content-Disposition")
+	if !strings.Contains(cd, "report.html") {
+		t.Errorf("Content-Disposition = %q, want to contain report.html", cd)
+	}
+}
+
+func TestNewHandler_InlineDisposition_NoHeader(t *testing.T) {
+	h := web.NewHandler(buildPages(1), web.FormatPDF, web.HandlerOptions{
+		Disposition: "inline",
+	})
+	rec := get(h, "/")
+	if cd := rec.Header().Get("Content-Disposition"); cd != "" {
+		t.Errorf("inline disposition should not set Content-Disposition, got %q", cd)
+	}
+}
+
+func TestNewHandler_ImageOpts(t *testing.T) {
+	h := web.NewHandler(buildPages(1), web.FormatImage, web.HandlerOptions{
+		ImageOpts: []web.ImageOption{web.WithImageScale(2.0)},
+	})
+	rec := get(h, "/")
+	if rec.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200", rec.Code)
+	}
+}
+
+func TestWithCORS_NoOriginHeader_SpecificOrigin_PassesThrough(t *testing.T) {
+	// No Origin header + non-wildcard config → allowOriginFor("") returns ""
+	// → allowed == "" && origin == "" → hits the "No Origin header" branch (line 137).
+	cfg := web.CORSConfig{
+		AllowedOrigins: []string{"http://example.com"},
+		AllowedMethods: []string{"GET"},
+	}
+	h := web.WithCORS(corsBase(), cfg)
+	req := httptest.NewRequest("GET", "/", nil) // no Origin header
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200", rec.Code)
+	}
+}
+
+// ── default errHandler and error paths in buildCoreHandler ────────────────────
+
+func TestNewHandler_HTML_NilPages_DefaultError(t *testing.T) {
+	// No custom ErrorHandler → triggers default errHandler body.
+	h := web.NewHandler(nil, web.FormatHTML, web.HandlerOptions{})
+	rec := get(h, "/")
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("nil pages HTML: status = %d, want 500", rec.Code)
+	}
+}
+
+func TestNewHandler_PDF_NilPages_DefaultError(t *testing.T) {
+	// nil pages with PDF format → triggers PDF error path in buildCoreHandler.
+	h := web.NewHandler(nil, web.FormatPDF, web.HandlerOptions{})
+	rec := get(h, "/")
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("nil pages PDF: status = %d, want 500", rec.Code)
+	}
+}
+
+func TestNewHandler_Image_NilPages_DefaultError(t *testing.T) {
+	// nil pages with Image format → triggers Image error path in buildCoreHandler.
+	h := web.NewHandler(nil, web.FormatImage, web.HandlerOptions{})
+	rec := get(h, "/")
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("nil pages Image: status = %d, want 500", rec.Code)
 	}
 }

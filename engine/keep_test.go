@@ -91,6 +91,41 @@ func TestCheckKeepTogether_CutsWhenKeeping(t *testing.T) {
 	_ = initialBands
 }
 
+func TestFinishKeepTogether_WithCutBands(t *testing.T) {
+	e := newKeepEngine(t)
+
+	// Start keep and advance to build up deltaY.
+	e.StartKeep()
+	e.AdvanceY(30)
+
+	// Cut the kept content (simulates CheckKeepTogether).
+	e.CheckKeepTogether()
+
+	// Ensure there are cut bands by checking CutBands.
+	pp := e.PreparedPages()
+	if len(pp.CutBands()) == 0 {
+		// If no bands were cut (e.g. page had no bands at the keep position),
+		// FinishKeepTogether is a no-op — just verify no panic.
+		e.FinishKeepTogether()
+		return
+	}
+
+	// FinishKeepTogether should paste bands and call EndKeep.
+	e.FinishKeepTogether()
+	if e.IsKeeping() {
+		t.Error("IsKeeping should be false after FinishKeepTogether")
+	}
+}
+
+func TestFinishKeepTogether_NoCutBands_IsNoop(t *testing.T) {
+	e := newKeepEngine(t)
+	// No keep active, no cut bands — should be a no-op.
+	e.FinishKeepTogether()
+	if e.IsKeeping() {
+		t.Error("IsKeeping should still be false")
+	}
+}
+
 func TestCheckKeepTogether_NoopWhenNotKeeping(t *testing.T) {
 	e := newKeepEngine(t)
 	pp := e.PreparedPages()

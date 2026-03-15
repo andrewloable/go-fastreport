@@ -4,6 +4,7 @@
 package engine
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -20,6 +21,9 @@ type RunOptions struct {
 	ResetDataState bool
 	// MaxPages limits the number of output pages (0 = unlimited).
 	MaxPages int
+	// Context is an optional context for cancellation and deadline support.
+	// When the context is cancelled the engine stops after the current band.
+	Context context.Context
 }
 
 // DefaultRunOptions returns RunOptions with the most common defaults.
@@ -118,6 +122,9 @@ type ReportEngine struct {
 	// deferred object processing (see processat.go)
 	deferredObjects []deferredItem
 	stateHandlers   []EngineStateHandler
+
+	// ctx is an optional context for cancellation. Nil means no cancellation.
+	ctx context.Context
 }
 
 // New creates a ReportEngine for the given report.
@@ -201,10 +208,20 @@ func (e *ReportEngine) Abort() { e.aborted = true }
 // Returns an error if any phase fails.
 func (e *ReportEngine) Run(opts RunOptions) error {
 	e.pagesLimit = opts.MaxPages
+	if opts.Context != nil {
+		e.ctx = opts.Context
+	} else {
+		e.ctx = context.Background()
+	}
 
 	if err := e.runPhase1(opts.ResetDataState); err != nil {
 		e.runFinished()
 		return fmt.Errorf("engine phase 1: %w", err)
+	}
+	// Check context between phases.
+	if err := e.ctx.Err(); err != nil {
+		e.runFinished()
+		return fmt.Errorf("engine cancelled: %w", err)
 	}
 	if err := e.runPhase2(opts.Append); err != nil {
 		e.runFinished()
@@ -351,6 +368,12 @@ func (e *ReportEngine) runReportPages() error {
 		}
 		if e.pagesLimit > 0 && e.totalPages >= e.pagesLimit {
 			break
+		}
+		// Honour context cancellation between pages.
+		if e.ctx != nil {
+			if err := e.ctx.Err(); err != nil {
+				return fmt.Errorf("engine cancelled: %w", err)
+			}
 		}
 		if err := e.RunReportPage(pg); err != nil {
 			return err

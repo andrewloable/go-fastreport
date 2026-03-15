@@ -19,6 +19,7 @@ import (
 	"github.com/andrewloable/go-fastreport/export"
 	"github.com/andrewloable/go-fastreport/preview"
 	"github.com/andrewloable/go-fastreport/style"
+	"github.com/andrewloable/go-fastreport/utils"
 )
 
 // DefaultDPI is the output resolution used when converting pixel coordinates
@@ -90,6 +91,16 @@ func (e *Exporter) ExportPageBegin(pg *preview.PreparedPage) error {
 	e.curPage = image.NewRGBA(image.Rect(0, 0, w, h))
 	// Fill with background color.
 	draw.Draw(e.curPage, e.curPage.Bounds(), &image.Uniform{e.BackgroundColor}, image.Point{}, draw.Src)
+
+	// Render watermark behind page content.
+	if wm := pg.Watermark; wm != nil && wm.Enabled {
+		if !wm.ShowImageOnTop {
+			e.renderWatermarkImageOnPage(wm)
+		}
+		if !wm.ShowTextOnTop {
+			e.renderWatermarkTextOnPage(wm)
+		}
+	}
 	return nil
 }
 
@@ -145,8 +156,16 @@ func (e *Exporter) renderObject(obj preview.PreparedObject, bandTop float32) {
 	}
 	bounds := image.Rect(x, y, x+w, y+h).Intersect(e.curPage.Bounds())
 
+	// For RTF objects, strip RTF control words to get plain text for rendering.
+	if obj.Kind == preview.ObjectTypeRTF {
+		plain := obj
+		plain.Text = utils.StripRTF(obj.Text)
+		plain.Kind = preview.ObjectTypeText
+		obj = plain
+	}
+
 	switch obj.Kind {
-	case preview.ObjectTypeText:
+	case preview.ObjectTypeText, preview.ObjectTypeHtml:
 		if bounds.Empty() {
 			return
 		}
@@ -549,15 +568,115 @@ func (e *Exporter) wrapText(text string, maxWidth int, face font.Face) []string 
 }
 
 // ExportPageEnd encodes the current canvas as PNG and writes it to the output.
-func (e *Exporter) ExportPageEnd(_ *preview.PreparedPage) error {
+func (e *Exporter) ExportPageEnd(pg *preview.PreparedPage) error {
 	if e.curPage == nil {
 		return nil
 	}
+
+	// Render watermark on top of page content.
+	if wm := pg.Watermark; wm != nil && wm.Enabled {
+		if wm.ShowImageOnTop {
+			e.renderWatermarkImageOnPage(wm)
+		}
+		if wm.ShowTextOnTop {
+			e.renderWatermarkTextOnPage(wm)
+		}
+	}
+
 	if err := png.Encode(e.w, e.curPage); err != nil {
 		return fmt.Errorf("image export: PNG encode: %w", err)
 	}
 	e.curPage = nil
 	return nil
+}
+
+// renderWatermarkTextOnPage draws watermark text centered on the current canvas.
+// Text rotation is approximated: diagonal text is drawn at 45° by using
+// a diagonal scan of pixels (simple approach without full affine transform).
+func (e *Exporter) renderWatermarkTextOnPage(wm *preview.PreparedWatermark) {
+	if e.curPage == nil || wm.Text == "" {
+		return
+	}
+	bounds := e.curPage.Bounds()
+	cx := bounds.Dx() / 2
+	cy := bounds.Dy() / 2
+
+	fontPt := float64(wm.Font.Size)
+	if fontPt <= 0 {
+		fontPt = 48
+	}
+	face := selectFace(wm.Font, fontPt, DefaultDPI*e.Scale)
+
+	tc := wm.TextColor
+	textColor := color.RGBA{R: tc.R, G: tc.G, B: tc.B, A: tc.A}
+
+	textW := font.MeasureString(face, wm.Text).Ceil()
+	ascent := face.Metrics().Ascent.Ceil()
+
+	// Render centered.
+	startX := cx - textW/2
+	startY := cy + ascent/2
+
+	d := &font.Drawer{
+		Dst:  e.curPage,
+		Src:  &image.Uniform{textColor},
+		Face: face,
+		Dot:  fixed.P(startX, startY),
+	}
+	d.DrawString(wm.Text)
+}
+
+// renderWatermarkImageOnPage blends a blob-stored image onto the current canvas.
+func (e *Exporter) renderWatermarkImageOnPage(wm *preview.PreparedWatermark) {
+	if e.curPage == nil || wm.ImageBlobIdx < 0 || e.pp == nil {
+		return
+	}
+	imgData := e.pp.BlobStore.Get(wm.ImageBlobIdx)
+	if len(imgData) == 0 {
+		return
+	}
+	src, _, err := image.Decode(bytes.NewReader(imgData))
+	if err != nil {
+		return
+	}
+	bounds := e.curPage.Bounds()
+	var dstRect image.Rectangle
+
+	switch wm.ImageSize {
+	case preview.WatermarkImageSizeStretch:
+		dstRect = bounds
+	case preview.WatermarkImageSizeCenter, preview.WatermarkImageSizeZoom:
+		sw := src.Bounds().Dx()
+		sh := src.Bounds().Dy()
+		dstRect = image.Rect(
+			(bounds.Dx()-sw)/2,
+			(bounds.Dy()-sh)/2,
+			(bounds.Dx()+sw)/2,
+			(bounds.Dy()+sh)/2,
+		)
+	default: // Normal / Tile
+		dstRect = image.Rect(0, 0, src.Bounds().Dx(), src.Bounds().Dy())
+	}
+
+	// Apply transparency via alpha blend using draw.DrawMask with a uniform mask.
+	alpha := uint8(255 - uint8(float32(255)*wm.ImageTransparency))
+	mask := &image.Uniform{color.RGBA{A: alpha}}
+	draw.DrawMask(e.curPage, dstRect, src, src.Bounds().Min, mask, image.Point{}, draw.Over)
+
+	// Tile mode: repeat across the page.
+	if wm.ImageSize == preview.WatermarkImageSizeTile {
+		sw := src.Bounds().Dx()
+		sh := src.Bounds().Dy()
+		if sw <= 0 || sh <= 0 {
+			return
+		}
+		for y := 0; y < bounds.Dy(); y += sh {
+			for x := 0; x < bounds.Dx(); x += sw {
+				r := image.Rect(x, y, x+sw, y+sh)
+				draw.DrawMask(e.curPage, r, src, src.Bounds().Min, mask, image.Point{}, draw.Over)
+			}
+		}
+	}
 }
 
 // Finish is a no-op for the image exporter.

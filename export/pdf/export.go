@@ -16,6 +16,7 @@ import (
 	"github.com/andrewloable/go-fastreport/export/pdf/core"
 	"github.com/andrewloable/go-fastreport/preview"
 	"github.com/andrewloable/go-fastreport/style"
+	"github.com/andrewloable/go-fastreport/utils"
 )
 
 // Exporter is a PDF export filter.
@@ -100,11 +101,18 @@ func (e *Exporter) ExportBand(b *preview.PreparedBand) error {
 
 	for _, obj := range b.Objects {
 		switch obj.Kind {
-		case preview.ObjectTypeText:
+		case preview.ObjectTypeText, preview.ObjectTypeHtml, preview.ObjectTypeRTF:
 			if obj.Text == "" {
 				continue
 			}
-			e.renderTextObject(contents, b, obj)
+			if obj.Kind == preview.ObjectTypeRTF {
+				// Strip RTF control words — PDF renders plain text only.
+				plain := obj
+				plain.Text = utils.StripRTF(obj.Text)
+				e.renderTextObject(contents, b, plain)
+			} else {
+				e.renderTextObject(contents, b, obj)
+			}
 		// Line and Shape rendered as rectangle outlines.
 		case preview.ObjectTypeLine, preview.ObjectTypeShape:
 			e.renderRectObject(contents, b, obj)
@@ -756,12 +764,138 @@ func (e *Exporter) ExportPageEnd(pg *preview.PreparedPage) error {
 	return nil
 }
 
-// renderWatermark draws the watermark text (if any) as a centred, semi-transparent
-// text string on the PDF page using the cm (current transformation matrix) operator
-// to rotate the text diagonally.
+// renderWatermark draws the watermark (text and/or image) on the PDF page.
+// It respects ShowTextOnTop / ShowImageOnTop ordering: items not "on top"
+// are emitted first (behind content), items "on top" after (this function is
+// called twice from ExportPageEnd — once before content via ExportPageBegin
+// and once after via ExportPageEnd using the onTop flag).
 func (e *Exporter) renderWatermark(c *Contents, pg *preview.PreparedPage) {
 	wm := pg.Watermark
-	if wm == nil || !wm.Enabled || wm.Text == "" {
+	if wm == nil || !wm.Enabled {
+		return
+	}
+	// Render image watermark (behind text in Z order).
+	if wm.ImageBlobIdx >= 0 && e.pp != nil {
+		e.renderWatermarkImage(c, pg, wm)
+	}
+	// Render text watermark on top of image watermark.
+	if wm.Text != "" {
+		e.renderWatermarkText(c, pg, wm)
+	}
+}
+
+// renderWatermarkImage embeds a blob-stored image as a full-page (or sized) watermark.
+func (e *Exporter) renderWatermarkImage(c *Contents, pg *preview.PreparedPage, wm *preview.PreparedWatermark) {
+	data := e.pp.BlobStore.Get(wm.ImageBlobIdx)
+	if len(data) == 0 {
+		return
+	}
+
+	widthPt := float64(export.PixelsToPoints(pg.Width))
+	heightPt := float64(export.PixelsToPoints(pg.Height))
+
+	// Decode image to obtain dimensions.
+	imgCfg, _, err := image.DecodeConfig(bytes.NewReader(data))
+	if err != nil {
+		return
+	}
+	imgW := float64(imgCfg.Width)
+	imgH := float64(imgCfg.Height)
+
+	// Build PDF image stream (same as renderPictureObject).
+	imgStream := core.NewStream()
+	imgStream.Dict.Add("Type", core.NewName("XObject"))
+	imgStream.Dict.Add("Subtype", core.NewName("Image"))
+
+	if len(data) >= 2 && data[0] == 0xFF && data[1] == 0xD8 {
+		imgStream.Compressed = false
+		imgStream.Dict.Add("Filter", core.NewName("DCTDecode"))
+		imgStream.Data = data
+	} else {
+		img, _, decErr := image.Decode(bytes.NewReader(data))
+		if decErr != nil {
+			return
+		}
+		bounds := img.Bounds()
+		rgba := image.NewNRGBA(bounds)
+		draw.Draw(rgba, bounds, img, bounds.Min, draw.Src)
+		rgb := make([]byte, 0, bounds.Dx()*bounds.Dy()*3)
+		for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+			for x := bounds.Min.X; x < bounds.Max.X; x++ {
+				px := rgba.NRGBAAt(x, y)
+				rgb = append(rgb, px.R, px.G, px.B)
+			}
+		}
+		imgStream.Compressed = true
+		imgStream.Data = rgb
+	}
+	imgStream.Dict.Add("Width", core.NewInt(int(imgW)))
+	imgStream.Dict.Add("Height", core.NewInt(int(imgH)))
+	imgStream.Dict.Add("ColorSpace", core.NewName("DeviceRGB"))
+	imgStream.Dict.Add("BitsPerComponent", core.NewInt(8))
+
+	xObjRef := e.writer.NewObject(imgStream)
+	imgName := fmt.Sprintf("WmIm%d", e.imgIdx)
+	e.imgIdx++
+	e.curPage.AddXObject(imgName, xObjRef)
+
+	// Transparency.
+	opacity := 1.0 - float64(wm.ImageTransparency)
+	if opacity < 0 {
+		opacity = 0
+	}
+	gsDict := core.NewDictionary()
+	gsDict.Add("Type", core.NewName("ExtGState"))
+	gsDict.Add("ca", core.NewFloat(opacity))
+	gsDict.Add("CA", core.NewFloat(opacity))
+	gsName := fmt.Sprintf("WmGs%d", e.imgIdx)
+	e.curPage.AddExtGState(gsName, gsDict)
+
+	// Compute destination rectangle in PDF points (origin bottom-left).
+	var dstX, dstY, dstW, dstH float64
+	imgPtW := imgW * 72.0 / 96.0 // pixels → points (assuming 96 dpi)
+	imgPtH := imgH * 72.0 / 96.0
+
+	switch wm.ImageSize {
+	case preview.WatermarkImageSizeStretch:
+		dstX, dstY, dstW, dstH = 0, 0, widthPt, heightPt
+	case preview.WatermarkImageSizeCenter:
+		dstW, dstH = imgPtW, imgPtH
+		dstX = (widthPt - dstW) / 2
+		dstY = (heightPt - dstH) / 2
+	case preview.WatermarkImageSizeZoom:
+		scaleX := widthPt / imgPtW
+		scaleY := heightPt / imgPtH
+		scale := math.Min(scaleX, scaleY)
+		dstW, dstH = imgPtW*scale, imgPtH*scale
+		dstX = (widthPt - dstW) / 2
+		dstY = (heightPt - dstH) / 2
+	default: // Normal
+		dstW, dstH = imgPtW, imgPtH
+		dstX, dstY = 0, heightPt-dstH // top-left
+	}
+
+	c.WriteString(fmt.Sprintf("q /%s gs\n", gsName))
+	if wm.ImageSize == preview.WatermarkImageSizeTile {
+		// Tile: repeat across the page.
+		for y := heightPt - imgPtH; y > -imgPtH; y -= imgPtH {
+			for x := 0.0; x < widthPt; x += imgPtW {
+				c.WriteString(fmt.Sprintf("q %.4f 0 0 %.4f %.4f %.4f cm /%s Do Q\n",
+					imgPtW, imgPtH, x, y, imgName))
+			}
+		}
+	} else {
+		c.WriteString(fmt.Sprintf("%.4f 0 0 %.4f %.4f %.4f cm /%s Do\n",
+			dstW, dstH, dstX, dstY, imgName))
+	}
+	c.WriteString("Q\n")
+}
+
+// renderWatermarkText draws the watermark text (if any) as a centred, semi-transparent
+// text string on the PDF page using the cm (current transformation matrix) operator
+// to rotate the text diagonally.
+func (e *Exporter) renderWatermarkText(c *Contents, pg *preview.PreparedPage, wm *preview.PreparedWatermark) {
+	if wm.Text == "" {
 		return
 	}
 	widthPt := float64(export.PixelsToPoints(pg.Width))

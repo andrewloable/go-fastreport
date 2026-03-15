@@ -179,6 +179,147 @@ func TestImageHandler_NilPages(t *testing.T) {
 	}
 }
 
+// ── NewHandler / Middleware ────────────────────────────────────────────────────
+
+func TestNewHandler_HTML(t *testing.T) {
+	h := web.NewHandler(buildPages(1), web.FormatHTML, web.HandlerOptions{})
+	rec := get(h, "/")
+	if rec.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200", rec.Code)
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
+		t.Errorf("Content-Type = %q, want text/html", ct)
+	}
+}
+
+func TestNewHandler_PDF(t *testing.T) {
+	h := web.NewHandler(buildPages(1), web.FormatPDF, web.HandlerOptions{})
+	rec := get(h, "/")
+	if rec.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200", rec.Code)
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "application/pdf" {
+		t.Errorf("Content-Type = %q, want application/pdf", ct)
+	}
+}
+
+func TestNewHandler_Image(t *testing.T) {
+	h := web.NewHandler(buildPages(1), web.FormatImage, web.HandlerOptions{})
+	rec := get(h, "/")
+	if rec.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200", rec.Code)
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "image/png" {
+		t.Errorf("Content-Type = %q, want image/png", ct)
+	}
+}
+
+func TestNewHandler_CustomHeaders(t *testing.T) {
+	h := web.NewHandler(buildPages(1), web.FormatHTML, web.HandlerOptions{
+		CustomHeaders: map[string]string{"X-Report-Id": "abc123"},
+	})
+	rec := get(h, "/")
+	if v := rec.Header().Get("X-Report-Id"); v != "abc123" {
+		t.Errorf("X-Report-Id = %q, want abc123", v)
+	}
+}
+
+func TestNewHandler_Attachment(t *testing.T) {
+	h := web.NewHandler(buildPages(1), web.FormatPDF, web.HandlerOptions{
+		Disposition: "attachment",
+		Filename:    "my-report.pdf",
+	})
+	rec := get(h, "/")
+	cd := rec.Header().Get("Content-Disposition")
+	if !strings.Contains(cd, "my-report.pdf") {
+		t.Errorf("Content-Disposition = %q, want to contain my-report.pdf", cd)
+	}
+}
+
+func TestNewHandler_ErrorHandler(t *testing.T) {
+	called := false
+	h := web.NewHandler(nil, web.FormatHTML, web.HandlerOptions{
+		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
+			called = true
+			w.WriteHeader(http.StatusTeapot)
+		},
+	})
+	rec := get(h, "/")
+	if !called {
+		t.Error("custom error handler should have been called")
+	}
+	if rec.Code != http.StatusTeapot {
+		t.Errorf("status = %d, want 418", rec.Code)
+	}
+}
+
+func TestNewHandler_Middleware(t *testing.T) {
+	var order []string
+	m1 := func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			order = append(order, "m1-before")
+			next.ServeHTTP(w, r)
+			order = append(order, "m1-after")
+		})
+	}
+	m2 := func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			order = append(order, "m2-before")
+			next.ServeHTTP(w, r)
+			order = append(order, "m2-after")
+		})
+	}
+	h := web.NewHandler(buildPages(1), web.FormatHTML, web.HandlerOptions{
+		Middleware: []web.Middleware{m1, m2},
+	})
+	get(h, "/")
+	if len(order) != 4 {
+		t.Fatalf("middleware call order len = %d, want 4: %v", len(order), order)
+	}
+}
+
+func TestChain_Order(t *testing.T) {
+	var calls []string
+	m1 := web.Middleware(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			calls = append(calls, "m1")
+			next.ServeHTTP(w, r)
+		})
+	})
+	m2 := web.Middleware(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			calls = append(calls, "m2")
+			next.ServeHTTP(w, r)
+		})
+	})
+	final := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls = append(calls, "handler")
+	})
+	web.Chain(m1, m2)(final).ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("GET", "/", nil))
+	if len(calls) != 3 || calls[0] != "m1" || calls[1] != "m2" || calls[2] != "handler" {
+		t.Errorf("chain order = %v, want [m1 m2 handler]", calls)
+	}
+}
+
+func TestWithHeader_Middleware(t *testing.T) {
+	h := web.WithHeader("X-Custom", "value")(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}),
+	)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("GET", "/", nil))
+	if v := rec.Header().Get("X-Custom"); v != "value" {
+		t.Errorf("X-Custom = %q, want value", v)
+	}
+}
+
+func TestNewHandler_UnknownFormat(t *testing.T) {
+	h := web.NewHandler(buildPages(1), "csv", web.HandlerOptions{})
+	rec := get(h, "/")
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("unknown format: status = %d, want 400", rec.Code)
+	}
+}
+
 // ── mux integration ──────────────────────────────────────────────────────────
 
 func TestHandlers_RegisteredOnMux(t *testing.T) {

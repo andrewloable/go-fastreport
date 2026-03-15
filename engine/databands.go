@@ -223,6 +223,14 @@ func (e *ReportEngine) RunDataBandFull(db *band.DataBand) error {
 		e.EndKeep()
 	}
 
+	// CompleteToNRows: fill missing rows up to N using the child band.
+	if child := db.Child(); child != nil && child.CompleteToNRows > 0 && rowNo < child.CompleteToNRows {
+		for rowNo < child.CompleteToNRows {
+			rowNo++
+			e.ShowFullBand(&child.BandBase)
+		}
+	}
+
 	// Notify deferred objects waiting for DataFinished.
 	e.OnStateChanged(db, EngineStateBlockFinished)
 
@@ -236,6 +244,13 @@ func (e *ReportEngine) RunDataBandFull(db *band.DataBand) error {
 		db.SetIsFirstRow(true)
 		db.SetIsLastRow(true)
 		e.ShowFullBand(&db.BandBase)
+	}
+
+	// FillUnusedSpace: repeat the child band to fill remaining page space.
+	if child := db.Child(); child != nil && child.FillUnusedSpace {
+		for e.freeSpace > 0 && child.Height() > 0 && e.freeSpace >= child.Height() {
+			e.ShowFullBand(&child.BandBase)
+		}
 	}
 
 	return nil

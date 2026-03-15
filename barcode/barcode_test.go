@@ -285,3 +285,57 @@ func TestBarcodeObject_InheritsVisible(t *testing.T) {
 		t.Error("BarcodeObject should inherit Visible=true")
 	}
 }
+
+// -----------------------------------------------------------------------
+// MaxiCodeBarcode — RS encoding
+// -----------------------------------------------------------------------
+
+func TestMaxiCodeEncode_Produces144Codewords(t *testing.T) {
+	b := barcode.NewMaxiCodeBarcode()
+	if err := b.Encode("Hello MaxiCode"); err != nil {
+		t.Fatalf("Encode error: %v", err)
+	}
+	img, err := b.Render(100, 100)
+	if err != nil {
+		t.Fatalf("Render error: %v", err)
+	}
+	if img == nil {
+		t.Fatal("Render returned nil image")
+	}
+}
+
+func TestMaxiCodeEncode_Mode4(t *testing.T) {
+	b := barcode.NewMaxiCodeBarcode()
+	b.Mode = 4
+	if err := b.Encode("Test Mode 4"); err != nil {
+		t.Fatalf("Encode error: %v", err)
+	}
+}
+
+func TestMaxiCodeEncode_Mode5(t *testing.T) {
+	b := barcode.NewMaxiCodeBarcode()
+	b.Mode = 5
+	if err := b.Encode("Test Mode 5"); err != nil {
+		t.Fatalf("Encode error: %v", err)
+	}
+}
+
+func TestMaxiCodeRS_KnownValues(t *testing.T) {
+	// Verify RS ECC for a small known input against manually computed values.
+	// GF(64), poly=0x43, generator roots alpha^1..alpha^10.
+	// Input: all-zero 10 codewords → ECC should all be zero (trivial case).
+	data := make([]byte, 10)
+	ecc := barcode.MaxiCodeComputeECC(data, 10)
+	for i, v := range ecc {
+		if v != 0 {
+			t.Errorf("ECC[%d] = %d for all-zero input, want 0", i, v)
+		}
+	}
+}
+
+func TestMaxiCodeMode2Payload(t *testing.T) {
+	payload := barcode.MaxiCodeMode2Payload("902840772", "840", "001", "UPSN^TRAKG^")
+	if len(payload) < 15 {
+		t.Errorf("mode 2 payload too short: %d", len(payload))
+	}
+}

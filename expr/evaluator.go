@@ -6,6 +6,8 @@ import (
 
 	exprlib "github.com/expr-lang/expr"
 	"github.com/expr-lang/expr/vm"
+
+	"github.com/andrewloable/go-fastreport/functions"
 )
 
 // Env is the evaluation environment (variable bindings).
@@ -64,8 +66,15 @@ func (e *Evaluator) Eval(expression string) (any, error) {
 		}
 	}
 
-	// Build a merged environment: variables + built-in functions.
-	merged := make(map[string]any, len(e.env)+len(BuiltinFunctions()))
+	// Build a merged environment: standard functions (base) + built-in
+	// expr-specific wrappers (override) + user variables (highest priority).
+	stdFns := functions.All()
+	merged := make(map[string]any, len(e.env)+len(stdFns)+len(BuiltinFunctions()))
+	for k, v := range stdFns {
+		merged[k] = v
+	}
+	// BuiltinFunctions overrides entries from functions.All() where signatures
+	// differ (e.g. DateDiff argument order, error-returning Int/Float).
 	for k, v := range BuiltinFunctions() {
 		merged[k] = v
 	}

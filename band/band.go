@@ -358,6 +358,19 @@ func (b *BandBase) Deserialize(r report.Reader) error {
 // It is the Go equivalent of FastReport.ChildBand.
 type ChildBand struct {
 	BandBase
+
+	// FillUnusedSpace causes the band to be printed repeatedly to fill any
+	// remaining unused space on the page after all data rows are printed.
+	FillUnusedSpace bool
+
+	// CompleteToNRows repeats the band to make the data area reach a total
+	// of N rows. If the parent DataBand has fewer than N rows, this band
+	// fills the remaining rows with blank content (default 0 = disabled).
+	CompleteToNRows int
+
+	// PrintIfDatabandEmpty causes the band to be printed when its parent
+	// DataBand has no rows (e.g. to show a "No data" message).
+	PrintIfDatabandEmpty bool
 }
 
 // NewChildBand creates a new ChildBand.
@@ -367,3 +380,31 @@ func NewChildBand() *ChildBand {
 
 // TypeName returns the FRX element name for this band.
 func (*ChildBand) TypeName() string { return "Child" }
+
+// Serialize writes ChildBand properties that differ from defaults.
+func (c *ChildBand) Serialize(w report.Writer) error {
+	if err := c.BandBase.Serialize(w); err != nil {
+		return err
+	}
+	if c.FillUnusedSpace {
+		w.WriteBool("FillUnusedSpace", true)
+	}
+	if c.CompleteToNRows != 0 {
+		w.WriteInt("CompleteToNRows", c.CompleteToNRows)
+	}
+	if c.PrintIfDatabandEmpty {
+		w.WriteBool("PrintIfDatabandEmpty", true)
+	}
+	return nil
+}
+
+// Deserialize reads ChildBand properties.
+func (c *ChildBand) Deserialize(r report.Reader) error {
+	if err := c.BandBase.Deserialize(r); err != nil {
+		return err
+	}
+	c.FillUnusedSpace = r.ReadBool("FillUnusedSpace", false)
+	c.CompleteToNRows = r.ReadInt("CompleteToNRows", 0)
+	c.PrintIfDatabandEmpty = r.ReadBool("PrintIfDatabandEmpty", false)
+	return nil
+}

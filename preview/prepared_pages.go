@@ -199,6 +199,14 @@ const (
 	// PDF exporters render it as a /Widget /Sig form field annotation.
 	// Other exporters render a styled placeholder box.
 	ObjectTypeDigitalSignature
+	// ObjectTypeHtml is an HtmlObject whose Text field contains raw HTML markup.
+	// HTML exporters must emit the text verbatim (not HTML-escaped).
+	// Other exporters strip tags and render plain text.
+	ObjectTypeHtml
+	// ObjectTypeRTF is a RichObject whose Text field contains raw RTF content.
+	// HTML exporters convert RTF to HTML; PDF/image exporters render plain text
+	// after stripping RTF control words via utils.StripRTF.
+	ObjectTypeRTF
 )
 
 // DuplicatesMode controls how consecutive objects with the same name and text

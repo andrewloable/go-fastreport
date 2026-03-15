@@ -13,6 +13,7 @@ import (
 	"github.com/andrewloable/go-fastreport/export"
 	"github.com/andrewloable/go-fastreport/preview"
 	"github.com/andrewloable/go-fastreport/style"
+	"github.com/andrewloable/go-fastreport/utils"
 )
 
 // Exporter produces HTML output from a PreparedPages collection.
@@ -98,8 +99,104 @@ func (e *Exporter) ExportPageBegin(pg *preview.PreparedPage) error {
 		w, h,
 	))
 	e.sb.WriteString("\n")
+
+	// Watermark behind page content (z-index 0).
+	if wm := pg.Watermark; wm != nil && wm.Enabled {
+		if !wm.ShowImageOnTop {
+			e.renderWatermarkImage(wm, w, h)
+		}
+		if !wm.ShowTextOnTop {
+			e.renderWatermarkText(wm, w, h)
+		}
+	}
+
 	e.pageIdx++
 	return nil
+}
+
+// renderWatermarkText emits a CSS-positioned div with rotated text.
+func (e *Exporter) renderWatermarkText(wm *preview.PreparedWatermark, pageW, pageH float32) {
+	if wm.Text == "" {
+		return
+	}
+	c := wm.TextColor
+	rgba := fmt.Sprintf("rgba(%d,%d,%d,%.2f)", c.R, c.G, c.B, float64(c.A)/255.0)
+	fontSize := wm.Font.Size
+	if fontSize <= 0 {
+		fontSize = 48
+	}
+
+	var rotDeg int
+	switch wm.TextRotation {
+	case preview.WatermarkTextRotationVertical:
+		rotDeg = 90
+	case preview.WatermarkTextRotationForwardDiagonal:
+		rotDeg = -45
+	case preview.WatermarkTextRotationBackwardDiagonal:
+		rotDeg = 45
+	default: // Horizontal
+		rotDeg = 0
+	}
+	transform := ""
+	if rotDeg != 0 {
+		transform = fmt.Sprintf("transform:rotate(%ddeg);", rotDeg)
+	}
+	e.sb.WriteString(fmt.Sprintf(
+		`<div style="position:absolute;top:0;left:0;width:%.2fpx;height:%.2fpx;`+
+			`display:flex;align-items:center;justify-content:center;pointer-events:none;`+
+			`z-index:0;%s">`,
+		pageW, pageH, transform,
+	))
+	e.sb.WriteString(fmt.Sprintf(
+		`<span style="color:%s;font-size:%.0fpx;white-space:nowrap;user-select:none;">%s</span>`,
+		rgba, fontSize*e.Scale, export.HTMLString(wm.Text),
+	))
+	e.sb.WriteString("</div>\n")
+}
+
+// renderWatermarkImage emits a positioned div with a base64-encoded background image.
+func (e *Exporter) renderWatermarkImage(wm *preview.PreparedWatermark, pageW, pageH float32) {
+	if wm.ImageBlobIdx < 0 || e.pp == nil {
+		return
+	}
+	imgData := e.pp.BlobStore.Get(wm.ImageBlobIdx)
+	if len(imgData) == 0 {
+		return
+	}
+	opacity := 1.0 - float64(wm.ImageTransparency)
+	if opacity < 0 {
+		opacity = 0
+	}
+	b64 := base64.StdEncoding.EncodeToString(imgData)
+
+	var bgSize string
+	switch wm.ImageSize {
+	case preview.WatermarkImageSizeStretch:
+		bgSize = "100% 100%"
+	case preview.WatermarkImageSizeZoom:
+		bgSize = "contain"
+	case preview.WatermarkImageSizeTile:
+		bgSize = "auto"
+	default:
+		bgSize = "auto"
+	}
+
+	repeat := "no-repeat"
+	if wm.ImageSize == preview.WatermarkImageSizeTile {
+		repeat = "repeat"
+	}
+	bgPos := "center center"
+	if wm.ImageSize == preview.WatermarkImageSizeNormal {
+		bgPos = "top left"
+	}
+
+	e.sb.WriteString(fmt.Sprintf(
+		`<div style="position:absolute;top:0;left:0;width:%.2fpx;height:%.2fpx;`+
+			`opacity:%.2f;pointer-events:none;z-index:0;`+
+			`background-image:url('data:image/png;base64,%s');`+
+			`background-size:%s;background-repeat:%s;background-position:%s;"></div>`+"\n",
+		pageW, pageH, opacity, b64, bgSize, repeat, bgPos,
+	))
 }
 
 func (e *Exporter) ExportBand(b *preview.PreparedBand) error {
@@ -238,7 +335,23 @@ func (e *Exporter) renderObject(obj preview.PreparedObject, scale float32) {
 			textCSS.WriteString("white-space:nowrap;")
 		}
 
-		e.sb.WriteString(fmt.Sprintf(`<div %s>%s</div>`, styleAttr(textCSS.String()), export.HTMLString(obj.Text)))
+		innerText := export.HTMLString(obj.Text)
+		if obj.HyperlinkKind == 1 && obj.HyperlinkValue != "" {
+			// Wrap content in an anchor tag for URL hyperlinks.
+			innerText = fmt.Sprintf(`<a href="%s" target="_blank" style="color:inherit;text-decoration:inherit;">%s</a>`,
+				export.HTMLString(obj.HyperlinkValue), innerText)
+		}
+		e.sb.WriteString(fmt.Sprintf(`<div %s>%s</div>`, styleAttr(textCSS.String()), innerText))
+
+	case preview.ObjectTypeHtml:
+		// Emit raw HTML markup inside a positioned container div.
+		// Text is not HTML-escaped so that embedded tags are preserved.
+		e.sb.WriteString(fmt.Sprintf(`<div %s>%s</div>`, styleAttr("overflow:hidden;"), obj.Text))
+
+	case preview.ObjectTypeRTF:
+		// Convert RTF to HTML preserving bold, italic, underline, paragraph breaks, etc.
+		htmlContent := utils.RTFToHTML(obj.Text)
+		e.sb.WriteString(fmt.Sprintf(`<div %s>%s</div>`, styleAttr("overflow:hidden;"), htmlContent))
 
 	case preview.ObjectTypePicture:
 		if obj.BlobIdx >= 0 && e.pp != nil {
@@ -399,13 +512,45 @@ func (e *Exporter) renderObject(obj preview.PreparedObject, scale float32) {
 			e.sb.WriteString(`</svg></div>`)
 		}
 
+	case preview.ObjectTypeSVG:
+		if obj.BlobIdx >= 0 && e.pp != nil {
+			if svgData := e.pp.BlobStore.Get(obj.BlobIdx); len(svgData) > 0 {
+				// Emit SVG inline inside a positioned container div.
+				// The SVG is adjusted to fill the bounding box via width/height overrides.
+				e.sb.WriteString(fmt.Sprintf(`<div %s>`, styleAttr("")))
+				// Strip any existing width/height attributes from the root <svg> tag
+				// so that CSS controls the size. This is a simple prefix injection.
+				svgStr := string(svgData)
+				e.sb.WriteString(svgStr)
+				e.sb.WriteString(`</div>`)
+				break
+			}
+		}
+		// No SVG data — empty placeholder.
+		e.sb.WriteString(fmt.Sprintf(`<div %s></div>`, styleAttr("")))
+
 	default:
 		// Unknown/unhandled type — render an empty placeholder.
 		e.sb.WriteString(fmt.Sprintf(`<div %s></div>`, styleAttr("")))
 	}
 }
 
-func (e *Exporter) ExportPageEnd(_ *preview.PreparedPage) error {
+func (e *Exporter) ExportPageEnd(pg *preview.PreparedPage) error {
+	// Watermark on top of page content (rendered last so it overlays).
+	if wm := pg.Watermark; wm != nil && wm.Enabled {
+		scale := e.Scale
+		if scale <= 0 {
+			scale = 1
+		}
+		w := pg.Width * scale
+		h := pg.Height * scale
+		if wm.ShowImageOnTop {
+			e.renderWatermarkImage(wm, w, h)
+		}
+		if wm.ShowTextOnTop {
+			e.renderWatermarkText(wm, w, h)
+		}
+	}
 	e.sb.WriteString("</div>\n") // close .page
 	return nil
 }

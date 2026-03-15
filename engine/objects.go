@@ -20,7 +20,6 @@ import (
 	"github.com/andrewloable/go-fastreport/sparkline"
 	"github.com/andrewloable/go-fastreport/style"
 	"github.com/andrewloable/go-fastreport/table"
-	"github.com/andrewloable/go-fastreport/utils"
 )
 
 
@@ -57,7 +56,13 @@ func (e *ReportEngine) populateBandObjects2(objs *report.ObjectCollection, pb *p
 			}
 			// Render TableObject cells as individual PreparedObjects.
 			if tbl, ok := obj.(*table.TableObject); ok {
-				e.populateTableObjects(tbl, tbl.Left(), tbl.Top(), pb)
+				base := &tbl.TableBase
+				if tbl.IsManualBuild() {
+					if built := tbl.InvokeManualBuild(); built != nil {
+						base = built
+					}
+				}
+				e.populateTableObjects(base, tbl.Left(), tbl.Top(), pb)
 			}
 			// Render AdvMatrixObject physical cells as individual PreparedObjects.
 			if adv, ok := obj.(*object.AdvMatrixObject); ok {
@@ -109,10 +114,10 @@ func (e *ReportEngine) populateContainerChildren(c *object.ContainerObject, offs
 	}
 }
 
-// populateTableObjects flattens a TableObject's cells into PreparedObjects.
-// Each cell is rendered at its computed absolute position (tableOriginX + colOffset,
-// tableOriginY + rowOffset). ColSpan and RowSpan determine cell size.
-func (e *ReportEngine) populateTableObjects(tbl *table.TableObject, originX, originY float32, pb *preview.PreparedBand) {
+// populateTableObjects flattens a TableBase's cells into PreparedObjects.
+// Each cell is rendered at its computed absolute position (originX + colOffset,
+// originY + rowOffset). ColSpan and RowSpan determine cell size.
+func (e *ReportEngine) populateTableObjects(tbl *table.TableBase, originX, originY float32, pb *preview.PreparedBand) {
 	// Pre-compute cumulative column X offsets.
 	cols := tbl.Columns()
 	colX := make([]float32, len(cols)+1)
@@ -331,10 +336,37 @@ func (e *ReportEngine) buildPreparedObject(obj report.Base) *preview.PreparedObj
 		Font:    style.DefaultFont(),
 	}
 
+	// Populate hyperlink from ReportComponentBase if present.
+	type hasHyperlink interface {
+		Hyperlink() *report.Hyperlink
+	}
+	if hld, ok := obj.(hasHyperlink); ok {
+		if hl := hld.Hyperlink(); hl != nil {
+			switch hl.Kind {
+			case "URL":
+				po.HyperlinkKind = 1
+				val := hl.Value
+				if val == "" && hl.Expression != "" && e.report != nil {
+					if ev, err := e.report.Calc(hl.Expression); err == nil {
+						val = fmt.Sprintf("%v", ev)
+					}
+				}
+				po.HyperlinkValue = val
+			case "Bookmark":
+				po.HyperlinkKind = 3
+				po.HyperlinkValue = hl.Expression
+			}
+		}
+	}
+
 	switch v := obj.(type) {
 	case *object.HtmlObject:
-		po.Kind = preview.ObjectTypeText
+		po.Kind = preview.ObjectTypeHtml
 		po.TextColor = color.RGBA{A: 255}
+		po.Border = v.Border()
+		if f, ok := v.Fill().(*style.SolidFill); ok && f.Color.A > 0 {
+			po.FillColor = f.Color
+		}
 		po.Text = e.evalText(v.Text())
 
 	case *object.TextObject:
@@ -479,10 +511,12 @@ func (e *ReportEngine) buildPreparedObject(obj report.Base) *preview.PreparedObj
 		po.BlobIdx = e.renderGaugeBlob(v.Name(), gauge.RenderSimpleProgress(v, int(geom.Width()), int(geom.Height())))
 
 	case *object.RichObject:
-		// Strip RTF control words to get plain text, then evaluate bracket expressions.
-		po.Kind = preview.ObjectTypeText
+		// Preserve the raw RTF content so that exporters with RTF support
+		// (HTML) can render formatting. Exporters that do not support RTF
+		// (PDF, image) fall back to plain text via StripRTF at export time.
+		po.Kind = preview.ObjectTypeRTF
 		po.TextColor = color.RGBA{A: 255}
-		po.Text = e.evalText(utils.StripRTF(v.Text()))
+		po.Text = e.evalText(v.Text())
 
 	case *object.SVGObject:
 		// Store the raw SVG XML in BlobStore.  HTML exporters embed it inline;
@@ -590,11 +624,9 @@ func (e *ReportEngine) buildPreparedObject(obj report.Base) *preview.PreparedObj
 
 	case *object.MSChartObject:
 		po.Kind = preview.ObjectTypePicture
-		if series := sparkline.DecodeChartData(v.ChartData); series != nil {
-			img := sparkline.Render(series, int(geom.Width()), int(geom.Height()))
-			if img != nil {
-				po.BlobIdx = e.renderGaugeBlob(v.Name(), img)
-			}
+		img := v.RenderToImage(int(geom.Width()), int(geom.Height()))
+		if img != nil {
+			po.BlobIdx = e.renderGaugeBlob(v.Name(), img)
 		}
 
 	case *table.TableObject:

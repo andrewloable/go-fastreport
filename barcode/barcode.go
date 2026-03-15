@@ -15,6 +15,10 @@ import (
 	"github.com/boombuler/barcode/pdf417"
 	"github.com/boombuler/barcode/qr"
 
+	"github.com/andrewloable/go-fastreport/barcode/codabar"
+	"github.com/andrewloable/go-fastreport/barcode/code2of5"
+	"github.com/andrewloable/go-fastreport/barcode/code93"
+	"github.com/andrewloable/go-fastreport/barcode/datamatrix"
 	"github.com/andrewloable/go-fastreport/report"
 	"github.com/andrewloable/go-fastreport/style"
 )
@@ -505,6 +509,149 @@ func (p *PDF417Barcode) Encode(text string) error {
 func (p *PDF417Barcode) DefaultValue() string { return "PDF417" }
 
 // -----------------------------------------------------------------------
+// Code93Barcode — Code 93 linear symbology
+// -----------------------------------------------------------------------
+
+// Code93Barcode implements Code 93 symbology.
+type Code93Barcode struct {
+	BaseBarcodeImpl
+	// IncludeChecksum adds checksum characters (default: true).
+	IncludeChecksum bool
+	// FullASCIIMode enables full ASCII encoding (default: false).
+	FullASCIIMode bool
+}
+
+// NewCode93Barcode creates a Code93Barcode with defaults.
+func NewCode93Barcode() *Code93Barcode {
+	return &Code93Barcode{
+		BaseBarcodeImpl: newBaseBarcodeImpl(BarcodeTypeCode93),
+		IncludeChecksum: true,
+	}
+}
+
+// Encode stores the text for later rendering.
+func (c *Code93Barcode) Encode(text string) error {
+	c.encodedText = text
+	return nil
+}
+
+// Render renders the Code 93 barcode to an image of the given size.
+func (c *Code93Barcode) Render(width, height int) (image.Image, error) {
+	if c.encodedText == "" {
+		return nil, fmt.Errorf("code93: Encode must be called before Render")
+	}
+	enc := code93.New()
+	enc.IncludeChecksum = c.IncludeChecksum
+	enc.FullASCIIMode = c.FullASCIIMode
+	return enc.Encode(c.encodedText, width, height)
+}
+
+// DefaultValue returns a sample Code 93 value.
+func (c *Code93Barcode) DefaultValue() string { return "CODE93" }
+
+// -----------------------------------------------------------------------
+// Code2of5Barcode — 2-of-5 / ITF linear symbology
+// -----------------------------------------------------------------------
+
+// Code2of5Barcode implements the 2-of-5 (interleaved) barcode symbology.
+type Code2of5Barcode struct {
+	BaseBarcodeImpl
+	// Interleaved selects Interleaved 2-of-5 (default: true).
+	Interleaved bool
+}
+
+// NewCode2of5Barcode creates a Code2of5Barcode with defaults.
+func NewCode2of5Barcode() *Code2of5Barcode {
+	return &Code2of5Barcode{
+		BaseBarcodeImpl: newBaseBarcodeImpl(BarcodeTypeCode2of5),
+		Interleaved:     true,
+	}
+}
+
+// Encode stores the text for later rendering.
+func (c *Code2of5Barcode) Encode(text string) error {
+	c.encodedText = text
+	return nil
+}
+
+// Render renders the 2-of-5 barcode to an image of the given size.
+func (c *Code2of5Barcode) Render(width, height int) (image.Image, error) {
+	if c.encodedText == "" {
+		return nil, fmt.Errorf("code2of5: Encode must be called before Render")
+	}
+	enc := code2of5.New()
+	enc.Interleaved = c.Interleaved
+	return enc.Encode(c.encodedText, width, height)
+}
+
+// DefaultValue returns a sample 2-of-5 value.
+func (c *Code2of5Barcode) DefaultValue() string { return "12345670" }
+
+// -----------------------------------------------------------------------
+// CodabarBarcode — Codabar linear symbology
+// -----------------------------------------------------------------------
+
+// CodabarBarcode implements Codabar symbology.
+type CodabarBarcode struct {
+	BaseBarcodeImpl
+}
+
+// NewCodabarBarcode creates a CodabarBarcode.
+func NewCodabarBarcode() *CodabarBarcode {
+	return &CodabarBarcode{BaseBarcodeImpl: newBaseBarcodeImpl(BarcodeTypeCodabar)}
+}
+
+// Encode stores the text for later rendering.
+func (c *CodabarBarcode) Encode(text string) error {
+	c.encodedText = text
+	return nil
+}
+
+// Render renders the Codabar barcode to an image of the given size.
+func (c *CodabarBarcode) Render(width, height int) (image.Image, error) {
+	if c.encodedText == "" {
+		return nil, fmt.Errorf("codabar: Encode must be called before Render")
+	}
+	enc := codabar.New()
+	return enc.Encode(c.encodedText, width, height)
+}
+
+// DefaultValue returns a sample Codabar value.
+func (c *CodabarBarcode) DefaultValue() string { return "A12345B" }
+
+// -----------------------------------------------------------------------
+// DataMatrixBarcode — DataMatrix 2D symbology
+// -----------------------------------------------------------------------
+
+// DataMatrixBarcode implements DataMatrix 2D symbology.
+type DataMatrixBarcode struct {
+	BaseBarcodeImpl
+}
+
+// NewDataMatrixBarcode creates a DataMatrixBarcode.
+func NewDataMatrixBarcode() *DataMatrixBarcode {
+	return &DataMatrixBarcode{BaseBarcodeImpl: newBaseBarcodeImpl(BarcodeTypeDataMatrix)}
+}
+
+// Encode stores the text for later rendering.
+func (d *DataMatrixBarcode) Encode(text string) error {
+	d.encodedText = text
+	return nil
+}
+
+// Render renders the DataMatrix barcode to an image of the given size.
+func (d *DataMatrixBarcode) Render(width, height int) (image.Image, error) {
+	if d.encodedText == "" {
+		return nil, fmt.Errorf("datamatrix: Encode must be called before Render")
+	}
+	enc := datamatrix.New()
+	return enc.Encode(d.encodedText, width, height)
+}
+
+// DefaultValue returns a sample DataMatrix value.
+func (d *DataMatrixBarcode) DefaultValue() string { return "DataMatrix" }
+
+// -----------------------------------------------------------------------
 // Factory
 // -----------------------------------------------------------------------
 
@@ -526,6 +673,14 @@ func NewBarcodeByType(t BarcodeType) BarcodeBase {
 		return NewAztecBarcode()
 	case BarcodeTypePDF417:
 		return NewPDF417Barcode()
+	case BarcodeTypeCode93:
+		return NewCode93Barcode()
+	case BarcodeTypeCode2of5:
+		return NewCode2of5Barcode()
+	case BarcodeTypeCodabar:
+		return NewCodabarBarcode()
+	case BarcodeTypeDataMatrix:
+		return NewDataMatrixBarcode()
 	case BarcodeTypeMSI:
 		return NewMSIBarcode()
 	case BarcodeTypeMaxiCode:

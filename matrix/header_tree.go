@@ -225,11 +225,14 @@ func (m *MatrixObject) BuildTemplateMultiLevel() {
 		for _, item := range levelNodes[level] {
 			cell := table.NewTableCell()
 			cell.SetText(item.Value)
-			// TODO: apply ColSpan = item.CellSize when table supports colspan.
+			if item.CellSize > 1 {
+				cell.SetColSpan(item.CellSize)
+			}
 			row.AddCell(cell)
-			// Fill remaining span cells with empty (for flat table rendering).
+			// Spanned cells are represented as nil placeholders so that column
+			// offset calculations in the engine skip them correctly.
 			for s := 1; s < item.CellSize; s++ {
-				row.AddCell(table.NewTableCell())
+				row.AddCell(nil)
 			}
 		}
 		m.TableBase.AddRow(row)
@@ -279,23 +282,41 @@ func (m *MatrixObject) BuildTemplateMultiLevel() {
 	rowLeafPaths := buildLeafPaths(m.rowRoot)
 	colLeafPaths := buildLeafPaths(m.colRoot)
 
-	_ = rowLevelNodes // used for colspan annotation in a future iteration
-	_ = nRows         // total rows already computed
+	_ = nRows // total rows already computed
 
-	for _, rLeaf := range rowLeaves {
+	// Build a per-row-leaf, per-level map so we know which level to emit
+	// (and its RowSpan) for grouped row-header cells.
+	// For each leaf and each ancestor level, compute how many consecutive
+	// leaf rows share the same ancestor node (= RowSpan of that header cell).
+	// We track which nodes have already been emitted so we only emit the
+	// first occurrence; subsequent cells in the span are nil placeholders.
+	emittedRowNode := make(map[*HeaderItem]bool)
+
+	for ri, rLeaf := range rowLeaves {
+		_ = ri
 		tableRow := table.NewTableRow()
 		rPath := rowLeafPaths[rLeaf]
 
-		// Row-header columns: emit only the leaf path values for now.
-		// For multi-level rendering, emit ancestor labels in earlier rows
-		// (merging is a renderer concern; here we fill the deepest label).
+		// Row-header columns with RowSpan support.
 		for level := 0; level < nRowHeaderCols; level++ {
-			cell := table.NewTableCell()
-			if level < len(rPath) {
-				if level == len(rPath)-1 {
-					cell.SetText(rPath[level])
-				}
+			if level >= len(rPath) {
+				tableRow.AddCell(table.NewTableCell())
+				continue
 			}
+			// Find the HeaderItem at this level in the path.
+			node := findNodeAtLevel(m.rowRoot, rPath, level)
+			if node == nil || emittedRowNode[node] {
+				// Already emitted this header span — insert nil placeholder.
+				tableRow.AddCell(nil)
+				continue
+			}
+			// First occurrence — emit the cell with proper RowSpan.
+			cell := table.NewTableCell()
+			cell.SetText(rPath[level])
+			if node.CellSize > 1 {
+				cell.SetRowSpan(node.CellSize)
+			}
+			emittedRowNode[node] = true
 			tableRow.AddCell(cell)
 		}
 
@@ -314,6 +335,30 @@ func (m *MatrixObject) BuildTemplateMultiLevel() {
 
 		m.TableBase.AddRow(tableRow)
 	}
+}
+
+// findNodeAtLevel traverses root to find the *HeaderItem node at the given
+// depth that matches the path prefix path[0..level]. Returns nil if not found.
+func findNodeAtLevel(root *HeaderItem, path []string, level int) *HeaderItem {
+	if level >= len(path) || root == nil {
+		return nil
+	}
+	// Walk from root through the first 'level' path segments.
+	cur := root
+	for d := 0; d <= level; d++ {
+		found := false
+		for _, child := range cur.Children {
+			if child.Value == path[d] {
+				cur = child
+				found = true
+				break
+			}
+		}
+		if !found {
+			return nil
+		}
+	}
+	return cur
 }
 
 // joinPath concatenates path segments with a zero-byte separator for a unique key.

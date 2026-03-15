@@ -2,6 +2,7 @@ package html_test
 
 import (
 	"bytes"
+	"image/color"
 	"strings"
 	"testing"
 
@@ -278,5 +279,78 @@ func TestExporter_Scale(t *testing.T) {
 	// At 0.5 scale, the 794px page becomes 397px.
 	if !strings.Contains(buf.String(), "397.00px") {
 		t.Error("scaled output should contain 397px page width")
+	}
+}
+
+// ── Watermark ──────────────────────────────────────────────────────────────────
+
+func buildPagesWithWatermark(text string, onTop bool) *preview.PreparedPages {
+	pp := preview.New()
+	pp.AddPage(794, 1123, 1)
+	_ = pp.AddBand(&preview.PreparedBand{Name: "DataBand", Top: 0, Height: 40})
+	pg := pp.GetPage(0)
+	pg.Watermark = &preview.PreparedWatermark{
+		Enabled:       true,
+		Text:          text,
+		TextColor:     color.RGBA{R: 128, G: 0, B: 0, A: 128},
+		TextRotation:  preview.WatermarkTextRotationForwardDiagonal,
+		ShowTextOnTop: onTop,
+		ImageBlobIdx:  -1,
+	}
+	return pp
+}
+
+func TestExporter_WatermarkText_Behind(t *testing.T) {
+	pp := buildPagesWithWatermark("CONFIDENTIAL", false)
+	exp := html.NewExporter()
+	var buf bytes.Buffer
+	if err := exp.Export(pp, &buf); err != nil {
+		t.Fatalf("Export: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "CONFIDENTIAL") {
+		t.Error("watermark text 'CONFIDENTIAL' should appear in HTML output")
+	}
+	if !strings.Contains(out, "rotate(") {
+		t.Error("watermark should include CSS rotation transform")
+	}
+}
+
+func TestExporter_WatermarkText_OnTop(t *testing.T) {
+	pp := buildPagesWithWatermark("DRAFT", true)
+	exp := html.NewExporter()
+	var buf bytes.Buffer
+	if err := exp.Export(pp, &buf); err != nil {
+		t.Fatalf("Export: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "DRAFT") {
+		t.Error("on-top watermark text 'DRAFT' should appear in HTML output")
+	}
+}
+
+func TestExporter_WatermarkText_Horizontal(t *testing.T) {
+	pp := preview.New()
+	pp.AddPage(794, 1123, 1)
+	_ = pp.AddBand(&preview.PreparedBand{Name: "Band", Top: 0, Height: 40})
+	pg := pp.GetPage(0)
+	pg.Watermark = &preview.PreparedWatermark{
+		Enabled:      true,
+		Text:         "HORIZONTAL",
+		TextRotation: preview.WatermarkTextRotationHorizontal,
+		ImageBlobIdx: -1,
+	}
+	exp := html.NewExporter()
+	var buf bytes.Buffer
+	if err := exp.Export(pp, &buf); err != nil {
+		t.Fatalf("Export: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "HORIZONTAL") {
+		t.Error("watermark text should appear")
+	}
+	// Horizontal has no CSS rotation transform.
+	if strings.Contains(out, "rotate(") {
+		t.Error("horizontal watermark should not have rotate transform")
 	}
 }

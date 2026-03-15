@@ -1,6 +1,7 @@
 package reportpkg
 
 import (
+	"context"
 	"errors"
 	"fmt"
 
@@ -17,12 +18,21 @@ func (r *Report) PreparedPages() *preview.PreparedPages {
 // It is set by the engine package via SetPrepareFunc to avoid an import cycle.
 type PrepareFunc func(r *Report) (*preview.PreparedPages, error)
 
+// PrepareFuncCtx is the context-aware variant of PrepareFunc.
+type PrepareFuncCtx func(ctx context.Context, r *Report) (*preview.PreparedPages, error)
+
 var globalPrepareFunc PrepareFunc
+var globalPrepareFuncCtx PrepareFuncCtx
 
 // SetPrepareFunc registers the engine's Prepare implementation.
 // This is called from engine's init() to break the reportpkg→engine import cycle.
 func SetPrepareFunc(f PrepareFunc) {
 	globalPrepareFunc = f
+}
+
+// SetPrepareFuncCtx registers the context-aware engine Prepare implementation.
+func SetPrepareFuncCtx(f PrepareFuncCtx) {
+	globalPrepareFuncCtx = f
 }
 
 // Prepare executes the report and populates PreparedPages.
@@ -47,6 +57,29 @@ func (r *Report) Prepare() error {
 	pp, err := globalPrepareFunc(r)
 	if err != nil {
 		return fmt.Errorf("report.Prepare: %w", err)
+	}
+	r.preparedPages = pp
+	return nil
+}
+
+// PrepareWithContext executes the report with the given context for cancellation
+// and deadline support. It is the context-aware counterpart to Prepare.
+func (r *Report) PrepareWithContext(ctx context.Context) error {
+	if globalPrepareFuncCtx == nil {
+		// Fall back to the non-context variant if the context-aware func is not registered.
+		return r.Prepare()
+	}
+
+	// Evaluate expression-based parameters before running.
+	if r.dictionary != nil {
+		if err := r.dictionary.EvaluateAll(); err != nil {
+			return fmt.Errorf("report.PrepareWithContext: parameter evaluation: %w", err)
+		}
+	}
+
+	pp, err := globalPrepareFuncCtx(ctx, r)
+	if err != nil {
+		return fmt.Errorf("report.PrepareWithContext: %w", err)
 	}
 	r.preparedPages = pp
 	return nil

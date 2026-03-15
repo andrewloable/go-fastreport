@@ -196,3 +196,80 @@ func buildPNG(w, h int) []byte {
 	_ = png.Encode(&buf, img)
 	return buf.Bytes()
 }
+
+// ── Watermark ──────────────────────────────────────────────────────────────────
+
+func TestExporter_WatermarkText(t *testing.T) {
+	pp := buildTestPages(1, []string{"DataBand"})
+	pg := pp.GetPage(0)
+	pg.Watermark = &preview.PreparedWatermark{
+		Enabled:      true,
+		Text:         "CONFIDENTIAL",
+		TextRotation: preview.WatermarkTextRotationForwardDiagonal,
+		ImageBlobIdx: -1,
+	}
+	exp := pdf.NewExporter()
+	var buf bytes.Buffer
+	if err := exp.Export(pp, &buf); err != nil {
+		t.Fatalf("Export with text watermark: %v", err)
+	}
+	if buf.Len() == 0 {
+		t.Error("PDF should not be empty")
+	}
+	// The watermark text should be somewhere in the PDF content stream.
+	if !strings.Contains(buf.String(), "CONFIDENTIAL") {
+		t.Error("PDF should contain watermark text 'CONFIDENTIAL'")
+	}
+}
+
+func TestExporter_WatermarkImage(t *testing.T) {
+	pngBytes := buildPNG(50, 50)
+	pp := preview.New()
+	pp.AddPage(794, 1123, 1)
+	_ = pp.AddBand(&preview.PreparedBand{Name: "DataBand", Top: 0, Height: 40})
+	blobIdx := pp.BlobStore.Add("wm", pngBytes)
+
+	pg := pp.GetPage(0)
+	pg.Watermark = &preview.PreparedWatermark{
+		Enabled:           true,
+		ImageBlobIdx:      blobIdx,
+		ImageSize:         preview.WatermarkImageSizeCenter,
+		ImageTransparency: 0.3,
+		ShowImageOnTop:    false,
+	}
+
+	exp := pdf.NewExporter()
+	var buf bytes.Buffer
+	if err := exp.Export(pp, &buf); err != nil {
+		t.Fatalf("Export with image watermark: %v", err)
+	}
+	if buf.Len() == 0 {
+		t.Error("PDF should not be empty")
+	}
+	// XObject reference should appear in the content stream.
+	if !strings.Contains(buf.String(), "WmIm") {
+		t.Error("PDF should reference the watermark image XObject")
+	}
+}
+
+func TestExporter_WatermarkImage_Stretch(t *testing.T) {
+	pngBytes := buildPNG(100, 100)
+	pp := preview.New()
+	pp.AddPage(794, 1123, 1)
+	_ = pp.AddBand(&preview.PreparedBand{Name: "Band", Top: 0, Height: 40})
+	blobIdx := pp.BlobStore.Add("wm", pngBytes)
+	pg := pp.GetPage(0)
+	pg.Watermark = &preview.PreparedWatermark{
+		Enabled:      true,
+		ImageBlobIdx: blobIdx,
+		ImageSize:    preview.WatermarkImageSizeStretch,
+	}
+	exp := pdf.NewExporter()
+	var buf bytes.Buffer
+	if err := exp.Export(pp, &buf); err != nil {
+		t.Fatalf("Export: %v", err)
+	}
+	if buf.Len() == 0 {
+		t.Error("PDF should not be empty")
+	}
+}

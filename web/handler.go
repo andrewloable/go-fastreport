@@ -69,6 +69,115 @@ func ImageHandler(pp *preview.PreparedPages, opts ...ImageOption) http.Handler {
 	})
 }
 
+// ── CORS middleware ───────────────────────────────────────────────────────────
+
+// CORSConfig holds CORS configuration for the web handlers.
+type CORSConfig struct {
+	// AllowedOrigins is a list of allowed origins. Use ["*"] to allow any origin.
+	AllowedOrigins []string
+	// AllowedMethods is the list of allowed HTTP methods (default: GET, OPTIONS).
+	AllowedMethods []string
+	// AllowedHeaders is the list of allowed request headers.
+	AllowedHeaders []string
+	// AllowCredentials sets the Access-Control-Allow-Credentials header.
+	AllowCredentials bool
+	// MaxAge is the preflight cache duration in seconds (0 = no header).
+	MaxAge int
+}
+
+// DefaultCORSConfig returns a permissive CORS configuration suitable for
+// development. Production deployments should restrict AllowedOrigins.
+func DefaultCORSConfig() CORSConfig {
+	return CORSConfig{
+		AllowedOrigins: []string{"*"},
+		AllowedMethods: []string{"GET", "POST", "OPTIONS"},
+		AllowedHeaders: []string{"Accept", "Content-Type"},
+	}
+}
+
+// WithCORS wraps next with CORS headers based on cfg.
+// It handles OPTIONS preflight requests and sets the appropriate
+// Access-Control-* headers on all responses.
+func WithCORS(next http.Handler, cfg CORSConfig) http.Handler {
+	if len(cfg.AllowedMethods) == 0 {
+		cfg.AllowedMethods = []string{"GET", "OPTIONS"}
+	}
+
+	allowOriginFor := func(origin string) string {
+		if len(cfg.AllowedOrigins) == 0 {
+			return ""
+		}
+		for _, o := range cfg.AllowedOrigins {
+			if o == "*" || o == origin {
+				return o
+			}
+		}
+		return ""
+	}
+
+	joinStr := func(parts []string, sep string) string {
+		result := ""
+		for i, p := range parts {
+			if i > 0 {
+				result += sep
+			}
+			result += p
+		}
+		return result
+	}
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		origin := r.Header.Get("Origin")
+		allowed := allowOriginFor(origin)
+		if allowed == "" && origin != "" {
+			// Origin not allowed — serve request without CORS headers.
+			next.ServeHTTP(w, r)
+			return
+		}
+		if allowed == "" {
+			// No Origin header (non-browser request).
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		w.Header().Set("Access-Control-Allow-Origin", allowed)
+		w.Header().Set("Access-Control-Allow-Methods", joinStr(cfg.AllowedMethods, ", "))
+		if len(cfg.AllowedHeaders) > 0 {
+			w.Header().Set("Access-Control-Allow-Headers", joinStr(cfg.AllowedHeaders, ", "))
+		}
+		if cfg.AllowCredentials {
+			w.Header().Set("Access-Control-Allow-Credentials", "true")
+		}
+		if cfg.MaxAge > 0 {
+			w.Header().Set("Access-Control-Max-Age", http.TimeFormat[:0])
+			// Use simple integer formatting without fmt import.
+			age := cfg.MaxAge
+			ageStr := ""
+			if age <= 0 {
+				ageStr = "0"
+			} else {
+				tmp := [20]byte{}
+				idx := len(tmp)
+				for age > 0 {
+					idx--
+					tmp[idx] = byte('0' + age%10)
+					age /= 10
+				}
+				ageStr = string(tmp[idx:])
+			}
+			w.Header().Set("Access-Control-Max-Age", ageStr)
+		}
+
+		// Handle OPTIONS preflight.
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
+
 // applyQueryPageRange reads the "pages" query parameter and sets the export
 // base's page range. Supported values:
 //

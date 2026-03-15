@@ -1,6 +1,263 @@
 package utils
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+)
+
+// RTFToHTML converts RTF-formatted text to an HTML fragment preserving basic
+// formatting: bold (\b), italic (\i), underline (\ul / \ulnone), paragraph
+// breaks (\par), line breaks (\line), tabs (\tab), font size (\fsN), and
+// special characters (\'XX hex escapes, \uN Unicode, named dashes/quotes).
+//
+// The output is a minimal HTML fragment (no <html> or <body> wrapper).
+// Unknown control words are silently discarded.
+func RTFToHTML(rtf string) string {
+	if !strings.HasPrefix(strings.TrimSpace(rtf), `{\rtf`) {
+		// Not RTF — return HTML-escaped plain text.
+		return htmlEscapeString(rtf)
+	}
+
+	var sb strings.Builder
+	sb.Grow(len(rtf))
+
+	// Formatting state stack (one entry per group level).
+	type fmtState struct {
+		bold      bool
+		italic    bool
+		underline bool
+		fontSize  int // half-points (RTF \fsN unit)
+	}
+
+	var stack []fmtState
+	cur := fmtState{}
+
+	// Emit closing tags for the difference between prev and next state.
+	closeTags := func(prev fmtState) {
+		if prev.underline && !cur.underline {
+			sb.WriteString("</u>")
+		}
+		if prev.italic && !cur.italic {
+			sb.WriteString("</i>")
+		}
+		if prev.bold && !cur.bold {
+			sb.WriteString("</b>")
+		}
+	}
+	openTags := func(prev fmtState) {
+		if !prev.bold && cur.bold {
+			sb.WriteString("<b>")
+		}
+		if !prev.italic && cur.italic {
+			sb.WriteString("<i>")
+		}
+		if !prev.underline && cur.underline {
+			sb.WriteString("<u>")
+		}
+	}
+
+	i := 0
+	n := len(rtf)
+	groupDepth := 0
+	skipDepth := 0
+
+	for i < n {
+		ch := rtf[i]
+		switch ch {
+		case '{':
+			groupDepth++
+			stack = append(stack, cur) // push
+			i++
+			if i < n && rtf[i] == '\\' && i+1 < n && rtf[i+1] == '*' {
+				skipDepth = groupDepth
+				i += 2
+			}
+		case '}':
+			if skipDepth == groupDepth {
+				skipDepth = 0
+			}
+			if len(stack) > 0 {
+				prev := cur
+				cur = stack[len(stack)-1]
+				stack = stack[:len(stack)-1]
+				// Emit closing/opening tags for state change.
+				closeTags(prev)
+				// Restore opens if state changed back.
+				// (tags already open in parent context — don't re-open them)
+				_ = openTags
+			}
+			groupDepth--
+			i++
+		case '\\':
+			if skipDepth > 0 {
+				i = skipControlWord(rtf, i)
+				continue
+			}
+			// Parse control word.
+			i++ // skip backslash
+			if i >= n {
+				break
+			}
+			bch := rtf[i]
+			if !isAlpha(bch) {
+				// Control symbol.
+				switch bch {
+				case '\'':
+					if i+2 < n {
+						hi := hexVal(rtf[i+1])
+						lo := hexVal(rtf[i+2])
+						if hi >= 0 && lo >= 0 {
+							b := byte(hi<<4 | lo)
+							if b < 0x80 {
+								sb.WriteByte(b)
+							} else {
+								fmt.Fprintf(&sb, "&#%d;", int(b))
+							}
+						}
+						i += 3
+					} else {
+						i++
+					}
+				case '-', '~':
+					sb.WriteString("&#45;")
+					i++
+				case '_':
+					sb.WriteString("&#8209;") // non-breaking hyphen
+					i++
+				default:
+					i++
+				}
+				continue
+			}
+			// Control word.
+			start := i
+			for i < n && isAlpha(rtf[i]) {
+				i++
+			}
+			word := rtf[start:i]
+			// Optional numeric param.
+			paramStart := i
+			negative := false
+			if i < n && rtf[i] == '-' {
+				negative = true
+				i++
+			}
+			for i < n && rtf[i] >= '0' && rtf[i] <= '9' {
+				i++
+			}
+			paramStr := rtf[paramStart:i]
+			if i < n && rtf[i] == ' ' {
+				i++ // delimiter
+			}
+			paramVal := parseSignedInt(paramStr)
+			if negative {
+				paramVal = -paramVal
+			}
+
+			prev := cur
+			switch word {
+			case "b":
+				cur.bold = paramVal != 0 || paramStr == ""
+			case "i":
+				cur.italic = paramVal != 0 || paramStr == ""
+			case "ul":
+				cur.underline = paramVal != 0 || paramStr == ""
+			case "ulnone":
+				cur.underline = false
+			case "fs":
+				cur.fontSize = paramVal
+			case "pard":
+				cur.bold, cur.italic, cur.underline = false, false, false
+				closeTags(prev)
+				continue
+			case "par":
+				closeTags(prev)
+				sb.WriteString("<br>\n")
+				openTags(prev)
+				continue
+			case "line":
+				sb.WriteString("<br>\n")
+				continue
+			case "tab":
+				sb.WriteString("&nbsp;&nbsp;&nbsp;&nbsp;")
+				continue
+			case "u":
+				cp := parseSignedInt(paramStr)
+				if cp < 0 {
+					cp += 65536
+				}
+				if cp > 0 {
+					fmt.Fprintf(&sb, "&#%d;", cp)
+				}
+				continue
+			case "enspace", "emspace", "qmspace":
+				sb.WriteString("&nbsp;")
+				continue
+			case "endash":
+				sb.WriteString("&ndash;")
+				continue
+			case "emdash":
+				sb.WriteString("&mdash;")
+				continue
+			case "lquote":
+				sb.WriteString("&lsquo;")
+				continue
+			case "rquote":
+				sb.WriteString("&rsquo;")
+				continue
+			case "ldblquote":
+				sb.WriteString("&ldquo;")
+				continue
+			case "rdblquote":
+				sb.WriteString("&rdquo;")
+				continue
+			case "bullet":
+				sb.WriteString("&bull;")
+				continue
+			}
+			// Apply formatting change.
+			closeTags(prev)
+			openTags(prev)
+		default:
+			if skipDepth == 0 {
+				if ch != '\n' && ch != '\r' {
+					switch ch {
+					case '<':
+						sb.WriteString("&lt;")
+					case '>':
+						sb.WriteString("&gt;")
+					case '&':
+						sb.WriteString("&amp;")
+					default:
+						sb.WriteByte(ch)
+					}
+				}
+			}
+			i++
+		}
+	}
+
+	// Close any still-open formatting tags.
+	if cur.underline {
+		sb.WriteString("</u>")
+	}
+	if cur.italic {
+		sb.WriteString("</i>")
+	}
+	if cur.bold {
+		sb.WriteString("</b>")
+	}
+
+	return sb.String()
+}
+
+// htmlEscapeString replaces <, >, & with HTML entities.
+func htmlEscapeString(s string) string {
+	s = strings.ReplaceAll(s, "&", "&amp;")
+	s = strings.ReplaceAll(s, "<", "&lt;")
+	s = strings.ReplaceAll(s, ">", "&gt;")
+	return s
+}
 
 // StripRTF converts RTF-formatted text to plain text by removing all RTF
 // control words, control symbols, and group delimiters.  It preserves the

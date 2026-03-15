@@ -11,22 +11,21 @@ import (
 // ── MaxiCode encoding ─────────────────────────────────────────────────────────
 //
 // MaxiCode (ISO/IEC 16023) is a 2D matrix barcode symbol consisting of 144
-// data codewords and up to 82 error-correction codewords arranged in a
-// hexagonal grid of 30 columns × 33 rows, with a central bullseye finder.
+// total codewords (data + error correction) arranged in a hexagonal grid of
+// 30 columns × 33 rows, with a central bullseye finder.
 //
 // Each codeword is 6 bits wide (64 possible values). Characters are encoded
 // using two character sets:
 //   - Set A: control characters and GS1 special characters
 //   - Set B: printable ASCII (SP through DEL)
 //
-// This implementation encodes text to codewords following the MaxiCode
-// character set rules (modes 2–6). Reed-Solomon error correction is omitted
-// — the RS codewords are filled with zeros. The symbol is therefore not
-// scannable by a barcode reader, but it is visually accurate and sufficient
-// for report preview / print purposes.
+// Error correction uses Reed-Solomon coding over GF(64) with primitive
+// polynomial x^6 + x + 1 (0x43). The 144-codeword layout is:
 //
-// For production-scannable symbols, replace the RS placeholder with a
-// proper GF(64) Reed-Solomon encoder.
+//	[0..9]          10 primary data codewords (mode byte + 9 bytes)
+//	[10..19]        10 primary ECC codewords
+//	[20..103/87]    84 or 68 secondary data codewords (modes 4/6 or 5)
+//	[104..143]      40 or 56 secondary ECC codewords (interleaved odd/even)
 
 // maxiCodeSetA maps Set A indices (0–63) to their character values.
 // Set A contains: NUL, SOH … GS, RS, EOT, ENQ, ACK, BEL, BS, HT, LF, VT, FF,
@@ -39,6 +38,31 @@ var maxiCodeSetA [64]byte
 // maxiCodeSetB maps Set B indices (0–63) to their character values.
 // Index 0 = LATA (latch to Set A); offset 1 maps to SP (0x20) through DEL (0x7F).
 var maxiCodeSetB [64]byte
+
+// MaxiCodeComputeECC is exported for testing; it computes RS ECC for MaxiCode.
+func MaxiCodeComputeECC(data []byte, eccLen int) []byte { return maxiCodeRS(data, eccLen) }
+
+// maxiCodeGFTable holds pre-computed GF(64) log/antilog tables.
+// Generator polynomial: x^6 + x + 1 (0x43).
+var maxiCodeGFTable = func() struct {
+	logt [64]int
+	alog [63]int
+} {
+	var gf struct {
+		logt [64]int
+		alog [63]int
+	}
+	p := 1
+	for v := 0; v < 63; v++ {
+		gf.alog[v] = p
+		gf.logt[p] = v
+		p <<= 1
+		if p&64 != 0 {
+			p ^= 0x43
+		}
+	}
+	return gf
+}()
 
 func init() {
 	// Set A: positions 0..62 map to NUL..GS (ASCII 0–28), 29..62 are padding/ctrl.
@@ -61,66 +85,160 @@ func init() {
 	}
 }
 
-// maxiCodeEncode converts text to a slice of 6-bit codewords for MaxiCode mode 4.
-// The codeword sequence starts in Set B. Shift to Set A is used for characters
-// below 0x20. The sequence is truncated or padded to 144 data codewords.
-func maxiCodeEncode(text string, mode int) []byte {
-	const totalData = 144
+// maxiCodeRS computes Reed-Solomon ECC for MaxiCode over GF(64).
+// The generator polynomial has roots alpha^1 .. alpha^eccLen.
+// Returns eccLen ECC codewords with index 0 = highest-degree check symbol.
+func maxiCodeRS(data []byte, eccLen int) []byte {
+	gf := &maxiCodeGFTable
+	const logmod = 63
 
-	codewords := make([]byte, 0, totalData)
-
-	// Mode prefix codeword encodes the mode (2–6).
-	if mode < 2 || mode > 6 {
-		mode = 4
+	// Build generator polynomial by multiplying (x - alpha^i) for i = 1..eccLen.
+	rspoly := make([]int, eccLen+1)
+	rspoly[0] = 1
+	for i := 1; i <= eccLen; i++ {
+		rspoly[i] = 1
+		for k := i - 1; k > 0; k-- {
+			if rspoly[k] != 0 {
+				rspoly[k] = gf.alog[(gf.logt[rspoly[k]]+i)%logmod]
+			}
+			rspoly[k] ^= rspoly[k-1]
+		}
+		rspoly[0] = gf.alog[(gf.logt[rspoly[0]]+i)%logmod]
 	}
 
-	// Mode 2/3: structured carrier message (e.g. UPS shipping data).
-	// The message format is: ZipCode + CountryCode + ServiceClass + "\x1d" + SecondaryMessage.
-	// Modes 4-6: general purpose text.
-	// For simplicity, we always use the general character encoding below.
-	// A mode field is embedded as the first codeword.
-	codewords = append(codewords, byte(mode))
+	// Polynomial long division: compute remainder.
+	res := make([]int, eccLen)
+	for _, d := range data {
+		m := res[eccLen-1] ^ int(d)
+		for k := eccLen - 1; k > 0; k-- {
+			if m != 0 && rspoly[k] != 0 {
+				res[k] = res[k-1] ^ gf.alog[(gf.logt[m]+gf.logt[rspoly[k]])%logmod]
+			} else {
+				res[k] = res[k-1]
+			}
+		}
+		if m != 0 && rspoly[0] != 0 {
+			res[0] = gf.alog[(gf.logt[m]+gf.logt[rspoly[0]])%logmod]
+		} else {
+			res[0] = 0
+		}
+	}
 
-	// Start in Set B. Encode each character.
+	// Reverse: index 0 = highest-degree check symbol (matches C# result ordering).
+	ecc := make([]byte, eccLen)
+	for i := 0; i < eccLen; i++ {
+		ecc[i] = byte(res[eccLen-1-i])
+	}
+	return ecc
+}
+
+// maxiCodeEncodeText converts text characters to 6-bit MaxiCode codewords
+// starting in Set B. Shift to Set A is used for characters below 0x20.
+// Returns at most maxCW codewords.
+func maxiCodeEncodeText(text string, maxCW int) []byte {
+	cw := make([]byte, 0, maxCW)
 	inSetA := false
 	for _, r := range text {
 		if r > 0x7F {
-			// Non-ASCII: use GS character (0x1D) as placeholder.
-			r = 0x1D
+			r = 0x1D // Non-ASCII: substitute GS
 		}
 		ch := byte(r)
 		if ch < 0x20 {
-			// Control character — belongs to Set A.
 			if !inSetA {
-				codewords = append(codewords, 63) // LATA
+				cw = append(cw, 63) // LATA
 				inSetA = true
 			}
-			codewords = append(codewords, ch&0x3F)
+			cw = append(cw, ch&0x3F)
 		} else {
-			// Printable character — belongs to Set B.
 			if inSetA {
-				codewords = append(codewords, 0) // LATB
+				cw = append(cw, 0) // LATB
 				inSetA = false
 			}
-			idx := int(ch) - 0x1F // SP (0x20) → index 1
+			idx := int(ch) - 0x1F // SP → 1, DEL → 96→clamped 63
 			if idx < 1 {
 				idx = 1
 			}
 			if idx > 63 {
 				idx = 63
 			}
-			codewords = append(codewords, byte(idx))
+			cw = append(cw, byte(idx))
 		}
-		if len(codewords) >= totalData {
+		if len(cw) >= maxCW {
 			break
 		}
 	}
-
-	// Pad to 144 data codewords.
-	for len(codewords) < totalData {
-		codewords = append(codewords, 0)
+	for len(cw) < maxCW {
+		cw = append(cw, 0) // pad
 	}
-	return codewords[:totalData]
+	return cw[:maxCW]
+}
+
+// maxiCodeEncode encodes text as a 144-codeword MaxiCode symbol including
+// Reed-Solomon error correction. Layout (ISO/IEC 16023):
+//
+//	[0..9]   10 primary data codewords  (mode byte + secondary bytes 0–8 for modes 4/5/6)
+//	[10..19] 10 primary ECC codewords
+//	[20..N]  secondary data codewords   (84 for modes 2/3/4/6; 68 for mode 5)
+//	[N+1..]  secondary ECC codewords    (40 for modes 2/3/4/6; 56 for mode 5), interleaved odd/even
+//
+// Total is always 144 codewords.
+func maxiCodeEncode(text string, mode int) []byte {
+	if mode < 2 || mode > 6 {
+		mode = 4
+	}
+
+	// Secondary data and ECC sizes by mode.
+	secondaryMax := 84
+	secondaryECMax := 40
+	if mode == 5 {
+		secondaryMax = 68
+		secondaryECMax = 56
+	}
+	totalMax := secondaryMax + 10 // primary(10) + secondary data
+
+	// Build raw codewords: [mode_byte] + [secondary text], length totalMax.
+	// For modes 2/3, the primary codewords (positions 0..9) embed postal data,
+	// but we use the simplified encoding (mode byte + secondary data bytes) since
+	// the structured primary is parsed from the text by the caller's payload builder.
+	raw := make([]byte, totalMax)
+	raw[0] = byte(mode)
+	// Encode the text into secondary slots (positions 1..totalMax-1).
+	sec := maxiCodeEncodeText(text, totalMax-1)
+	copy(raw[1:], sec)
+
+	// Compute primary ECC on codewords[0..9].
+	primary := raw[:10]
+	primaryECC := maxiCodeRS(primary, 10)
+
+	// Split secondary (raw[10..totalMax-1]) into odd and even interleaves.
+	secondary := raw[10:]
+	half := len(secondary) / 2
+	secOdd := make([]byte, half)
+	secEven := make([]byte, half)
+	for i, cw := range secondary {
+		if i%2 == 1 {
+			secOdd[(i-1)/2] = cw
+		} else {
+			secEven[i/2] = cw
+		}
+	}
+	eccHalf := secondaryECMax / 2
+	secECCOdd := maxiCodeRS(secOdd, eccHalf)
+	secECCEven := maxiCodeRS(secEven, eccHalf)
+
+	// Assemble final 144 codewords.
+	out := make([]byte, 144)
+	copy(out[0:10], primary)
+	copy(out[10:20], primaryECC)
+	copy(out[20:20+secondaryMax], raw[10:])
+	// Interleave secondary ECC after the secondary data block.
+	for i := 0; i < len(secECCOdd); i++ {
+		out[20+secondaryMax+(2*i)+1] = secECCOdd[i]
+	}
+	for i := 0; i < len(secECCEven); i++ {
+		out[20+secondaryMax+(2*i)] = secECCEven[i]
+	}
+	return out
 }
 
 // maxiCodeCWBits converts a slice of 6-bit codewords to a flat bit sequence.

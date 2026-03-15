@@ -30,9 +30,38 @@ func (r *Report) Load(filename string) error {
 	return r.LoadFrom(f)
 }
 
+// LoadWithPassword reads a password-protected FRX report file from filename.
+// If the file is not encrypted the password is ignored.
+func (r *Report) LoadWithPassword(filename, password string) error {
+	f, err := os.Open(filename)
+	if err != nil {
+		return fmt.Errorf("report.LoadWithPassword: %w", err)
+	}
+	defer f.Close()
+	return r.LoadFromWithPassword(f, password)
+}
+
 // LoadFromString deserializes a Report from an FRX XML string.
 func (r *Report) LoadFromString(xml string) error {
 	return r.LoadFrom(strings.NewReader(xml))
+}
+
+// LoadFromStringWithPassword deserializes a password-protected FRX XML string.
+// If the content is not encrypted the password is ignored.
+func (r *Report) LoadFromStringWithPassword(xml, password string) error {
+	return r.LoadFromWithPassword(strings.NewReader(xml), password)
+}
+
+// LoadFromWithPassword deserializes a Report from an io.Reader that may contain
+// a FastReport-encrypted or gzip-compressed FRX stream. If the stream is
+// encrypted the password is used to decrypt it; if not encrypted the password
+// is silently ignored. Gzip decompression is applied after decryption.
+func (r *Report) LoadFromWithPassword(rd io.Reader, password string) error {
+	xmlRdr, _, err := serial.NewReaderWithPassword(rd, password)
+	if err != nil {
+		return fmt.Errorf("report.LoadFromWithPassword: %w", err)
+	}
+	return r.loadFromSerialReader(xmlRdr)
 }
 
 // LoadFrom deserializes a Report from an io.Reader containing FRX XML.
@@ -59,6 +88,11 @@ func (r *Report) LoadFrom(rd io.Reader) error {
 	}
 
 	rdr := serial.NewReader(src)
+	return r.loadFromSerialReader(rdr)
+}
+
+// loadFromSerialReader is the internal shared deserializer.
+func (r *Report) loadFromSerialReader(rdr *serial.Reader) error {
 
 	// Expect the root <Report> element.
 	typeName, ok := rdr.ReadObjectHeader()

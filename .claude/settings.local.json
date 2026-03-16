@@ -14,7 +14,26 @@
       "WebFetch(domain:raw.githubusercontent.com)",
       "WebSearch",
       "Bash(cd /G/projects/loabletech/go-fastreport && ls -la preview/ | grep -E \"\\\\.go$\")",
-      "Bash(cd /G/projects/loabletech/go-fastreport && wc -l reportpkg/*.go band/*.go object/*.go engine/*.go serial/*.go export/*.go | tail -1)"
+      "Bash(cd /G/projects/loabletech/go-fastreport && wc -l reportpkg/*.go band/*.go object/*.go engine/*.go serial/*.go export/*.go | tail -1)",
+      "Bash(cd \"G:/projects/loabletech/go-fastreport\" && go test ./... 2>&1 | tail -10)",
+      "Bash(cd \"G:/projects/loabletech/go-fastreport\" && go run /tmp/dbg/main.go 2>&1 | grep -i \"barcode\\\\|DEBUG build\")",
+      "Bash(cd \"G:/projects/loabletech/go-fastreport\" && go run /tmp/dbg/main.go 2>&1 | grep \"DEBUG\" | head -20)",
+      "Bash(cd \"G:/projects/loabletech/go-fastreport\" && go build ./engine/ 2>&1)",
+      "Bash(cd \"G:/projects/loabletech/go-fastreport\" && go clean -cache && go run /tmp/dbg/main.go 2>&1 | grep \"DEBUG\" | head -20)",
+      "Bash(cd \"G:/projects/loabletech/go-fastreport\" && grep -oP 'Barcode=\"[^\"]*\"' test-reports/*.frx | grep -oP '\\(?<=Barcode=\"\\)[^\"]*' | sort -u)",
+      "Bash(cd \"G:/projects/loabletech/go-fastreport\" && go run ./examples/frx_to_html/ -frx \"test-reports/Badges.frx\" 2>&1)",
+      "Bash(cd \"G:/projects/loabletech/go-fastreport\" && go run ./examples/frx_to_html/ 2>&1 | tail -5)",
+      "Bash(cd \"G:/projects/loabletech/go-fastreport\" && sed -n '19p' html-output/Badges.html | tr '>' '>\\\\n' | head -20)",
+      "Bash(cd \"G:/projects/loabletech/go-fastreport\" && go test ./... 2>&1 | grep FAIL)",
+      "Bash(cd \"G:/projects/loabletech/go-fastreport\" && go run ./examples/frx_to_html/ 2>&1 | tail -3)",
+      "Bash(cd \"G:/projects/loabletech/go-fastreport/csharp-validation\" && dotnet --version 2>&1)",
+      "Bash(cd \"G:/projects/loabletech/go-fastreport/csharp-validation/FrxToHtml\" && dotnet add package FastReport.OpenSource.Export.Html 2>&1)",
+      "Bash(cd \"G:/projects/loabletech/go-fastreport/csharp-validation/FrxToHtml\" && dotnet remove package FastReport.OpenSource.Web 2>&1 | tail -2)",
+      "Bash(cd \"G:/projects/loabletech/go-fastreport/csharp-validation/FrxToHtml\" && dotnet build 2>&1)",
+      "Bash(cd \"G:/projects/loabletech/go-fastreport/csharp-validation/FrxToHtml\" && dotnet run -- --frx \"../../test-reports/Badges.frx\" --out \"../../csharp-html-output\" 2>&1)",
+      "Bash(cd \"G:/projects/loabletech/go-fastreport/csharp-validation/FrxToHtml\" && dotnet run -- --frx \"../../test-reports/simple-list.frx\" --out \"../../csharp-html-output\" 2>&1)",
+      "Bash(cd \"G:/projects/loabletech/go-fastreport/csharp-validation/FrxToHtml\" && dotnet run -- --dir \"../../test-reports\" --out \"../../csharp-html-output\" 2>&1)",
+      "Bash(cd \"G:/projects/loabletech/go-fastreport/csharp-validation/FrxToHtml\" && dotnet run -- --dir \"../../test-reports\" --out \"../../csharp-html-output\" 2>&1 | grep \"FAIL\")"
     ]
   }
 }

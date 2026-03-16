@@ -326,8 +326,21 @@ func (e *Exporter) renderObject(obj preview.PreparedObject, scale float32) {
 		switch obj.VertAlign {
 		case 1:
 			textCSS.WriteString("display:flex;align-items:center;")
+			// When both vert-center and horz-center, use justify-content too.
+			switch obj.HorzAlign {
+			case 1:
+				textCSS.WriteString("justify-content:center;")
+			case 2:
+				textCSS.WriteString("justify-content:flex-end;")
+			}
 		case 2:
 			textCSS.WriteString("display:flex;align-items:flex-end;")
+			switch obj.HorzAlign {
+			case 1:
+				textCSS.WriteString("justify-content:center;")
+			case 2:
+				textCSS.WriteString("justify-content:flex-end;")
+			}
 		}
 		if obj.WordWrap {
 			textCSS.WriteString("word-wrap:break-word;white-space:normal;")

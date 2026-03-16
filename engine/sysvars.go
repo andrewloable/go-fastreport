@@ -1,6 +1,9 @@
 package engine
 
-import "time"
+import (
+	"fmt"
+	"time"
+)
 
 // syncSystemVariables pushes the current engine state into the report's
 // Dictionary system variables so that Report.Calc() can resolve them.
@@ -22,6 +25,8 @@ func (e *ReportEngine) syncSystemVariables() {
 	}
 	d.SetSystemVariable("PageNumber", e.pageNo)
 	d.SetSystemVariable("TotalPages", e.totalPages)
+	d.SetSystemVariable("PageN", fmt.Sprintf("Page %d", e.pageNo))
+	d.SetSystemVariable("PageNofM", fmt.Sprintf("Page %d of %d", e.pageNo, e.totalPages))
 	d.SetSystemVariable("Date", e.date.Format("2006-01-02"))
 	d.SetSystemVariable("Time", e.date.Format("15:04:05"))
 	d.SetSystemVariable("Row", e.rowNo)
@@ -55,6 +60,8 @@ func (e *ReportEngine) syncPageVariables() {
 	}
 	d.SetSystemVariable("PageNumber", e.pageNo)
 	d.SetSystemVariable("TotalPages", e.totalPages)
+	d.SetSystemVariable("PageN", fmt.Sprintf("Page %d", e.pageNo))
+	d.SetSystemVariable("PageNofM", fmt.Sprintf("Page %d of %d", e.pageNo, e.totalPages))
 	d.SetSystemVariable("Date", e.date.Format("2006-01-02"))
 	d.SetSystemVariable("Time", e.date.Format("15:04:05"))
 }
@@ -73,6 +80,8 @@ func (e *ReportEngine) ensureSystemVariables() {
 	defaults := map[string]any{
 		"PageNumber": 1,
 		"TotalPages": 0,
+		"PageN":      "Page 1",
+		"PageNofM":   "Page 1 of 0",
 		"Date":       e.date.Format("2006-01-02"),
 		"Time":       e.date.Format("15:04:05"),
 		"Row":        1,

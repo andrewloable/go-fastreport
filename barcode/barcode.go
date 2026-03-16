@@ -393,8 +393,21 @@ func (b *BarcodeObject) Deserialize(r report.Reader) error {
 	if err := b.ReportComponentBase.Deserialize(r); err != nil {
 		return err
 	}
+	// FRX uses Barcode="QR Code" (display name) while our internal format
+	// uses Barcode.Type="QR". Try the internal key first, then fall back to
+	// the FRX display-name attribute.
 	if t := r.ReadStr("Barcode.Type", ""); t != "" {
 		b.Barcode = NewBarcodeByType(BarcodeType(t))
+	} else if name := r.ReadStr("Barcode", ""); name != "" {
+		b.Barcode = NewBarcodeByName(name)
+	}
+	// Read barcode-specific properties (prefixed with "Barcode.").
+	if b.Barcode != nil {
+		if qrbc, ok := b.Barcode.(*QRBarcode); ok {
+			if ec := r.ReadStr("Barcode.ErrorCorrection", ""); ec != "" {
+				qrbc.ErrorCorrection = ec
+			}
+		}
 	}
 	b.angle = r.ReadInt("Angle", 0)
 	b.autoSize = r.ReadBool("AutoSize", false)
@@ -698,4 +711,55 @@ func NewBarcodeByType(t BarcodeType) BarcodeBase {
 	default:
 		return NewCode128Barcode()
 	}
+}
+
+// barcodeDisplayNames maps FRX display names (as used by FastReport .NET in the
+// Barcode="..." attribute) to internal BarcodeType constants.
+var barcodeDisplayNames = map[string]BarcodeType{
+	"2/5 Interleaved":                  BarcodeTypeCode2of5,
+	"2/5 Industrial":                   BarcodeTypeCode2of5,
+	"2/5 Matrix":                       BarcodeTypeCode2of5,
+	"Codabar":                          BarcodeTypeCodabar,
+	"Code128":                          BarcodeTypeCode128,
+	"Code39":                           BarcodeTypeCode39,
+	"Code39 Extended":                  BarcodeTypeCode39,
+	"Code93":                           BarcodeTypeCode93,
+	"Code93 Extended":                  BarcodeTypeCode93,
+	"EAN8":                             BarcodeTypeEAN8,
+	"EAN13":                            BarcodeTypeEAN13,
+	"MSI":                              BarcodeTypeMSI,
+	"PostNet":                          BarcodeTypePostNet,
+	"UPC-A":                            BarcodeTypeUPCA,
+	"UPC-E0":                           BarcodeTypeUPCE,
+	"UPC-E1":                           BarcodeTypeUPCE,
+	"PDF417":                           BarcodeTypePDF417,
+	"Datamatrix":                       BarcodeTypeDataMatrix,
+	"QR Code":                          BarcodeTypeQR,
+	"Aztec":                            BarcodeTypeAztec,
+	"Plessey":                          BarcodeTypePlessey,
+	"GS1-128 (UCC/EAN-128)":            BarcodeTypeGS1_128,
+	"Pharmacode":                       BarcodeTypePharmacode,
+	"Intelligent Mail (USPS)":          BarcodeTypeIntelligentMail,
+	"MaxiCode":                         BarcodeTypeMaxiCode,
+	"ITF-14":                           BarcodeTypeCode2of5,
+	"Deutsche Identcode":               BarcodeTypeCode2of5,
+	"Deutsche Leitcode":                BarcodeTypeCode2of5,
+	"Japan Post 4 State Code":          BarcodeTypePostNet,
+	"Supplement 2":                     BarcodeTypeEAN13,
+	"Supplement 5":                     BarcodeTypeEAN13,
+	"GS1 DataBar Omnidirectional":      BarcodeTypeCode128,
+	"GS1 DataBar Limited":              BarcodeTypeCode128,
+	"GS1 DataBar Stacked":              BarcodeTypeCode128,
+	"GS1 DataBar Stacked Omnidirectional": BarcodeTypeCode128,
+	"GS1 Datamatrix":                   BarcodeTypeDataMatrix,
+	"SwissQR":                          BarcodeTypeSwissQR,
+}
+
+// NewBarcodeByName constructs a BarcodeBase from an FRX display name
+// (e.g. "QR Code", "Code128", "EAN13"). Falls back to Code128 for unknown names.
+func NewBarcodeByName(name string) BarcodeBase {
+	if t, ok := barcodeDisplayNames[name]; ok {
+		return NewBarcodeByType(t)
+	}
+	return NewCode128Barcode()
 }

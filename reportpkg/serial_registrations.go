@@ -2,6 +2,7 @@ package reportpkg
 
 import (
 	"github.com/andrewloable/go-fastreport/band"
+	barcodeobj "github.com/andrewloable/go-fastreport/barcode"
 	"github.com/andrewloable/go-fastreport/gauge"
 	"github.com/andrewloable/go-fastreport/matrix"
 	"github.com/andrewloable/go-fastreport/object"
@@ -60,7 +61,7 @@ func init() {
 		{"CheckBoxObject", func() report.Base { return object.NewCheckBoxObject() }},
 		{"ContainerObject", func() report.Base { return object.NewContainerObject() }},
 		{"SubreportObject", func() report.Base { return object.NewSubreportObject() }},
-		{"BarcodeObject", func() report.Base { return object.NewBarcodeObject() }},
+		{"BarcodeObject", func() report.Base { return barcodeobj.NewBarcodeObject() }},
 		{"ZipCodeObject", func() report.Base { return object.NewZipCodeObject() }},
 		{"HtmlObject", func() report.Base { return object.NewHtmlObject() }},
 		{"CellularTextObject", func() report.Base { return object.NewCellularTextObject() }},

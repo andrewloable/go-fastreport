@@ -273,6 +273,36 @@ const (
 	VertAlignBottom
 )
 
+// ParseHorzAlign parses a horizontal alignment value from an FRX attribute.
+// FRX files may store alignment as a string name ("Left", "Center", "Right",
+// "Justify") or as a numeric string ("0", "1", "2", "3").
+func ParseHorzAlign(s string) HorzAlign {
+	switch s {
+	case "Center", "1":
+		return HorzAlignCenter
+	case "Right", "2":
+		return HorzAlignRight
+	case "Justify", "3":
+		return HorzAlignJustify
+	default:
+		return HorzAlignLeft
+	}
+}
+
+// ParseVertAlign parses a vertical alignment value from an FRX attribute.
+// FRX files may store alignment as a string name ("Top", "Center", "Bottom")
+// or as a numeric string ("0", "1", "2").
+func ParseVertAlign(s string) VertAlign {
+	switch s {
+	case "Center", "1":
+		return VertAlignCenter
+	case "Bottom", "2":
+		return VertAlignBottom
+	default:
+		return VertAlignTop
+	}
+}
+
 // AutoShrinkMode controls the AutoShrink feature.
 type AutoShrinkMode int
 
@@ -721,8 +751,8 @@ func (t *TextObject) Deserialize(r report.Reader) error {
 	if err := t.TextObjectBase.Deserialize(r); err != nil {
 		return err
 	}
-	t.horzAlign = HorzAlign(r.ReadInt("HorzAlign", 0))
-	t.vertAlign = VertAlign(r.ReadInt("VertAlign", 0))
+	t.horzAlign = ParseHorzAlign(r.ReadStr("HorzAlign", "Left"))
+	t.vertAlign = ParseVertAlign(r.ReadStr("VertAlign", "Top"))
 	t.angle = r.ReadInt("Angle", 0)
 	t.rightToLeft = r.ReadBool("RightToLeft", false)
 	t.wordWrap = r.ReadBool("WordWrap", true)

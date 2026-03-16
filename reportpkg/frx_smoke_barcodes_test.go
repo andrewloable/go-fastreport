@@ -5,12 +5,13 @@ package reportpkg_test
 import (
 	"testing"
 
+	"github.com/andrewloable/go-fastreport/barcode"
 	"github.com/andrewloable/go-fastreport/object"
 )
 
 func TestFRXSmoke_Barcode(t *testing.T) {
 	r := loadFRXSmoke(t, "Barcode.frx")
-	n := countObjectsOfType[*object.BarcodeObject](r)
+	n := countObjectsOfType[*barcode.BarcodeObject](r)
 	if n == 0 {
 		t.Error("expected at least one BarcodeObject in Barcode.frx")
 	}
@@ -18,7 +19,7 @@ func TestFRXSmoke_Barcode(t *testing.T) {
 
 func TestFRXSmoke_QRCodes(t *testing.T) {
 	r := loadFRXSmoke(t, "QR-Codes.frx")
-	n := countObjectsOfType[*object.BarcodeObject](r)
+	n := countObjectsOfType[*barcode.BarcodeObject](r)
 	if n == 0 {
 		t.Error("expected at least one BarcodeObject in QR-Codes.frx")
 	}

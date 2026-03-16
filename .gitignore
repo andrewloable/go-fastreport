@@ -37,3 +37,7 @@ original-dotnet/
 # Dolt database files (added by bd init)
 .dolt/
 *.db
+/csharp-html-output
+/html-output
+/csharp-validation/FrxToHtml/bin
+/csharp-validation/FrxToHtml/obj

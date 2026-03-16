@@ -259,8 +259,8 @@ func (cell *AdvMatrixCell) Deserialize(r report.Reader) error {
 	cell.ColSpan = r.ReadInt("ColSpan", 1)
 	cell.RowSpan = r.ReadInt("RowSpan", 1)
 	cell.Text = r.ReadStr("Text", "")
-	cell.HorzAlign = r.ReadInt("HorzAlign", 0)
-	cell.VertAlign = r.ReadInt("VertAlign", 0)
+	cell.HorzAlign = int(ParseHorzAlign(r.ReadStr("HorzAlign", "Left")))
+	cell.VertAlign = int(ParseVertAlign(r.ReadStr("VertAlign", "Top")))
 	if cell.ColSpan < 1 {
 		cell.ColSpan = 1
 	}

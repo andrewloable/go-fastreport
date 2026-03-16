@@ -249,6 +249,12 @@ func (e *ReportEngine) showBand(b report.Base) {
 		if ho, ok := b.(hasObjects); ok {
 			e.populateBandObjects2(ho.Objects(), pb)
 		}
+		// Apply page-level column X offset to all objects in this band.
+		if e.curX != 0 {
+			for i := range pb.Objects {
+				pb.Objects[i].Left += e.curX
+			}
+		}
 		_ = e.preparedPages.AddBand(pb)
 	}
 

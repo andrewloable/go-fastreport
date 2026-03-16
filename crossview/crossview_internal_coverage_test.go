@@ -181,3 +181,249 @@ func TestCrossViewDataSerial_Deserialize_UnknownChild(t *testing.T) {
 		t.Errorf("Columns should be empty initially, got %d", len(d.Columns))
 	}
 }
+
+// ── mockCVWriter with call-count control ──────────────────────────────────────
+
+// mockCVWriterN fails WriteObjectNamed on the N-th call (1-based).
+type mockCVWriterN struct {
+	failAt  int // which call number (1-based) should fail; 0 = never
+	callNum int
+}
+
+func (m *mockCVWriterN) WriteStr(name, value string)      {}
+func (m *mockCVWriterN) WriteInt(name string, v int)      {}
+func (m *mockCVWriterN) WriteBool(name string, v bool)    {}
+func (m *mockCVWriterN) WriteFloat(name string, v float32) {}
+func (m *mockCVWriterN) WriteObject(obj report.Serializable) error {
+	return nil
+}
+func (m *mockCVWriterN) WriteObjectNamed(name string, obj report.Serializable) error {
+	m.callNum++
+	if m.failAt > 0 && m.callNum == m.failAt {
+		return errors.New("mock WriteObjectNamed error on call " + name)
+	}
+	return nil
+}
+
+// ── CrossViewDataSerial.Serialize: Rows error path ───────────────────────────
+
+func TestCrossViewDataSerial_Serialize_RowsError(t *testing.T) {
+	d := &CrossViewData{}
+	d.AddColumn(&HeaderDescriptor{FieldName: "Col"})
+	d.AddRow(&HeaderDescriptor{FieldName: "Row"})
+	s := NewCrossViewDataSerial(d)
+
+	// Fail on the 2nd WriteObjectNamed call (Rows).
+	w := &mockCVWriterN{failAt: 2}
+	err := s.Serialize(w)
+	if err == nil {
+		t.Error("CrossViewDataSerial.Serialize should return error when Rows WriteObjectNamed fails")
+	}
+}
+
+// ── CrossViewDataSerial.Serialize: Cells error path ──────────────────────────
+
+func TestCrossViewDataSerial_Serialize_CellsError(t *testing.T) {
+	d := &CrossViewData{}
+	d.AddColumn(&HeaderDescriptor{FieldName: "Col"})
+	d.AddRow(&HeaderDescriptor{FieldName: "Row"})
+	d.AddCell(&CellDescriptor{X: 0, Y: 0})
+	s := NewCrossViewDataSerial(d)
+
+	// Fail on the 3rd WriteObjectNamed call (Cells).
+	w := &mockCVWriterN{failAt: 3}
+	err := s.Serialize(w)
+	if err == nil {
+		t.Error("CrossViewDataSerial.Serialize should return error when Cells WriteObjectNamed fails")
+	}
+}
+
+// ── Mock reader for error-path Deserialize tests ──────────────────────────────
+
+// mockCVReader implements report.Reader, allowing fine-grained control over
+// NextChild and FinishChild for testing error branches.
+type mockCVReader struct {
+	// children is the sequence of child type names to return (then ("", false)).
+	children    []string
+	childIdx    int
+	finishErr   error // error to return from FinishChild
+	finishErrAt int   // which FinishChild call should fail (1-based; 0=never)
+	finishCall  int
+	attrs       map[string]string
+}
+
+func (m *mockCVReader) ReadStr(name, def string) string {
+	if v, ok := m.attrs[name]; ok {
+		return v
+	}
+	return def
+}
+func (m *mockCVReader) ReadInt(name string, def int) int    { return def }
+func (m *mockCVReader) ReadBool(name string, def bool) bool { return def }
+func (m *mockCVReader) ReadFloat(name string, def float32) float32 {
+	return def
+}
+func (m *mockCVReader) NextChild() (string, bool) {
+	if m.childIdx >= len(m.children) {
+		return "", false
+	}
+	name := m.children[m.childIdx]
+	m.childIdx++
+	if name == "" {
+		return "", false
+	}
+	return name, true
+}
+func (m *mockCVReader) FinishChild() error {
+	m.finishCall++
+	if m.finishErrAt > 0 && m.finishCall == m.finishErrAt {
+		return m.finishErr
+	}
+	return nil
+}
+
+// ── CrossViewHeader.Deserialize: FinishChild error break ─────────────────────
+
+func TestCrossViewHeader_Deserialize_FinishChildError(t *testing.T) {
+	h := NewCrossViewHeader("Columns")
+	// Provide one "Header" child; FinishChild will error on the 1st call.
+	r := &mockCVReader{
+		children:    []string{"Header"},
+		finishErrAt: 1,
+		finishErr:   errors.New("mock FinishChild error"),
+	}
+	// Deserialize should still return nil (it just breaks the loop).
+	err := h.Deserialize(r)
+	if err != nil {
+		t.Errorf("Deserialize: want nil, got %v", err)
+	}
+}
+
+// TestCrossViewHeader_Deserialize_FinishChildError_UnknownChild exercises the
+// FinishChild error break when the child is unknown (non-"Header").
+func TestCrossViewHeader_Deserialize_FinishChildError_UnknownChild(t *testing.T) {
+	h := NewCrossViewHeader("Columns")
+	r := &mockCVReader{
+		children:    []string{"Unknown"},
+		finishErrAt: 1,
+		finishErr:   errors.New("mock FinishChild error on unknown child"),
+	}
+	err := h.Deserialize(r)
+	if err != nil {
+		t.Errorf("Deserialize: want nil, got %v", err)
+	}
+}
+
+// ── CrossViewCells.Deserialize: FinishChild error break ──────────────────────
+
+func TestCrossViewCells_Deserialize_FinishChildError(t *testing.T) {
+	c := NewCrossViewCells("Cells")
+	r := &mockCVReader{
+		children:    []string{"Cell"},
+		finishErrAt: 1,
+		finishErr:   errors.New("mock FinishChild error"),
+	}
+	err := c.Deserialize(r)
+	if err != nil {
+		t.Errorf("Deserialize: want nil, got %v", err)
+	}
+}
+
+// TestCrossViewCells_Deserialize_FinishChildError_UnknownChild exercises the
+// FinishChild error break when the child is unknown (non-"Cell").
+func TestCrossViewCells_Deserialize_FinishChildError_UnknownChild(t *testing.T) {
+	c := NewCrossViewCells("Cells")
+	r := &mockCVReader{
+		children:    []string{"Unknown"},
+		finishErrAt: 1,
+		finishErr:   errors.New("mock FinishChild error"),
+	}
+	err := c.Deserialize(r)
+	if err != nil {
+		t.Errorf("Deserialize: want nil, got %v", err)
+	}
+}
+
+// ── CrossViewDataSerial.Deserialize: FinishChild error ───────────────────────
+
+func TestCrossViewDataSerial_Deserialize_FinishChildError(t *testing.T) {
+	d := &CrossViewData{}
+	s := NewCrossViewDataSerial(d)
+	// Provide one "Columns" child; FinishChild errors on first call → return nil
+	r := &mockCVReader{
+		children:    []string{"Columns"},
+		finishErrAt: 1,
+		finishErr:   errors.New("mock FinishChild error"),
+	}
+	err := s.Deserialize(r)
+	if err != nil {
+		t.Errorf("Deserialize: want nil, got %v", err)
+	}
+}
+
+// TestCrossViewDataSerial_Deserialize_UnknownChild_FinishChildError exercises
+// the unknown-child path (default switch case) with FinishChild error → return nil.
+func TestCrossViewDataSerial_Deserialize_UnknownChildPath(t *testing.T) {
+	d := &CrossViewData{}
+	s := NewCrossViewDataSerial(d)
+	r := &mockCVReader{
+		children:    []string{"Unknown"},
+		finishErrAt: 1,
+		finishErr:   errors.New("mock FinishChild error on unknown child"),
+	}
+	err := s.Deserialize(r)
+	if err != nil {
+		t.Errorf("Deserialize: want nil, got %v", err)
+	}
+}
+
+// TestCrossViewDataSerial_Deserialize_RowsFinishChildError exercises the "Rows"
+// switch case and the FinishChild error that causes early return.
+func TestCrossViewDataSerial_Deserialize_RowsFinishChildError(t *testing.T) {
+	d := &CrossViewData{}
+	s := NewCrossViewDataSerial(d)
+	// "Rows" child → CrossViewHeader.Deserialize(r) will call NextChild on the
+	// same reader and get "" → returns immediately. Then outer FinishChild errors.
+	r := &mockCVReader{
+		children:    []string{"Rows"},
+		finishErrAt: 1,
+		finishErr:   errors.New("mock FinishChild error on Rows"),
+	}
+	err := s.Deserialize(r)
+	if err != nil {
+		t.Errorf("Deserialize: want nil, got %v", err)
+	}
+}
+
+// TestCrossViewDataSerial_Deserialize_CellsFinishChildError exercises the "Cells"
+// switch case and the FinishChild error that causes early return.
+func TestCrossViewDataSerial_Deserialize_CellsFinishChildError(t *testing.T) {
+	d := &CrossViewData{}
+	s := NewCrossViewDataSerial(d)
+	// "Cells" child → CrossViewCells.Deserialize(r) will call NextChild and get ""
+	// → returns immediately. Then outer FinishChild errors.
+	r := &mockCVReader{
+		children:    []string{"Cells"},
+		finishErrAt: 1,
+		finishErr:   errors.New("mock FinishChild error on Cells"),
+	}
+	err := s.Deserialize(r)
+	if err != nil {
+		t.Errorf("Deserialize: want nil, got %v", err)
+	}
+}
+
+// TestCrossViewDataSerial_Deserialize_AllThreeChildrenMock exercises the
+// "Columns", "Rows", and "Cells" cases in order with no errors.
+func TestCrossViewDataSerial_Deserialize_AllThreeChildrenMock(t *testing.T) {
+	d := &CrossViewData{}
+	s := NewCrossViewDataSerial(d)
+	// All three known child types in sequence, no errors.
+	r := &mockCVReader{
+		children: []string{"Columns", "Rows", "Cells"},
+	}
+	err := s.Deserialize(r)
+	if err != nil {
+		t.Errorf("Deserialize: want nil, got %v", err)
+	}
+}

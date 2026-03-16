@@ -5,8 +5,13 @@ package utils
 // Uses package utils (not utils_test) to access unexported helpers.
 
 import (
+	"bytes"
 	"encoding/base64"
 	"image"
+	"image/color"
+	"image/png"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -225,5 +230,149 @@ func TestLoadImage_URLBadHost(t *testing.T) {
 	_, err := LoadImage("http://no.such.host.invalid/image.png")
 	if err == nil {
 		t.Error("LoadImage bad URL should return error")
+	}
+}
+
+// ── loadFromURL: success and invalid-image-body paths ────────────────────────
+
+// buildSmallPNGBytes creates a minimal 2×2 PNG image as raw bytes.
+func buildSmallPNGBytes() []byte {
+	img := image.NewNRGBA(image.Rect(0, 0, 2, 2))
+	img.Set(0, 0, color.NRGBA{R: 128, G: 64, B: 32, A: 255})
+	var buf bytes.Buffer
+	_ = png.Encode(&buf, img)
+	return buf.Bytes()
+}
+
+func TestLoadFromURL_SuccessWithValidPNG(t *testing.T) {
+	// Serve a valid PNG from a test HTTP server to cover the success path of
+	// loadFromURL (stmts: defer body.Close, io.ReadAll, return BytesToImage).
+	pngData := buildSmallPNGBytes()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "image/png")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(pngData)
+	}))
+	defer srv.Close()
+
+	img, err := loadFromURL(srv.URL)
+	if err != nil {
+		t.Fatalf("loadFromURL success: unexpected error: %v", err)
+	}
+	if img == nil {
+		t.Fatal("loadFromURL success: returned nil image")
+	}
+}
+
+func TestLoadFromURL_SuccessWithInvalidBody(t *testing.T) {
+	// Serve non-image bytes to cover the BytesToImage-failure path inside
+	// loadFromURL (the body is read successfully but decoding fails).
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("this is not an image"))
+	}))
+	defer srv.Close()
+
+	_, err := loadFromURL(srv.URL)
+	if err == nil {
+		t.Error("loadFromURL with non-image body: expected error from BytesToImage")
+	}
+}
+
+func TestLoadFromURL_HTTPErrorStatus(t *testing.T) {
+	// 404 response: body is read and passed to BytesToImage, which fails because
+	// the body is an error page, not an image. This covers the same code paths
+	// as the invalid-body test but via an HTTP error status code.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+
+	_, err := loadFromURL(srv.URL)
+	if err == nil {
+		t.Error("loadFromURL 404: expected error from BytesToImage")
+	}
+}
+
+func TestLoadFromURL_BodyReadError(t *testing.T) {
+	// Serve a response where the connection is hijacked and dropped after headers
+	// are sent, causing io.ReadAll to return an error (covering the
+	// "read body" error branch in loadFromURL).
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Hijack the connection so we can write a partial HTTP response and
+		// then close it abruptly, causing the client's io.ReadAll to fail.
+		hj, ok := w.(http.Hijacker)
+		if !ok {
+			// If hijacking is not supported, skip: write a large Content-Length
+			// with no body so the client gets an unexpected EOF.
+			w.Header().Set("Content-Length", "1000000")
+			w.WriteHeader(http.StatusOK)
+			// Write partial body then return — connection closed by server.
+			_, _ = w.Write([]byte("partial"))
+			return
+		}
+		conn, bufrw, err := hj.Hijack()
+		if err != nil {
+			return
+		}
+		// Write a minimal HTTP response header claiming a body of 1 MB, then
+		// immediately close the connection — the client will get an unexpected EOF.
+		_, _ = bufrw.WriteString("HTTP/1.1 200 OK\r\nContent-Length: 1048576\r\n\r\npartial")
+		_ = bufrw.Flush()
+		_ = conn.Close()
+	}))
+	defer srv.Close()
+
+	_, err := loadFromURL(srv.URL)
+	if err == nil {
+		t.Error("loadFromURL body read error: expected error from io.ReadAll or BytesToImage")
+	}
+}
+
+// ── ImageToBytes: JPEG and PNG error paths ───────────────────────────────────
+
+// badEncoderImage is a minimal image.Image that returns a non-empty Bounds() but
+// panics if its pixels are accessed. jpeg.Encode and png.Encode iterate over
+// pixels, so encoding will fail in a recoverable way only if the encoder itself
+// surfaces an error. Since standard encoders don't return errors for valid images,
+// these error paths cannot be exercised without a custom writer.
+// Instead we verify the happy paths for JPEG (covered below) are hit correctly.
+// The actual error branches (`return nil, err`) inside ImageToBytes are dead code
+// because both jpeg.Encode and png.Encode only error on I/O failures to the writer,
+// and the internal bytes.Buffer never fails. They are noted here for completeness.
+
+func TestImageToBytes_JPEG_RoundTrip(t *testing.T) {
+	// Encode a PNG image as JPEG and verify the output is non-empty and decodable.
+	pngData := buildSmallPNGBytes()
+	img, err := BytesToImage(pngData)
+	if err != nil {
+		t.Fatalf("BytesToImage: %v", err)
+	}
+	out, err := ImageToBytes(img, ImageFormatJPEG)
+	if err != nil {
+		t.Fatalf("ImageToBytes JPEG: %v", err)
+	}
+	if len(out) == 0 {
+		t.Error("ImageToBytes JPEG: output is empty")
+	}
+	// Re-decode to verify it is a valid JPEG.
+	decoded, err := BytesToImage(out)
+	if err != nil {
+		t.Fatalf("BytesToImage re-decode JPEG: %v", err)
+	}
+	if decoded == nil {
+		t.Error("decoded JPEG image is nil")
+	}
+}
+
+func TestImageToBytes_PNG_RoundTrip(t *testing.T) {
+	// Encode a small image as PNG and verify the output is non-empty and decodable.
+	img := image.NewNRGBA(image.Rect(0, 0, 4, 4))
+	out, err := ImageToBytes(img, ImageFormatPNG)
+	if err != nil {
+		t.Fatalf("ImageToBytes PNG: %v", err)
+	}
+	if len(out) == 0 {
+		t.Error("ImageToBytes PNG: output is empty")
 	}
 }

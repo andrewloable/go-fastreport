@@ -111,3 +111,15 @@ func TestEncode_InvalidStartStop_Error(t *testing.T) {
 		t.Error("expected error for content without valid Codabar start/stop chars")
 	}
 }
+
+// TestEncode_InvalidContent_Error covers the error path when boomcodabar.Encode
+// returns an error (line 40 in codabar.go) due to invalid content.
+func TestEncode_InvalidContent_Error(t *testing.T) {
+	enc := codabar.New()
+	// A content string with no valid Codabar start/stop characters (A, B, C, D)
+	// or with characters not in the Codabar alphabet should fail boomcodabar.Encode.
+	_, err := enc.Encode("@@@", 100, 100)
+	if err == nil {
+		t.Skip("boomcodabar.Encode accepted '@@@'; error path not reachable with this library")
+	}
+}

@@ -313,5 +313,33 @@ func TestEncryptDecryptString_ExactBlockSize(t *testing.T) {
 	}
 }
 
+// ── aesCBCEncrypt / aesCBCDecrypt bad-key error paths ────────────────────────
+// aes.NewCipher rejects keys that are not 16, 24, or 32 bytes.
+// These tests exercise the `return nil, err` branches in aesCBCEncrypt and
+// aesCBCDecrypt that are unreachable via the public API (which always derives
+// a 16-byte key) but must be covered for 100% statement coverage.
+
+func TestAesCBCEncrypt_BadKeyLength(t *testing.T) {
+	// A 5-byte key is invalid for AES; aes.NewCipher must return an error.
+	badKey := []byte("short")
+	iv := make([]byte, 16)
+	_, err := aesCBCEncrypt([]byte("plaintext"), badKey, iv)
+	if err == nil {
+		t.Error("aesCBCEncrypt: bad key length should return error")
+	}
+}
+
+func TestAesCBCDecrypt_BadKeyLength(t *testing.T) {
+	// Same: a 5-byte key is invalid.
+	badKey := []byte("short")
+	iv := make([]byte, 16)
+	// Use a 16-byte ciphertext (multiple of block size) so we pass the length check.
+	ciphertext := make([]byte, 16)
+	_, err := aesCBCDecrypt(ciphertext, badKey, iv)
+	if err == nil {
+		t.Error("aesCBCDecrypt: bad key length should return error")
+	}
+}
+
 // Ensure io import is used.
 var _ = io.EOF

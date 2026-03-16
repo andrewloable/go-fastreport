@@ -74,16 +74,26 @@ func BytesToImage(data []byte) (image.Image, error) {
 	return img, err
 }
 
+// imageToBytesWriter is a package-level hook so tests can inject a custom
+// io.Writer into ImageToBytes to exercise its encode-error paths.
+// In production it always returns nil, causing ImageToBytes to use its own
+// internal bytes.Buffer. A non-nil value is used by tests only.
+var imageToBytesWriter func() io.Writer
+
 // ImageToBytes encodes an image.Image to PNG or JPEG bytes.
 func ImageToBytes(img image.Image, fmt ImageFormat) ([]byte, error) {
 	var buf bytes.Buffer
+	var w io.Writer = &buf
+	if imageToBytesWriter != nil {
+		w = imageToBytesWriter()
+	}
 	switch fmt {
 	case ImageFormatJPEG:
-		if err := jpeg.Encode(&buf, img, &jpeg.Options{Quality: 90}); err != nil {
+		if err := jpeg.Encode(w, img, &jpeg.Options{Quality: 90}); err != nil {
 			return nil, err
 		}
 	default:
-		if err := png.Encode(&buf, img); err != nil {
+		if err := png.Encode(w, img); err != nil {
 			return nil, err
 		}
 	}

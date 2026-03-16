@@ -535,3 +535,87 @@ func TestChart_Render_ReturnsRGBA(t *testing.T) {
 		t.Error("expected *image.RGBA")
 	}
 }
+
+// ── Additional branch coverage ────────────────────────────────────────────────
+
+// TestChart_Render_CartesianWithTitle covers the `if c.Title != ""` branch
+// (chart.go line 168) in the cartesian (non-pie) rendering path.
+func TestChart_Render_CartesianWithTitle(t *testing.T) {
+	c := &chart.Chart{
+		Width:  200,
+		Height: 100,
+		Type:   chart.SeriesTypeLine,
+		Title:  "My Line Chart",
+		Series: []chart.Series{
+			{Name: "S", Values: []float64{10, 20, 30}},
+		},
+	}
+	img := c.Render()
+	if img == nil {
+		t.Fatal("cartesian chart with title returned nil")
+	}
+}
+
+// TestChart_Render_ShowAxes_AllNegative_ZeroAboveTop covers the
+// `if zeroY < chartTop { zeroY = chartBottom }` branch (chart.go line 182-184).
+// With all-negative values in a bar chart, yScale(0) produces a y-coordinate
+// above the chart area, triggering the clamp.
+func TestChart_Render_ShowAxes_AllNegative_ZeroAboveTop(t *testing.T) {
+	c := &chart.Chart{
+		Width:    200,
+		Height:   100,
+		Type:     chart.SeriesTypeBar,
+		ShowAxes: true,
+		Series: []chart.Series{
+			{Name: "B", Values: []float64{-50, -80, -60}},
+		},
+	}
+	img := c.Render()
+	if img == nil {
+		t.Fatal("all-negative bar chart with axes returned nil")
+	}
+}
+
+// TestChart_Render_MixedEmptyAndNonEmptySeries covers the `if n == 0 { continue }`
+// branch (chart.go line 217-218) by having one empty series alongside one with values.
+func TestChart_Render_MixedEmptyAndNonEmptySeries(t *testing.T) {
+	c := &chart.Chart{
+		Width:  200,
+		Height: 100,
+		Type:   chart.SeriesTypeLine,
+		Series: []chart.Series{
+			{Name: "Empty", Values: []float64{}}, // n == 0 → continue
+			{Name: "Data", Values: []float64{1, 2, 3}},
+		},
+	}
+	img := c.Render()
+	if img == nil {
+		t.Fatal("mixed empty+non-empty series returned nil")
+	}
+}
+
+// TestChart_Render_BarChart_BarWidthClampedToOne covers the `if barW < 1 { barW = 1 }`
+// branch (chart.go line 231-233) by using many series on a very narrow chart
+// so that the computed barW rounds down to zero.
+func TestChart_Render_BarChart_BarWidthClampedToOne(t *testing.T) {
+	// With w=60: areaW = 60-45-10 = 5, nPts=1, slotW=5.
+	// nSeries=20: barW = int(5/20 * 0.8) = int(0.2) = 0 < 1 → clamped to 1.
+	series := make([]chart.Series, 20)
+	for i := range series {
+		series[i] = chart.Series{
+			Name:   "S",
+			Color:  color.RGBA{uint8(i * 10), 0, 0, 255},
+			Values: []float64{float64(i + 1)},
+		}
+	}
+	c := &chart.Chart{
+		Width:  60,
+		Height: 80,
+		Type:   chart.SeriesTypeBar,
+		Series: series,
+	}
+	img := c.Render()
+	if img == nil {
+		t.Fatal("narrow bar chart with many series returned nil")
+	}
+}

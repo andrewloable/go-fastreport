@@ -10,12 +10,20 @@ import (
 // gzipMagic holds the two-byte GZip magic number (0x1F 0x8B).
 var gzipMagic = [2]byte{0x1F, 0x8B}
 
+// compressNewWriter is a package-level hook so tests can inject a custom
+// io.Writer destination into Compress to exercise its error paths.
+// In production it always supplies a fresh *bytes.Buffer.
+var compressNewWriter func() (io.Writer, *bytes.Buffer) = func() (io.Writer, *bytes.Buffer) {
+	b := &bytes.Buffer{}
+	return b, b
+}
+
 // Compress compresses data using GZip (the same format as the FastReport .NET
 // Compressor class, which uses GZipStream) and returns the result as a
 // standard base64-encoded string.
 func Compress(data []byte) (string, error) {
-	var buf bytes.Buffer
-	w := gzip.NewWriter(&buf)
+	dest, buf := compressNewWriter()
+	w := gzip.NewWriter(dest)
 	if _, err := w.Write(data); err != nil {
 		w.Close()
 		return "", err

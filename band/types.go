@@ -325,6 +325,10 @@ func (*DataBand) TypeName() string { return "Data" }
 // The engine resolves this to a live DataSource from the report Dictionary.
 func (d *DataBand) DataSourceAlias() string { return d.dataSourceAlias }
 
+// SetDataSourceAlias sets the data source alias for this band.
+// The engine resolves this alias to a live DataSource from the report Dictionary at run time.
+func (d *DataBand) SetDataSourceAlias(alias string) { d.dataSourceAlias = alias }
+
 // DataSourceRef returns the bound data source (nil if not set).
 func (d *DataBand) DataSourceRef() DataSource { return d.dataSource }
 

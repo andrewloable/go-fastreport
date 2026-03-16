@@ -6,13 +6,22 @@ import (
 	"io"
 )
 
+// zipDataWriter is a package-level hook so tests can inject a custom io.Writer
+// as the destination for ZipData to exercise its error path. In production it
+// is always nil, causing ZipData to use its own internal bytes.Buffer.
+var zipDataWriter func() io.Writer
+
 // ZipData compresses data using raw DEFLATE encoding, the same algorithm used
 // by the FastReport .NET ZipArchive (which wraps streams in DeflateStream).
 // The returned bytes contain raw DEFLATE-compressed data with no zlib or gzip
 // framing header.
 func ZipData(data []byte) ([]byte, error) {
 	var buf bytes.Buffer
-	if err := ZipStream(&buf, bytes.NewReader(data)); err != nil {
+	var dest io.Writer = &buf
+	if zipDataWriter != nil {
+		dest = zipDataWriter()
+	}
+	if err := ZipStream(dest, bytes.NewReader(data)); err != nil {
 		return nil, err
 	}
 	return buf.Bytes(), nil

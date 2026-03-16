@@ -110,10 +110,11 @@ func TestCalcBandHeight_CanGrow_WithTallContent(t *testing.T) {
 
 // ── CalcBandHeight: CanShrink with short content → return requiredHeight ──────
 
-// TestCalcBandHeight_CanShrink_ShortContent documents that calcBandRequiredHeight
-// always clamps to baseHeight, so the CanShrink return-requiredHeight path is
-// structurally unreachable. With CanShrink=true and short content, CalcBandHeight
-// still returns baseHeight (the clamp at line 155 in bands.go fires first).
+// TestCalcBandHeight_CanShrink_ShortContent verifies that when a band has
+// CanShrink=true and its child objects occupy less height than the band's
+// declared height, CalcBandHeight returns the smaller content height.
+// The TextObject has a declared height of 5 and sits at Top=0, so
+// calcBandRequiredHeight returns 5, and the band shrinks accordingly.
 func TestCalcBandHeight_CanShrink_ShortContent(t *testing.T) {
 	e := engine.New(reportpkg.NewReport())
 
@@ -129,9 +130,9 @@ func TestCalcBandHeight_CanShrink_ShortContent(t *testing.T) {
 	bb.Objects().Add(txt)
 
 	h := e.CalcBandHeight(bb)
-	// calcBandRequiredHeight clamps maxBottom to baseHeight, so h == baseHeight.
-	if h != 200 {
-		t.Errorf("CanShrink short content: expected h = 200 (clamped), got %v", h)
+	// Band CanShrink=true: content height (5) < band height (200) → shrinks to 5.
+	if h != 5 {
+		t.Errorf("CanShrink short content: expected h = 5 (shrunk to content), got %v", h)
 	}
 }
 

@@ -3,9 +3,12 @@ package reportpkg
 import (
 	"bytes"
 	"compress/gzip"
+	"encoding/base64"
+	"encoding/xml"
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/andrewloable/go-fastreport/data"
@@ -21,13 +24,35 @@ import (
 // ── Load ──────────────────────────────────────────────────────────────────────
 
 // Load reads a FRX report file from filename and populates this Report.
+// If the file uses an <inherited> root element, the base report is loaded
+// from the same directory before overlaying the inherited changes.
 func (r *Report) Load(filename string) error {
 	f, err := os.Open(filename)
 	if err != nil {
 		return fmt.Errorf("report.Load: %w", err)
 	}
 	defer f.Close()
-	return r.LoadFrom(f)
+
+	// Buffer enough bytes to detect gzip magic without consuming the stream.
+	var peek [2]byte
+	buf := &bytes.Buffer{}
+	if _, err2 := io.ReadFull(f, peek[:]); err2 != nil {
+		return fmt.Errorf("report.Load: read header: %w", err2)
+	}
+	buf.Write(peek[:])
+
+	var src io.Reader = io.MultiReader(buf, f)
+	if peek[0] == 0x1f && peek[1] == 0x8b {
+		gz, err2 := gzip.NewReader(src)
+		if err2 != nil {
+			return fmt.Errorf("report.Load: gzip open: %w", err2)
+		}
+		defer gz.Close()
+		src = gz
+	}
+
+	rdr := serial.NewReader(src)
+	return r.loadFromSerialReader(rdr, filepath.Dir(filename))
 }
 
 // LoadWithPassword reads a password-protected FRX report file from filename.
@@ -56,17 +81,21 @@ func (r *Report) LoadFromStringWithPassword(xml, password string) error {
 // a FastReport-encrypted or gzip-compressed FRX stream. If the stream is
 // encrypted the password is used to decrypt it; if not encrypted the password
 // is silently ignored. Gzip decompression is applied after decryption.
+// Note: inherited reports loaded via this method will not resolve relative
+// base-report paths; use Load(filename) for full inheritance support.
 func (r *Report) LoadFromWithPassword(rd io.Reader, password string) error {
 	xmlRdr, _, err := serial.NewReaderWithPassword(rd, password)
 	if err != nil {
 		return fmt.Errorf("report.LoadFromWithPassword: %w", err)
 	}
-	return r.loadFromSerialReader(xmlRdr)
+	return r.loadFromSerialReader(xmlRdr, "")
 }
 
 // LoadFrom deserializes a Report from an io.Reader containing FRX XML.
 // If the stream starts with the gzip magic bytes (0x1f 0x8b), it is
 // transparently decompressed before parsing.
+// Note: inherited reports loaded via this method will not resolve relative
+// base-report paths; use Load(filename) for full inheritance support.
 func (r *Report) LoadFrom(rd io.Reader) error {
 	// Buffer enough bytes to detect gzip magic without consuming the stream.
 	var peek [2]byte
@@ -88,21 +117,35 @@ func (r *Report) LoadFrom(rd io.Reader) error {
 	}
 
 	rdr := serial.NewReader(src)
-	return r.loadFromSerialReader(rdr)
+	return r.loadFromSerialReader(rdr, "")
 }
 
 // loadFromSerialReader is the internal shared deserializer.
-func (r *Report) loadFromSerialReader(rdr *serial.Reader) error {
-
-	// Expect the root <Report> element.
+// baseDir is the directory of the FRX file being loaded; it is used to resolve
+// the base-report path when the root element is <inherited>. Pass "" when
+// loading from an io.Reader without a known file path.
+func (r *Report) loadFromSerialReader(rdr *serial.Reader, baseDir string) error {
+	// Read the root element — may be "Report" or "inherited".
 	typeName, ok := rdr.ReadObjectHeader()
 	if !ok {
 		return fmt.Errorf("report.LoadFrom: empty or invalid FRX document")
 	}
-	if typeName != "Report" {
-		return fmt.Errorf("report.LoadFrom: expected root element 'Report', got %q", typeName)
-	}
 
+	switch typeName {
+	case "Report":
+		return r.deserializeReportBody(rdr, baseDir)
+	case "inherited":
+		return r.loadInherited(rdr, baseDir)
+	default:
+		return fmt.Errorf("report.LoadFrom: expected root element 'Report' or 'inherited', got %q", typeName)
+	}
+}
+
+// deserializeReportBody reads the attributes and child elements of a <Report>
+// root after the element header has already been consumed by loadFromSerialReader.
+// baseDir is the directory of the FRX file (may be empty when loading from an
+// io.Reader without a known file path).
+func (r *Report) deserializeReportBody(rdr *serial.Reader, baseDir string) error {
 	// Deserialize top-level Report properties (Name, Author, etc.)
 	if err := r.Deserialize(rdr); err != nil {
 		return fmt.Errorf("report.LoadFrom: deserialize root: %w", err)
@@ -122,10 +165,16 @@ func (r *Report) loadFromSerialReader(rdr *serial.Reader) error {
 				return fmt.Errorf("report.LoadFrom: deserialize page: %w", err)
 			}
 			r.AddPage(pg)
+		case "DialogPage":
+			// DialogPage elements contain UI form controls used by the .NET
+			// designer. Deserialize them so the FRX loads without error, then
+			// discard — the engine never renders dialog pages.
+			dp := NewDialogPage()
+			_ = dp.Deserialize(rdr)
 		case "Styles":
 			deserializeStyles(rdr, r.Styles())
 		case "Dictionary":
-			deserializeDictionary(rdr, r.Dictionary())
+			deserializeDictionary(rdr, r.Dictionary(), baseDir)
 		default:
 			// Unknown top-level child — skip.
 			_ = rdr.SkipElement()
@@ -133,6 +182,115 @@ func (r *Report) loadFromSerialReader(rdr *serial.Reader) error {
 		_ = rdr.FinishChild()
 	}
 	return nil
+}
+
+// loadInherited handles an <inherited> root element. It reads the BaseReport
+// attribute to locate the base FRX file, loads it, then deserializes the
+// inherited overlay on top via ApplyBase.
+func (r *Report) loadInherited(rdr *serial.Reader, baseDir string) error {
+	// Read BaseReport attribute from the <inherited> root element.
+	baseReportAttr := rdr.ReadStr("BaseReport", "")
+
+	// Also read any other top-level report attributes present on the root.
+	_ = r.Deserialize(rdr)
+
+	if baseReportAttr == "" {
+		return fmt.Errorf("report.LoadFrom: <inherited> root element has no BaseReport attribute")
+	}
+
+	// Resolve the base report path relative to the directory of the current file.
+	basePath := baseReportAttr
+	if baseDir != "" && !filepath.IsAbs(baseReportAttr) {
+		basePath = filepath.Join(baseDir, baseReportAttr)
+	}
+	if basePath == "" || baseDir == "" {
+		return fmt.Errorf("report.LoadFrom: cannot resolve base report path %q (no directory context; use Load(filename) instead of LoadFrom)", baseReportAttr)
+	}
+
+	// Load the base report.
+	base := NewReport()
+	if err := base.Load(basePath); err != nil {
+		return fmt.Errorf("report.LoadFrom: load base report %q: %w", basePath, err)
+	}
+
+	// Deserialize the inherited file's child elements (pages, dictionary, etc.)
+	for {
+		childType, ok := rdr.NextChild()
+		if !ok {
+			break
+		}
+		switch childType {
+		case "inherited":
+			// An <inherited Name="PageName"> child represents an overlay of a base page.
+			pg, err := deserializeInheritedPage(rdr)
+			if err != nil {
+				_ = rdr.FinishChild()
+				return fmt.Errorf("report.LoadFrom: deserialize inherited page: %w", err)
+			}
+			r.AddPage(pg)
+		case "ReportPage":
+			pg, err := deserializePage(rdr)
+			if err != nil {
+				_ = rdr.FinishChild()
+				return fmt.Errorf("report.LoadFrom: deserialize page: %w", err)
+			}
+			r.AddPage(pg)
+		case "DialogPage":
+			// Deserialize and discard — dialog pages are not rendered.
+			dp := NewDialogPage()
+			_ = dp.Deserialize(rdr)
+		case "Styles":
+			deserializeStyles(rdr, r.Styles())
+		case "Dictionary":
+			deserializeDictionary(rdr, r.Dictionary(), baseDir)
+		default:
+			_ = rdr.SkipElement()
+		}
+		_ = rdr.FinishChild()
+	}
+
+	// Merge base report into this (child) report.
+	r.ApplyBase(base)
+	return nil
+}
+
+// deserializeInheritedPage reads an <inherited Name="…"> child element that
+// represents a page overlay in an inherited report. It captures any new bands
+// added in the inherited page; <inherited> sub-elements (references to base
+// objects) are skipped since the merge is handled by ApplyBase at report level.
+func deserializeInheritedPage(rdr *serial.Reader) (*ReportPage, error) {
+	pg := NewReportPage()
+	if err := pg.Deserialize(rdr); err != nil {
+		return nil, err
+	}
+	pg.SetInherited(true)
+
+	for {
+		childType, ok := rdr.NextChild()
+		if !ok {
+			break
+		}
+		// "inherited" sub-elements reference base objects; skip their sub-tree.
+		if childType == "inherited" {
+			_ = rdr.SkipElement()
+			_ = rdr.FinishChild()
+			continue
+		}
+		obj, err := serial.DefaultRegistry.Create(childType)
+		if err != nil {
+			_ = rdr.SkipElement()
+			_ = rdr.FinishChild()
+			continue
+		}
+		if err2 := obj.Deserialize(rdr); err2 != nil {
+			_ = rdr.FinishChild()
+			return nil, fmt.Errorf("deserialize %s: %w", childType, err2)
+		}
+		deserializeChildren(rdr, obj)
+		_ = rdr.FinishChild()
+		pg.AddBandByTypeName(childType, obj)
+	}
+	return pg, nil
 }
 
 // deserializePage deserializes a ReportPage from the current reader position.
@@ -208,7 +366,9 @@ func deserializeChildren(rdr *serial.Reader, parent report.Base) {
 
 // deserializeDictionary reads the <Dictionary> element and populates the
 // report dictionary with Parameters, Relations, Totals, and data connections.
-func deserializeDictionary(rdr *serial.Reader, dict *data.Dictionary) {
+// baseDir is the directory of the FRX file; it is used to resolve relative
+// file paths for CSV (and similar) data connections.
+func deserializeDictionary(rdr *serial.Reader, dict *data.Dictionary, baseDir string) {
 	for {
 		childType, ok := rdr.NextChild()
 		if !ok {
@@ -231,7 +391,7 @@ func deserializeDictionary(rdr *serial.Reader, dict *data.Dictionary) {
 				dict.AddDataSource(ds)
 			}
 		case "CsvDataConnection":
-			conn, sources := deserializeCsvConnection(rdr)
+			conn, sources := deserializeCsvConnection(rdr, baseDir)
 			dict.AddConnection(conn)
 			for _, ds := range sources {
 				dict.AddDataSource(ds)
@@ -307,8 +467,23 @@ func deserializeJsonTableDataSource(rdr *serial.Reader, filePath string) data.Da
 	return ds
 }
 
-// deserializeCsvConnection reads a <CsvDataConnection> element.
-func deserializeCsvConnection(rdr *serial.Reader) (*data.DataConnectionBase, []data.DataSource) {
+// deserializeCsvConnection reads a <CsvDataConnection> element and returns
+// the connection stub plus any nested CSVDataSource instances it exposes.
+//
+// FRX format for CsvDataConnection:
+//
+//	<CsvDataConnection Name="Connection">
+//	  <TableDataSource Name="ds_name" TableName="file.csv" StoreData="true"
+//	                   TableData="<base64 .NET DataSet XML>" ...>
+//	    <Column Name="col1" DataType="..."/>
+//	    ...
+//	  </TableDataSource>
+//	</CsvDataConnection>
+//
+// When StoreData is true and TableData is non-empty the data is loaded from
+// the inline base64-encoded .NET DataSet XML. Otherwise the TableName is
+// treated as a CSV file path relative to baseDir (the FRX file directory).
+func deserializeCsvConnection(rdr *serial.Reader, baseDir string) (*data.DataConnectionBase, []data.DataSource) {
 	name := rdr.ReadStr("Name", "CsvConnection")
 	connStr := rdr.ReadStr("ConnectionString", "")
 	enabled := rdr.ReadBool("Enabled", true)
@@ -318,9 +493,6 @@ func deserializeCsvConnection(rdr *serial.Reader) (*data.DataConnectionBase, []d
 	conn.SetEnabled(enabled)
 	conn.ConnectionString = connStr
 
-	// CSV connection string is the file path.
-	filePath := connStr
-
 	var sources []data.DataSource
 	for {
 		ct, ok := rdr.NextChild()
@@ -328,11 +500,13 @@ func deserializeCsvConnection(rdr *serial.Reader) (*data.DataConnectionBase, []d
 			break
 		}
 		if ct == "TableDataSource" {
-			tableName := rdr.ReadStr("Name", "")
-			alias := rdr.ReadStr("Alias", tableName)
-			separator := rdr.ReadStr("Separator", ",")
-			hasHeader := rdr.ReadBool("HasHeader", true)
-			// Drain children.
+			dsName := rdr.ReadStr("Name", "")
+			alias := rdr.ReadStr("Alias", dsName)
+			csvFileName := rdr.ReadStr("TableName", "")
+			storeData := rdr.ReadBool("StoreData", false)
+			tableDataB64 := rdr.ReadStr("TableData", "")
+
+			// Drain child elements (Column entries, etc.).
 			for {
 				_, ok2 := rdr.NextChild()
 				if !ok2 {
@@ -340,13 +514,24 @@ func deserializeCsvConnection(rdr *serial.Reader) (*data.DataConnectionBase, []d
 				}
 				_ = rdr.FinishChild()
 			}
-			ds := csvdata.New(tableName)
-			ds.SetFilePath(filePath)
-			ds.SetAlias(alias)
-			if len(separator) > 0 {
-				ds.SetSeparator(rune(separator[0]))
+
+			// Prefer inline data when StoreData is true and TableData is present.
+			if storeData && tableDataB64 != "" {
+				if ds := parseCsvInlineDataSet(dsName, alias, csvFileName, tableDataB64); ds != nil {
+					sources = append(sources, ds)
+					continue
+				}
 			}
-			ds.SetHasHeader(hasHeader)
+
+			// Fall back to file-based CSV.
+			// csvFileName is relative to the FRX directory when baseDir is set.
+			filePath := csvFileName
+			if filePath != "" && baseDir != "" && !filepath.IsAbs(filePath) {
+				filePath = filepath.Join(baseDir, filePath)
+			}
+			ds := csvdata.New(dsName)
+			ds.SetAlias(alias)
+			ds.SetFilePath(filePath)
 			sources = append(sources, ds)
 		} else {
 			_ = rdr.SkipElement()
@@ -354,6 +539,127 @@ func deserializeCsvConnection(rdr *serial.Reader) (*data.DataConnectionBase, []d
 		_ = rdr.FinishChild()
 	}
 	return conn, sources
+}
+
+// parseCsvInlineDataSet decodes a base64-encoded .NET XML DataSet embedded in
+// the TableData attribute and returns a populated BaseDataSource.
+//
+// The .NET DataSet XML has the form:
+//
+//	<NewDataSet>
+//	  <xs:schema>...</xs:schema>
+//	  <tableName><col1>val</col1><col2>val</col2></tableName>
+//	  ...
+//	</NewDataSet>
+//
+// where tableName matches the TableName attribute of the enclosing
+// TableDataSource (e.g. "state_table.csv").
+func parseCsvInlineDataSet(dsName, alias, tableName, tableDataB64 string) data.DataSource {
+	rawXML, err := base64.StdEncoding.DecodeString(tableDataB64)
+	if err != nil {
+		return nil
+	}
+
+	dec := xml.NewDecoder(bytes.NewReader(rawXML))
+
+	// Skip to root element (<NewDataSet> or similar).
+	var root xml.StartElement
+	for {
+		tok, e := dec.Token()
+		if e != nil {
+			return nil
+		}
+		if se, ok := tok.(xml.StartElement); ok {
+			root = se
+			_ = root
+			break
+		}
+	}
+
+	// Read row elements whose local name matches tableName.
+	// Skip any xs:schema or other non-row elements.
+	rowElemName := tableName
+
+	var colOrder []string
+	colSet := make(map[string]bool)
+	var rows []map[string]any
+
+	for {
+		tok, e := dec.Token()
+		if e != nil {
+			break
+		}
+		se, ok := tok.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		// Skip xs:* or other namespace-qualified elements (e.g. xs:schema).
+		if se.Name.Space != "" {
+			if skipErr := dec.Skip(); skipErr != nil {
+				break
+			}
+			continue
+		}
+		if se.Name.Local != rowElemName {
+			// Unexpected sibling — skip.
+			if skipErr := dec.Skip(); skipErr != nil {
+				break
+			}
+			continue
+		}
+
+		// Parse one row: each immediate child element's text is a column value.
+		row := make(map[string]any)
+		for {
+			inner, e2 := dec.Token()
+			if e2 != nil {
+				break
+			}
+			switch it := inner.(type) {
+			case xml.StartElement:
+				col := it.Name.Local
+				var textBuf strings.Builder
+				for {
+					t2, e3 := dec.Token()
+					if e3 != nil {
+						break
+					}
+					switch tv := t2.(type) {
+					case xml.CharData:
+						textBuf.Write(tv)
+					case xml.EndElement:
+						goto colDone
+					}
+				}
+			colDone:
+				val := strings.TrimSpace(textBuf.String())
+				row[col] = val
+				if !colSet[col] {
+					colSet[col] = true
+					colOrder = append(colOrder, col)
+				}
+			case xml.EndElement:
+				// End of row element.
+				goto rowDone
+			}
+		}
+	rowDone:
+		rows = append(rows, row)
+	}
+
+	// Build a BaseDataSource from the parsed rows.
+	bs := data.NewBaseDataSource(dsName)
+	bs.SetAlias(alias)
+	for _, col := range colOrder {
+		bs.AddColumn(data.Column{Name: col, Alias: col, DataType: "string"})
+	}
+	for _, row := range rows {
+		bs.AddRow(row)
+	}
+	if err2 := bs.Init(); err2 != nil {
+		return nil
+	}
+	return bs
 }
 
 // deserializeXmlConnection reads an <XmlDataConnection> element.

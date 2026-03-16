@@ -108,7 +108,7 @@ func TestLoadFromSerialReader_DeserializePageError_Internal(t *testing.T) {
 
 	r := NewReport()
 	rdr := serial.NewReader(strings.NewReader(frx))
-	err := r.loadFromSerialReader(rdr)
+	err := r.loadFromSerialReader(rdr, "")
 	if err == nil {
 		t.Fatal("loadFromSerialReader should return error when deserializePage fails")
 	}

@@ -1438,7 +1438,7 @@ func TestLoadFromSerialReader_EmptyDocument(t *testing.T) {
 	r := NewReport()
 	// Empty reader → ReadObjectHeader returns false.
 	rdr := serial.NewReader(strings.NewReader(""))
-	err := r.loadFromSerialReader(rdr)
+	err := r.loadFromSerialReader(rdr, "")
 	if err == nil {
 		t.Error("loadFromSerialReader should return error for empty document")
 	}
@@ -1448,7 +1448,7 @@ func TestLoadFromSerialReader_WrongRootElement(t *testing.T) {
 	r := NewReport()
 	// Wrong root element name.
 	rdr := serial.NewReader(strings.NewReader(`<?xml version="1.0"?><NotAReport/>`))
-	err := r.loadFromSerialReader(rdr)
+	err := r.loadFromSerialReader(rdr, "")
 	if err == nil {
 		t.Error("loadFromSerialReader should return error for wrong root element")
 	}

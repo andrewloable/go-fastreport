@@ -33,9 +33,12 @@ func NewCatalog(w *Writer, pages *Pages) *Catalog {
 	return &Catalog{obj: obj, dict: dict, pages: pages}
 }
 
-// SetOutlines registers the outline root object with the catalog.
+// SetOutlines registers the outline root object with the catalog and sets
+// /PageMode to /UseOutlines so that PDF viewers open the bookmarks panel
+// automatically when the document contains an outline tree.
 func (c *Catalog) SetOutlines(outlineRef *core.IndirectObject) {
 	c.dict.Add("Outlines", core.NewRef(outlineRef))
+	c.dict.Add("PageMode", core.NewName("UseOutlines"))
 }
 
 // SetNamedDests registers the /Names /Dests name tree with the catalog.

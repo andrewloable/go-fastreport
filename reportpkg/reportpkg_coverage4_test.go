@@ -457,7 +457,7 @@ func TestLoadFromSerialReader_DirectCall_ValidDocument(t *testing.T) {
 
 	r := NewReport()
 	rdr := serial.NewReader(strings.NewReader(frx))
-	if err := r.loadFromSerialReader(rdr); err != nil {
+	if err := r.loadFromSerialReader(rdr, ""); err != nil {
 		t.Fatalf("loadFromSerialReader: %v", err)
 	}
 	if r.Info.Name != "Direct" {

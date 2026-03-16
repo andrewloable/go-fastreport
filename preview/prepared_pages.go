@@ -280,6 +280,11 @@ type PreparedObject struct {
 	HyperlinkKind int
 	// HyperlinkValue is the resolved hyperlink target (URL, page number string, bookmark name).
 	HyperlinkValue string
+
+	// TextRenderType mirrors object.TextRenderType and controls how the Text
+	// field is interpreted by exporters.
+	// 0=Default (plain text), 1=HtmlTags, 2=HtmlParagraph, 3=Inline.
+	TextRenderType int
 }
 
 // ── PreparedWatermark ─────────────────────────────────────────────────────────

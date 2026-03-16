@@ -17,10 +17,12 @@ import (
 type SeriesType int
 
 const (
-	SeriesTypeLine   SeriesType = iota // connected polyline
-	SeriesTypeBar                      // vertical bars (grouped)
-	SeriesTypeArea                     // filled area under the line
-	SeriesTypePie                      // pie/donut slice (first series only for full pie)
+	SeriesTypeLine     SeriesType = iota // connected polyline
+	SeriesTypeBar                        // vertical bars (grouped)
+	SeriesTypeArea                       // filled area under the line
+	SeriesTypePie                        // pie/donut slice (first series only for full pie)
+	SeriesTypeSpline                     // smooth curve (cubic Bezier approximation)
+	SeriesTypeDoughnut                   // doughnut (ring) chart
 )
 
 // Series is a single data series to be plotted.
@@ -114,9 +116,12 @@ func (c *Chart) Render() image.Image {
 		}
 	}
 
-	// Pie chart: special layout.
-	if c.Type == SeriesTypePie || (len(c.Series) > 0 && c.Series[0].Type == SeriesTypePie) {
-		c.renderPie(img, w, h)
+	// Pie / Doughnut chart: special layout.
+	if c.Type == SeriesTypePie || c.Type == SeriesTypeDoughnut ||
+		(len(c.Series) > 0 && (c.Series[0].Type == SeriesTypePie || c.Series[0].Type == SeriesTypeDoughnut)) {
+		isDoughnut := c.Type == SeriesTypeDoughnut ||
+			(len(c.Series) > 0 && c.Series[0].Type == SeriesTypeDoughnut)
+		c.renderPieDoughnut(img, w, h, isDoughnut)
 		return img
 	}
 
@@ -152,7 +157,7 @@ func (c *Chart) Render() image.Image {
 		}
 	}
 	// Extend range to include 0 for bar/area charts.
-	if c.Type != SeriesTypeLine {
+	if c.Type != SeriesTypeLine && c.Type != SeriesTypeSpline {
 		if minY > 0 {
 			minY = 0
 		}
@@ -260,6 +265,29 @@ func (c *Chart) Render() image.Image {
 				prevX, prevY = x, y
 			}
 
+		case SeriesTypeSpline:
+			// Spline: smooth curve using cubic Bezier approximation.
+			// Control points are chosen using the Catmull-Rom convention:
+			// for each interior point the tangent is parallel to the chord
+			// between its neighbours, scaled by 1/3 of the segment length.
+			step := float64(areaW) / float64(nPts-1)
+			if nPts == 1 {
+				step = float64(areaW)
+			}
+			// Build pixel coordinates for all points.
+			xs := make([]int, n)
+			ys := make([]int, n)
+			for j, v := range s.Values {
+				xs[j] = chartLeft + int(float64(j)*step)
+				ys[j] = yScale(v)
+				// Draw point marker.
+				fillRect(img, xs[j]-2, ys[j]-2, xs[j]+2, ys[j]+2, s.Color)
+			}
+			// Draw smooth segments.
+			for j := 1; j < n; j++ {
+				drawBezierSegment(img, xs, ys, j-1, j, s.Color)
+			}
+
 		default: // Line
 			step := float64(areaW) / float64(nPts-1)
 			if nPts == 1 {
@@ -293,9 +321,11 @@ func (c *Chart) Render() image.Image {
 	return img
 }
 
-// ── Pie chart ─────────────────────────────────────────────────────────────────
+// ── Pie / Doughnut chart ──────────────────────────────────────────────────────
 
-func (c *Chart) renderPie(img *image.RGBA, w, h int) {
+// renderPieDoughnut renders a pie chart, or if isDoughnut is true, punches a
+// hole in the centre to produce a doughnut (ring) chart.
+func (c *Chart) renderPieDoughnut(img *image.RGBA, w, h int, isDoughnut bool) {
 	if len(c.Series) == 0 || len(c.Series[0].Values) == 0 {
 		return
 	}
@@ -321,6 +351,31 @@ func (c *Chart) renderPie(img *image.RGBA, w, h int) {
 		col := piePalette[i%len(piePalette)]
 		drawSector(img, cx, cy, r, startAngle, startAngle+sweepAngle, col)
 		startAngle += sweepAngle
+	}
+
+	// For doughnut: overwrite the inner hole with the background colour.
+	if isDoughnut {
+		holeR := r / 2
+		bg := c.Background
+		if bg.A == 0 {
+			bg = color.RGBA{255, 255, 255, 255}
+		}
+		for y := cy - holeR; y <= cy+holeR; y++ {
+			for x := cx - holeR; x <= cx+holeR; x++ {
+				dx := float64(x - cx)
+				dy := float64(y - cy)
+				if dx*dx+dy*dy <= float64(holeR*holeR) {
+					setPixel(img, x, y, bg)
+				}
+			}
+		}
+		// Redraw hole border.
+		for i := 0; i < 360; i++ {
+			a := float64(i) * math.Pi / 180
+			x := cx + int(math.Cos(a)*float64(holeR))
+			y := cy + int(math.Sin(a)*float64(holeR))
+			setPixel(img, x, y, color.RGBA{0, 0, 0, 255})
+		}
 	}
 
 	// Draw title.
@@ -365,6 +420,65 @@ func drawSector(img *image.RGBA, cx, cy, r int, startAngle, endAngle float64, co
 		x := cx + int(math.Cos(startAngle)*float64(dist))
 		y := cy + int(math.Sin(startAngle)*float64(dist))
 		setPixel(img, x, y, color.RGBA{0, 0, 0, 255})
+	}
+}
+
+// ── Spline drawing ────────────────────────────────────────────────────────────
+
+// drawBezierSegment draws a smooth cubic Bezier curve between points[i] and
+// points[i+1] using Catmull-Rom tangents. xs and ys hold the full array of
+// pixel coordinates; i0 and i1 are the indices of the two endpoints.
+func drawBezierSegment(img *image.RGBA, xs, ys []int, i0, i1 int, col color.RGBA) {
+	n := len(xs)
+	// Catmull-Rom: tangent at point k = (P[k+1] - P[k-1]) / 2.
+	// For endpoints, we clamp to a one-sided difference.
+	tangentX := func(k int) float64 {
+		if k <= 0 {
+			return float64(xs[1] - xs[0])
+		}
+		if k >= n-1 {
+			return float64(xs[n-1] - xs[n-2])
+		}
+		return float64(xs[k+1]-xs[k-1]) / 2
+	}
+	tangentY := func(k int) float64 {
+		if k <= 0 {
+			return float64(ys[1] - ys[0])
+		}
+		if k >= n-1 {
+			return float64(ys[n-1] - ys[n-2])
+		}
+		return float64(ys[k+1]-ys[k-1]) / 2
+	}
+
+	x0, y0 := float64(xs[i0]), float64(ys[i0])
+	x3, y3 := float64(xs[i1]), float64(ys[i1])
+
+	// Control points (1/3 of tangent length).
+	tx0, ty0 := tangentX(i0)/3, tangentY(i0)/3
+	tx1, ty1 := tangentX(i1)/3, tangentY(i1)/3
+
+	x1, y1 := x0+tx0, y0+ty0
+	x2, y2 := x3-tx1, y3-ty1
+
+	// Evaluate the Bezier at enough steps for a smooth curve.
+	dx := math.Abs(x3 - x0)
+	dy := math.Abs(y3 - y0)
+	steps := int(math.Sqrt(dx*dx+dy*dy)) * 2
+	if steps < 8 {
+		steps = 8
+	}
+
+	prevX, prevY := int(x0), int(y0)
+	for s := 1; s <= steps; s++ {
+		t := float64(s) / float64(steps)
+		u := 1 - t
+		// Cubic Bezier formula.
+		bx := u*u*u*x0 + 3*u*u*t*x1 + 3*u*t*t*x2 + t*t*t*x3
+		by := u*u*u*y0 + 3*u*u*t*y1 + 3*u*t*t*y2 + t*t*t*y3
+		cx, cy := int(bx), int(by)
+		drawThickLine(img, prevX, prevY, cx, cy, col, 2)
+		prevX, prevY = cx, cy
 	}
 }
 

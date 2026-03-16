@@ -22,6 +22,14 @@ import (
 	"github.com/andrewloable/go-fastreport/utils"
 )
 
+// textRenderTypeHtmlTags is the TextRenderType value for HTML-tagged text.
+// Mirrors object.TextRenderTypeHtmlTags = 1.
+const textRenderTypeHtmlTags = 1
+
+// textRenderTypeHtmlParagraph is the TextRenderType value for HTML paragraph mode.
+// Mirrors object.TextRenderTypeHtmlParagraph = 2.
+const textRenderTypeHtmlParagraph = 2
+
 // DefaultDPI is the output resolution used when converting pixel coordinates
 // to image pixels. 96 dpi matches the internal unit system.
 const DefaultDPI = 96
@@ -194,7 +202,15 @@ func (e *Exporter) renderObject(obj preview.PreparedObject, bandTop float32) {
 		if fontPt <= 0 {
 			fontPt = 10
 		}
-		face := selectFace(obj.Font, fontPt, DefaultDPI*float64(e.Scale))
+		dpi := DefaultDPI * float64(e.Scale)
+
+		// Check if this object uses HTML tag rendering.
+		if obj.TextRenderType == textRenderTypeHtmlTags || obj.TextRenderType == textRenderTypeHtmlParagraph {
+			e.renderHtmlText(obj, x, y, w, h, fontPt, dpi, tc)
+			return
+		}
+
+		face := selectFace(obj.Font, fontPt, dpi)
 		lineH := face.Metrics().Height.Ceil()
 		ascent := face.Metrics().Ascent.Ceil()
 		lines := e.wrapText(obj.Text, w, face)
@@ -330,6 +346,205 @@ func (e *Exporter) renderObject(obj preview.PreparedObject, bandTop float32) {
 			y1p := y + e.scaled(int(obj.Points[next][1]))
 			e.drawLine(x0p, y0p, x1p, y1p, lineColor)
 		}
+
+	case preview.ObjectTypeDigitalSignature:
+		if bounds.Empty() {
+			return
+		}
+		// Fill with white background.
+		white := color.RGBA{R: 255, G: 255, B: 255, A: 255}
+		draw.Draw(e.curPage, bounds, &image.Uniform{white}, image.Point{}, draw.Over)
+
+		// Draw a dashed border: draw alternating segments on each side.
+		borderColor := color.RGBA{A: 255} // black
+		dashLen := e.scaled(4)
+		gapLen := e.scaled(3)
+		if dashLen < 2 {
+			dashLen = 2
+		}
+		if gapLen < 1 {
+			gapLen = 1
+		}
+		// Top edge.
+		for px := x; px < x+w; px += dashLen + gapLen {
+			end := px + dashLen
+			if end > x+w {
+				end = x + w
+			}
+			e.drawHLine(px, y, end, borderColor)
+		}
+		// Bottom edge.
+		for px := x; px < x+w; px += dashLen + gapLen {
+			end := px + dashLen
+			if end > x+w {
+				end = x + w
+			}
+			e.drawHLine(px, y+h-1, end, borderColor)
+		}
+		// Left edge.
+		for py := y; py < y+h; py += dashLen + gapLen {
+			end := py + dashLen
+			if end > y+h {
+				end = y + h
+			}
+			e.drawVLine(x, py, end, borderColor)
+		}
+		// Right edge.
+		for py := y; py < y+h; py += dashLen + gapLen {
+			end := py + dashLen
+			if end > y+h {
+				end = y + h
+			}
+			e.drawVLine(x+w-1, py, end, borderColor)
+		}
+
+		// Draw centered placeholder text.
+		label := obj.Text
+		if label == "" {
+			label = "Digital Signature"
+		}
+		fontPt := float64(obj.Font.Size)
+		if fontPt <= 0 {
+			fontPt = 10
+		}
+		face := selectFace(obj.Font, fontPt, DefaultDPI*float64(e.Scale))
+		ascent := face.Metrics().Ascent.Ceil()
+		lineH := face.Metrics().Height.Ceil()
+		textW := font.MeasureString(face, label).Ceil()
+		dotX := x + (w-textW)/2
+		if dotX < x {
+			dotX = x
+		}
+		dotY := y + (h-lineH)/2 + ascent
+		tc := obj.TextColor
+		if tc.A == 0 {
+			tc = color.RGBA{A: 255}
+		}
+		d := &font.Drawer{
+			Dst:  e.curPage,
+			Src:  image.NewUniform(tc),
+			Face: face,
+			Dot:  fixed.P(dotX, dotY),
+		}
+		d.DrawString(label)
+	}
+}
+
+// renderHtmlText parses the HTML-tagged text in obj and renders each styled run
+// onto the current canvas. It uses HtmlTextRenderer from the utils package to
+// split the text into lines and runs, then selects the appropriate font face
+// for each run (bold, italic, bold+italic, regular) using selectFace.
+func (e *Exporter) renderHtmlText(obj preview.PreparedObject, x, y, w, h int, fontPt, dpi float64, defaultColor color.RGBA) {
+	renderer := utils.NewHtmlTextRenderer(obj.Text, obj.Font, defaultColor)
+	htmlLines := renderer.Lines()
+	if len(htmlLines) == 0 {
+		return
+	}
+
+	// Compute line height using the base font face.
+	baseFace := selectFace(obj.Font, fontPt, dpi)
+	lineH := baseFace.Metrics().Height.Ceil()
+	ascent := baseFace.Metrics().Ascent.Ceil()
+
+	// Count total visual lines (each HtmlLine may produce multiple wrapped lines).
+	totalVisualLines := 0
+	for _, hl := range htmlLines {
+		// Collect plain text for line width measurement.
+		plainRuns := make([]string, len(hl.Runs))
+		for i, run := range hl.Runs {
+			plainRuns[i] = run.Text
+		}
+		plain := strings.Join(plainRuns, "")
+		if plain == "" {
+			totalVisualLines++ // empty line still occupies vertical space
+			continue
+		}
+		wrapped := e.wrapText(plain, w, baseFace)
+		if len(wrapped) == 0 {
+			totalVisualLines++
+		} else {
+			totalVisualLines += len(wrapped)
+		}
+	}
+
+	textBlockH := totalVisualLines * lineH
+	startY := y + ascent
+	switch obj.VertAlign {
+	case 1:
+		startY = y + (h-textBlockH)/2 + ascent
+	case 2:
+		startY = y + h - textBlockH + ascent
+	}
+
+	for _, hl := range htmlLines {
+		if startY > y+h {
+			break
+		}
+
+		// Render this logical line. We render runs left-to-right on the same
+		// visual line, handling word-wrap across all runs together.
+		// For simplicity: render each HtmlLine as a single visual line,
+		// drawing runs consecutively on the X axis.
+		// Word-wrapping across mixed-style runs is complex; we keep it
+		// simple: compute total line width, apply alignment, then draw runs.
+
+		// Compute total pixel width of this logical line.
+		totalLineW := 0
+		type renderRun struct {
+			text  string
+			face  font.Face
+			color color.RGBA
+		}
+		var renderRuns []renderRun
+		for _, run := range hl.Runs {
+			if run.Text == "" {
+				continue
+			}
+			runFace := selectFace(run.Font, float64(run.Font.Size), dpi)
+			if run.Font.Size <= 0 {
+				runFace = baseFace
+			}
+			totalLineW += font.MeasureString(runFace, run.Text).Ceil()
+			renderRuns = append(renderRuns, renderRun{
+				text:  run.Text,
+				face:  runFace,
+				color: run.Color,
+			})
+		}
+
+		if len(renderRuns) == 0 {
+			// Empty line — just advance Y.
+			startY += lineH
+			continue
+		}
+
+		dotX := x + 2
+		switch obj.HorzAlign {
+		case 1: // Center
+			dotX = x + (w-totalLineW)/2
+		case 2: // Right
+			dotX = x + w - totalLineW - 2
+		}
+		if dotX < x {
+			dotX = x
+		}
+
+		// Draw each run at the current X position.
+		for _, rr := range renderRuns {
+			if dotX >= x+w {
+				break
+			}
+			d := &font.Drawer{
+				Dst:  e.curPage,
+				Src:  image.NewUniform(rr.color),
+				Face: rr.face,
+				Dot:  fixed.P(dotX, startY),
+			}
+			d.DrawString(rr.text)
+			dotX += font.MeasureString(rr.face, rr.text).Ceil()
+		}
+
+		startY += lineH
 	}
 }
 

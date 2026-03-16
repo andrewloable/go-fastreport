@@ -67,6 +67,16 @@ type Report struct {
 	StartReportEvent  string
 	FinishReportEvent string
 
+	// OnStartReport is called by the engine at the very beginning of a run,
+	// after data sources are initialised. It is the Go equivalent of the
+	// FastReport OnStartReport script event.
+	OnStartReport func()
+
+	// OnFinishReport is called by the engine at the very end of a run,
+	// after all pages have been generated. It is the Go equivalent of the
+	// FastReport OnFinishReport script event.
+	OnFinishReport func()
+
 	// BaseReportPath is the path to the base (parent) report file.
 	// When non-empty, the base report is loaded and merged into this report
 	// before the engine runs.
@@ -80,6 +90,10 @@ type Report struct {
 
 	// preparedPages holds the output from the last Prepare() call.
 	preparedPages *preview.PreparedPages
+
+	// customFunctions is the registry of user-defined callback functions.
+	// Keys are function names as they appear in report expressions.
+	customFunctions map[string]func(args []any) (any, error)
 }
 
 // NewReport creates a Report with defaults.
@@ -91,6 +105,35 @@ func NewReport() *Report {
 		InitialPageNumber: 1,
 		ExportsOptions:    export.NewExportsOptions(),
 	}
+}
+
+// RegisterFunction registers a named Go callback function that can be called
+// from report expressions using the syntax [FuncName(arg1, arg2, ...)].
+// The fn receives all arguments as []any and returns a single value or an error.
+// Registering a name that already exists overwrites the previous entry.
+//
+// Example:
+//
+//	r.RegisterFunction("DoubleValue", func(args []any) (any, error) {
+//	    v := args[0].(int)
+//	    return v * 2, nil
+//	})
+//	// In the report template: [DoubleValue(5)] → "10"
+func (r *Report) RegisterFunction(name string, fn func(args []any) (any, error)) {
+	if r.customFunctions == nil {
+		r.customFunctions = make(map[string]func(args []any) (any, error))
+	}
+	r.customFunctions[name] = fn
+}
+
+// CustomFunctions returns a copy of the registered custom function map.
+// The returned map is safe to inspect but mutations do not affect the report.
+func (r *Report) CustomFunctions() map[string]func(args []any) (any, error) {
+	out := make(map[string]func(args []any) (any, error), len(r.customFunctions))
+	for k, v := range r.customFunctions {
+		out[k] = v
+	}
+	return out
 }
 
 // Dictionary returns the report's data dictionary.

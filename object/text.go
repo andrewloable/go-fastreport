@@ -1,6 +1,8 @@
 package object
 
 import (
+	"image/color"
+
 	"github.com/andrewloable/go-fastreport/format"
 	"github.com/andrewloable/go-fastreport/report"
 	"github.com/andrewloable/go-fastreport/style"
@@ -334,6 +336,9 @@ type TextObject struct {
 	wordWrap          bool // default true
 	underlines        bool
 	font              style.Font
+	// textColor is the foreground text color (equivalent to FastReport TextFill as SolidFill).
+	// Default is opaque black {0, 0, 0, 255}.
+	textColor         color.RGBA
 	fontWidthRatio    float32 // default 1.0
 	firstTabOffset    float32
 	tabWidth          float32
@@ -369,6 +374,7 @@ func NewTextObject() *TextObject {
 		fontWidthRatio: 1.0,
 		clip:           true,
 		font:           style.DefaultFont(),
+		textColor:      color.RGBA{A: 255}, // opaque black
 	}
 }
 
@@ -422,6 +428,13 @@ func (t *TextObject) Font() style.Font { return t.font }
 // SetFont sets the text font.
 func (t *TextObject) SetFont(f style.Font) { t.font = f }
 
+// TextColor returns the foreground text color.
+// The default is opaque black {0, 0, 0, 255}.
+func (t *TextObject) TextColor() color.RGBA { return t.textColor }
+
+// SetTextColor sets the foreground text color.
+func (t *TextObject) SetTextColor(c color.RGBA) { t.textColor = c }
+
 // ApplyStyle overrides the base implementation to also propagate the font and
 // text-fill colour from the style entry. Both the modern Apply* flags and the
 // legacy *Changed flags are honoured.
@@ -432,6 +445,9 @@ func (t *TextObject) ApplyStyle(entry *style.StyleEntry) {
 	}
 	if entry.ApplyFont || entry.FontChanged {
 		t.font = entry.Font
+	}
+	if entry.ApplyTextFill || entry.TextColorChanged {
+		t.textColor = entry.TextColor
 	}
 }
 

@@ -118,6 +118,16 @@ func (r *Report) buildCalcEnv() expr.Env {
 		}
 	}
 
+	// Inject user-registered callback functions.
+	// Each is wrapped as a variadic func(...any) (any, error) so that
+	// expr-lang/expr can call them with any number of arguments.
+	for name, fn := range r.customFunctions {
+		fn := fn // capture loop variable
+		env[name] = func(args ...any) (any, error) {
+			return fn(args)
+		}
+	}
+
 	return env
 }
 

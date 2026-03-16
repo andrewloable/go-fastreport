@@ -97,43 +97,64 @@ func (e *ReportEngine) CalcBandHeight(b report.Base) float32 {
 // calcBandRequiredHeight measures all TextObject children of the band and
 // returns the minimum height needed to display all content without clipping.
 // baseHeight is used as the starting lower bound.
+//
+// The algorithm mirrors FastReport.BandBase.CalcHeight() from the .NET source:
+//  1. For each object that has CanGrow or CanShrink set, measure its content
+//     height and decide the effective height (respecting individual object flags).
+//  2. Compute downward shifts for objects that sit below a growing/shrinking peer.
+//  3. Return the maximum bottom edge across all visible objects.
 func calcBandRequiredHeight(bb *band.BandBase, baseHeight float32) float32 {
 	objs := bb.Objects()
 	if objs == nil || objs.Len() == 0 {
 		return baseHeight
 	}
 
-	// We need the maximum bottom edge of all expanded text objects.
-	maxBottom := float32(0)
+	n := objs.Len()
 
-	for i := 0; i < objs.Len(); i++ {
+	// hasDims provides the geometry of any component object.
+	type hasDims interface {
+		Top() float32
+		Height() float32
+	}
+	type hasCanGrowShrink interface {
+		CanGrow() bool
+		CanShrink() bool
+	}
+	type hasVisible interface{ Visible() bool }
+
+	// Step 1: compute effective height for each object.
+	tops := make([]float32, n)
+	effectiveH := make([]float32, n)
+	for i := 0; i < n; i++ {
 		obj := objs.Get(i)
-		txt, ok := obj.(*object.TextObject)
-		if !ok {
-			// Non-text objects use their declared bottom edge.
-			type hasDims interface {
-				Top() float32
-				Height() float32
-			}
-			if d, ok2 := obj.(hasDims); ok2 {
-				bottom := d.Top() + d.Height()
-				if bottom > maxBottom {
-					maxBottom = bottom
-				}
-			}
+		d, hasDim := obj.(hasDims)
+		if !hasDim {
 			continue
 		}
+		tops[i] = d.Top()
+		effectiveH[i] = d.Height()
 
-		// Measure the text content.
+		txt, isTxt := obj.(*object.TextObject)
+		if !isTxt {
+			continue // non-text objects keep their declared height
+		}
+
+		// Check whether this TextObject individually permits grow/shrink.
+		gs, hasGS := obj.(hasCanGrowShrink)
+		canGrowObj := hasGS && gs.CanGrow()
+		canShrinkObj := hasGS && gs.CanShrink()
+		if !canGrowObj && !canShrinkObj {
+			continue // object is fixed size
+		}
+
+		// Measure the rendered text height.
 		objWidth := txt.Width()
 		if objWidth <= 0 {
 			objWidth = bb.Width()
 		}
-
 		var textH float32
 		switch txt.TextRenderType() {
 		case object.TextRenderTypeHtmlTags, object.TextRenderTypeHtmlParagraph:
-			// Use HtmlTextRenderer for HTML-formatted text.
 			renderer := utils.NewHtmlTextRenderer(txt.Text(), txt.Font(), defaultTextColor)
 			textH = renderer.MeasureHeight(objWidth)
 		default:
@@ -141,18 +162,65 @@ func calcBandRequiredHeight(bb *band.BandBase, baseHeight float32) float32 {
 		}
 
 		declaredH := txt.Height()
-		usedH := textH
-		if usedH < declaredH {
-			usedH = declaredH
+		if canGrowObj && textH > declaredH {
+			effectiveH[i] = textH
+		} else if canShrinkObj && textH < declaredH {
+			effectiveH[i] = textH
 		}
+		// If neither condition applies, the declared height is unchanged.
+	}
 
-		bottom := txt.Top() + usedH
+	// Step 2: propagate downward shifts for objects that sit below a
+	// growing or shrinking peer. Object j is "below" object i when j's top
+	// (after accumulated shifts) is at or below i's original bottom edge.
+	shifts := make([]float32, n)
+	for i := 0; i < n; i++ {
+		obj := objs.Get(i)
+		d, hasDim := obj.(hasDims)
+		if !hasDim {
+			continue
+		}
+		delta := effectiveH[i] - d.Height()
+		if delta == 0 {
+			continue
+		}
+		parentBottom := tops[i] + d.Height()
+		for j := 0; j < n; j++ {
+			if j == i {
+				continue
+			}
+			if tops[j]+shifts[j] >= parentBottom-1e-4 {
+				proposed := delta + shifts[i]
+				if delta > 0 {
+					if proposed > shifts[j] {
+						shifts[j] = proposed
+					}
+				} else {
+					if proposed < shifts[j] {
+						shifts[j] = proposed
+					}
+				}
+			}
+		}
+	}
+
+	// Step 3: compute max bottom edge across all visible objects.
+	maxBottom := float32(0)
+	for i := 0; i < n; i++ {
+		obj := objs.Get(i)
+		if v, ok := obj.(hasVisible); ok && !v.Visible() {
+			continue
+		}
+		if _, hasDim := obj.(hasDims); !hasDim {
+			continue
+		}
+		bottom := tops[i] + shifts[i] + effectiveH[i]
 		if bottom > maxBottom {
 			maxBottom = bottom
 		}
 	}
 
-	if maxBottom < baseHeight {
+	if maxBottom <= 0 {
 		return baseHeight
 	}
 	return maxBottom
@@ -196,6 +264,7 @@ func (e *ReportEngine) AddBandToPreparedPages(b *band.BandBase) bool {
 		Height: height,
 	}
 	e.populateBandObjects(b, pb)
+	applyAnchorAdjustments(b, pb, 0, height-b.Height(), 0)
 	_ = e.preparedPages.AddBand(pb)
 	e.AdvanceY(height)
 	return true
@@ -249,6 +318,9 @@ func (e *ReportEngine) showFullBandOnce(b *band.BandBase) {
 		return
 	}
 
+	// Fire BeforePrint before any rendering takes place, mirroring the
+	// C# ReportEngine.ShowBand which calls band.OnBeforePrint first.
+	b.FireBeforePrint()
 	b.FireBeforeLayout()
 
 	// Populate outline entry if band has an OutlineExpression.
@@ -264,28 +336,49 @@ func (e *ReportEngine) showFullBandOnce(b *band.BandBase) {
 	height := e.CalcBandHeight(b)
 	if height <= 0 {
 		b.FireAfterLayout()
+		b.FireAfterPrint()
 		if addedOutline {
 			e.OutlineUp()
 		}
 		return
 	}
 
-	// Check free space.
-	if b.FlagCheckFreeSpace && e.freeSpace < height {
+	// Check free space (skipped when rendering into a parent band via PrintOnParent).
+	if e.outputBand == nil && b.FlagCheckFreeSpace && e.freeSpace < height {
 		e.startNewPageForCurrent()
 	}
 
-	if e.preparedPages != nil {
+	if e.outputBand != nil {
+		// PrintOnParent mode: merge this subreport band's objects directly into
+		// the parent band's PreparedBand, offset by the subreport position.
+		tmp := &preview.PreparedBand{}
+		e.populateBandObjects(b, tmp)
+		yOff := e.outputBandOffsetY + e.curY
+		for _, po := range tmp.Objects {
+			po.Left += e.outputBandOffsetX
+			po.Top += yOff
+			e.outputBand.Objects = append(e.outputBand.Objects, po)
+		}
+		// Grow the parent band height to accommodate the subreport content.
+		newBottom := yOff + height
+		if newBottom > e.outputBand.Height {
+			e.outputBand.Height = newBottom
+		}
+	} else if e.preparedPages != nil {
 		pb := &preview.PreparedBand{
 			Name:   b.Name(),
 			Top:    e.curY,
 			Height: height,
 		}
 		e.populateBandObjects(b, pb)
+		applyAnchorAdjustments(b, pb, 0, height-b.Height(), 0)
 		_ = e.preparedPages.AddBand(pb)
 	}
 	e.AdvanceY(height)
 	b.FireAfterLayout()
+	// Fire AfterPrint after the band has been added to the prepared pages,
+	// mirroring the C# ReportEngine.ShowBand which calls band.OnAfterPrint last.
+	b.FireAfterPrint()
 
 	// Show child band if present.
 	if child := b.Child(); child != nil {
@@ -294,6 +387,104 @@ func (e *ReportEngine) showFullBandOnce(b *band.BandBase) {
 
 	if addedOutline {
 		e.OutlineUp()
+	}
+}
+
+// applyAnchorAdjustments adjusts the positions and sizes of PreparedObjects
+// within pb according to the Anchor property of their corresponding band objects.
+//
+// When a band grows (or shrinks) due to CanGrow/CanShrink, objects anchored
+// only to the bottom edge need their Y coordinate shifted down by the delta;
+// objects anchored to both top and bottom need their Height increased by delta.
+// The equivalent rules apply horizontally for left/right anchors using deltaW.
+//
+// startIdx is the index of the first PreparedObject in pb.Objects that belongs
+// to this band (used when the band is one of several contributing to a page).
+// deltaH is (effectiveHeight - declaredHeight) for the vertical axis.
+// deltaW is (effectiveWidth  - declaredWidth)  for the horizontal axis (usually 0).
+//
+// The function iterates band objects in the same order as populateBandObjects2
+// and matches each source object to its primary PreparedObject slot by index.
+// Extra PreparedObjects added for container children, table cells, and
+// AdvMatrix cells are skipped when iterating the source objects.
+func applyAnchorAdjustments(bb *band.BandBase, pb *preview.PreparedBand, startIdx int, deltaH, deltaW float32) {
+	if (deltaH == 0 && deltaW == 0) || bb == nil {
+		return
+	}
+	objs := bb.Objects()
+	if objs == nil || objs.Len() == 0 {
+		return
+	}
+
+	// hasAnchor is satisfied by any object that exposes its Anchor property.
+	type hasAnchor interface {
+		Anchor() report.AnchorStyle
+	}
+
+	// poIdx tracks our position in pb.Objects. We start at startIdx and advance
+	// by 1 per successfully built source object (buildPreparedObject returned
+	// non-nil). Extra entries added for children/cells are skipped because we
+	// only care about the primary slot for each source object.
+	poIdx := startIdx
+	for i := 0; i < objs.Len(); i++ {
+		obj := objs.Get(i)
+		if poIdx >= len(pb.Objects) {
+			break
+		}
+
+		// Skip invisible objects — buildPreparedObject returned nil for these.
+		type hasVisible interface{ Visible() bool }
+		if v, ok := obj.(hasVisible); ok && !v.Visible() {
+			continue
+		}
+
+		// Skip objects with no geometry — buildPreparedObject returned nil.
+		type hasGeom interface {
+			Left() float32
+			Top() float32
+			Width() float32
+			Height() float32
+		}
+		if _, ok := obj.(hasGeom); !ok {
+			continue
+		}
+
+		// poIdx now points to the primary PreparedObject for this source object.
+		if anc, ok := obj.(hasAnchor); ok {
+			a := anc.Anchor()
+			po := &pb.Objects[poIdx]
+
+			// Vertical anchor adjustments (deltaH).
+			if deltaH != 0 {
+				ancTop := (a & report.AnchorTop) != 0
+				ancBottom := (a & report.AnchorBottom) != 0
+				switch {
+				case ancBottom && !ancTop:
+					// Only bottom-anchored: move down by delta.
+					po.Top += deltaH
+				case ancTop && ancBottom:
+					// Anchored to both: stretch vertically.
+					po.Height += deltaH
+				// AnchorTop only (default) or AnchorNone: no vertical change.
+				}
+			}
+
+			// Horizontal anchor adjustments (deltaW).
+			if deltaW != 0 {
+				ancLeft := (a & report.AnchorLeft) != 0
+				ancRight := (a & report.AnchorRight) != 0
+				switch {
+				case ancRight && !ancLeft:
+					// Only right-anchored: move right by delta.
+					po.Left += deltaW
+				case ancLeft && ancRight:
+					// Anchored to both: stretch horizontally.
+					po.Width += deltaW
+				// AnchorLeft only (default) or AnchorNone: no horizontal change.
+				}
+			}
+		}
+		poIdx++
 	}
 }
 

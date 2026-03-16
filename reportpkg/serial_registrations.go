@@ -18,6 +18,7 @@ func init() {
 		// Report-level containers
 		{"Report", func() report.Base { return NewReport() }},
 		{"ReportPage", func() report.Base { return NewReportPage() }},
+		{"DialogPage", func() report.Base { return NewDialogPage() }},
 
 		// Band types — short names (used by our custom FRX files and serializer)
 		{"ReportTitle", func() report.Base { return band.NewReportTitleBand() }},

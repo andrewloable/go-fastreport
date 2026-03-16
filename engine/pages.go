@@ -217,7 +217,26 @@ func (e *ReportEngine) showBand(b report.Base) {
 		return
 	}
 
-	if e.preparedPages != nil {
+	if e.outputBand != nil {
+		// PrintOnParent mode: merge objects directly into the parent PreparedBand.
+		type hasObjects interface {
+			Objects() *report.ObjectCollection
+		}
+		if ho, ok := b.(hasObjects); ok {
+			tmp := &preview.PreparedBand{}
+			e.populateBandObjects2(ho.Objects(), tmp)
+			yOff := e.outputBandOffsetY + e.curY
+			for _, po := range tmp.Objects {
+				po.Left += e.outputBandOffsetX
+				po.Top += yOff
+				e.outputBand.Objects = append(e.outputBand.Objects, po)
+			}
+			newBottom := yOff + height
+			if newBottom > e.outputBand.Height {
+				e.outputBand.Height = newBottom
+			}
+		}
+	} else if e.preparedPages != nil {
 		pb := &preview.PreparedBand{
 			Name:   b.Name(),
 			Top:    e.curY,

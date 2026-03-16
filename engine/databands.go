@@ -28,6 +28,9 @@ func (e *ReportEngine) RunDataBandRows(db *band.DataBand, rows int) {
 		return
 	}
 
+	// Set up multi-column state (nil when Columns.Count <= 1).
+	cs := newDataBandColumnState(e, db)
+
 	headerShown := false
 	var lastRowPosition int
 	for rowIdx := 0; rowIdx < rows; rowIdx++ {
@@ -54,6 +57,10 @@ func (e *ReportEngine) RunDataBandRows(db *band.DataBand, rows int) {
 				if hdr.RepeatOnEveryPage() {
 					e.AddReprintDataHeader(hdr)
 				}
+				// Update column state rowY after header rendered.
+				if cs != nil {
+					cs.rowY = e.curY
+				}
 			}
 			headerShown = true
 		}
@@ -61,6 +68,9 @@ func (e *ReportEngine) RunDataBandRows(db *band.DataBand, rows int) {
 		// Start new page if configured (not on first row).
 		if db.StartNewPage() && db.FlagUseStartNewPage && rowIdx > 0 {
 			e.startNewPageForCurrent()
+			if cs != nil {
+				cs.rowY = e.curY
+			}
 		}
 
 		// Snapshot position before last row for KeepWithData footer check.
@@ -70,13 +80,24 @@ func (e *ReportEngine) RunDataBandRows(db *band.DataBand, rows int) {
 		}
 
 		// Show the data band itself.
-		e.ShowFullBand(&db.BandBase)
+		if cs != nil {
+			// Multi-column layout: fire events and place in column.
+			db.BandBase.FireBeforePrint()
+			db.BandBase.FireBeforeLayout()
+			e.showBandInColumn(db, cs)
+		} else {
+			e.ShowFullBand(&db.BandBase)
+		}
 
 		// Run nested sub-bands.
 		if err := e.runBands(dataBandSubBands(db)); err != nil {
+			e.flushColumnRow(cs)
 			return
 		}
 	}
+
+	// Flush any partially-filled column row.
+	e.flushColumnRow(cs)
 
 	// Show DataFooter after all rows.
 	if headerShown {
@@ -137,7 +158,24 @@ func (e *ReportEngine) RunDataBandFull(db *band.DataBand) error {
 	}
 
 	if err := ds.First(); err != nil {
-		return err
+		// ErrEOF means the data source is empty (zero rows, or a
+		// FilteredDataSource with no matching rows for the current master row).
+		// Treat this as an empty-data scenario: honour PrintIfDSEmpty, then
+		// return without error. Any other error (e.g. ErrNotInitialized) is
+		// propagated as before.
+		if err != data.ErrEOF {
+			return err
+		}
+		// Empty data source: honour PrintIfDSEmpty and return cleanly.
+		if db.PrintIfDSEmpty() {
+			db.SetRowNo(1)
+			db.SetIsFirstRow(true)
+			db.SetIsLastRow(true)
+			e.ShowFullBand(&db.BandBase)
+		} else if child := db.Child(); child != nil {
+			e.ShowFullBand(&child.BandBase)
+		}
+		return nil
 	}
 
 	// If IdColumn and ParentIdColumn are both set, use hierarchical rendering.
@@ -154,6 +192,9 @@ func (e *ReportEngine) RunDataBandFull(db *band.DataBand) error {
 	if db.KeepTogether() {
 		e.StartKeep()
 	}
+
+	// Set up multi-column state (nil when Columns.Count <= 1).
+	cs := newDataBandColumnState(e, db)
 
 	headerShown := false
 	rowNo := 0
@@ -193,20 +234,37 @@ func (e *ReportEngine) RunDataBandFull(db *band.DataBand) error {
 		if isFirst && !headerShown {
 			if hdr := db.Header(); hdr != nil {
 				e.ShowFullBand(&hdr.HeaderFooterBandBase.BandBase)
+				// Update column state's rowY after header is rendered.
+				if cs != nil {
+					cs.rowY = e.curY
+				}
 			}
 			headerShown = true
 		}
 
 		if db.StartNewPage() && db.FlagUseStartNewPage && rowNo > 1 {
 			e.startNewPageForCurrent()
+			if cs != nil {
+				cs.rowY = e.curY
+			}
 		}
 
-		e.ShowFullBand(&db.BandBase)
+		// Fire BeforePrint before rendering.
+		db.BandBase.FireBeforePrint()
+		db.BandBase.FireBeforeLayout()
+
+		if cs != nil {
+			// Multi-column layout: place rows side-by-side.
+			e.showBandInColumn(db, cs)
+		} else {
+			e.ShowFullBand(&db.BandBase)
+		}
 
 		subBands := dataBandSubBands(db)
 		restore := e.applyRelationFilters(db, subBands)
 		if err := e.runBands(subBands); err != nil {
 			restore()
+			e.flushColumnRow(cs)
 			return err
 		}
 		restore()
@@ -218,6 +276,9 @@ func (e *ReportEngine) RunDataBandFull(db *band.DataBand) error {
 			break
 		}
 	}
+
+	// Flush any partially-filled column row.
+	e.flushColumnRow(cs)
 
 	if db.KeepTogether() {
 		e.EndKeep()

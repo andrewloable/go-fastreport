@@ -80,8 +80,13 @@ func (x *XMLDataSource) Init() error {
 		return fmt.Errorf("XMLDataSource %q: %w", x.Name(), err)
 	}
 
+	// Preserve identity fields that may have been set before Init().
+	savedAlias := x.Alias()
+	savedName := x.Name()
+
 	// Reset base and load columns + rows.
-	x.BaseDataSource = *data.NewBaseDataSource(x.Name())
+	x.BaseDataSource = *data.NewBaseDataSource(savedName)
+	x.SetAlias(savedAlias)
 	for _, col := range cols {
 		x.AddColumn(data.Column{Name: col, Alias: col, DataType: "string"})
 	}

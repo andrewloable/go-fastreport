@@ -125,6 +125,14 @@ type ReportEngine struct {
 
 	// ctx is an optional context for cancellation. Nil means no cancellation.
 	ctx context.Context
+
+	// outputBand, when non-nil, redirects subreport band output into this
+	// PreparedBand instead of adding new PreparedBands to the page.
+	// outputBandOffsetX/Y are the Left/Top of the SubreportObject on the
+	// parent band, used to offset subreport object coordinates.
+	outputBand        *preview.PreparedBand
+	outputBandOffsetX float32
+	outputBandOffsetY float32
 }
 
 // New creates a ReportEngine for the given report.
@@ -260,6 +268,9 @@ func (e *ReportEngine) runPhase1(resetDataState bool) error {
 		// Event firing is handled by the script engine in a full implementation.
 		// Here we record that it was fired.
 	}
+	if e.report.OnStartReport != nil {
+		e.report.OnStartReport()
+	}
 	e.startReportFired = true
 	return nil
 }
@@ -292,6 +303,9 @@ func (e *ReportEngine) runFinished() {
 	// Fire OnFinishReport event (script engine in full implementation).
 	if e.report.FinishReportEvent != "" {
 		// event would be fired here
+	}
+	if e.report.OnFinishReport != nil {
+		e.report.OnFinishReport()
 	}
 	// Process any deferred text objects waiting for ReportFinished.
 	e.OnStateChanged(nil, EngineStateReportFinished)

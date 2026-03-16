@@ -30,6 +30,8 @@ func (e *ReportEngine) populateBandObjects(bb *band.BandBase, pb *preview.Prepar
 	if bb == nil {
 		return
 	}
+	// Apply dock layout using the band's own width/height as the container.
+	applyDockLayout(bb.Objects(), bb.Width(), bb.Height())
 	e.populateBandObjects2(bb.Objects(), pb)
 }
 
@@ -100,6 +102,8 @@ func (e *ReportEngine) populateContainerChildren(c *object.ContainerObject, offs
 	if objs == nil {
 		return
 	}
+	// Apply dock layout within the container's own bounds.
+	applyDockLayout(objs, c.Width(), c.Height())
 	for i := 0; i < objs.Len(); i++ {
 		child := objs.Get(i)
 		if po := e.buildPreparedObject(child); po != nil {
@@ -372,7 +376,7 @@ func (e *ReportEngine) buildPreparedObject(obj report.Base) *preview.PreparedObj
 	case *object.TextObject:
 		po.Kind = preview.ObjectTypeText
 		po.Font = v.Font()
-		po.TextColor = color.RGBA{A: 255} // default black
+		po.TextColor = v.TextColor() // style-applied or default black
 		po.HorzAlign = int(v.HorzAlign())
 		po.VertAlign = int(v.VertAlign())
 		po.WordWrap = v.WordWrap()
@@ -381,6 +385,7 @@ func (e *ReportEngine) buildPreparedObject(obj report.Base) *preview.PreparedObj
 			po.FillColor = f.Color
 		}
 		po.Text = e.evalTextWithFormat(v.Text(), v.Format())
+		po.TextRenderType = int(v.TextRenderType())
 		// Apply highlight conditions — first matching condition wins.
 		if e.report != nil {
 			for _, cond := range v.Highlights() {

@@ -29,18 +29,45 @@ func (e *ReportEngine) renderSubreport(sr *object.SubreportObject) {
 }
 
 // RenderInnerSubreport renders a subreport inside the coordinate space of
-// parentBand. It saves/restores CurX, CurY and any outputBand state.
+// parentBand. When a PreparedBand for the parent exists on the current page,
+// subreport objects are merged directly into it at the SubreportObject's
+// Left/Top offset (PrintOnParent semantics). CurX, CurY, and outputBand are
+// always saved and restored.
 func (e *ReportEngine) RenderInnerSubreport(parentBand *band.BandBase, sr *object.SubreportObject) {
 	saveCurX := e.curX
 	saveCurY := e.curY
+	saveOutputBand := e.outputBand
+	saveOutputBandOffsetX := e.outputBandOffsetX
+	saveOutputBandOffsetY := e.outputBandOffsetY
 
-	e.curX = float32(sr.Left())
-	e.curY = float32(sr.Top())
+	// Locate the PreparedBand for parentBand on the current page so that
+	// subreport objects can be merged into it (PrintOnParent semantics).
+	// We search from the end because the parent band was just rendered.
+	if e.preparedPages != nil {
+		if pg := e.preparedPages.CurrentPage(); pg != nil {
+			for i := len(pg.Bands) - 1; i >= 0; i-- {
+				if pg.Bands[i].Name == parentBand.Name() {
+					e.outputBand = pg.Bands[i]
+					break
+				}
+			}
+		}
+	}
+
+	e.outputBandOffsetX = float32(sr.Left())
+	e.outputBandOffsetY = float32(sr.Top())
+	// Reset local cursor to 0,0 so subreport band Y positions are relative
+	// to the SubreportObject's Top within the parent band.
+	e.curX = 0
+	e.curY = 0
 
 	e.renderSubreport(sr)
 
 	e.curX = saveCurX
 	e.curY = saveCurY
+	e.outputBand = saveOutputBand
+	e.outputBandOffsetX = saveOutputBandOffsetX
+	e.outputBandOffsetY = saveOutputBandOffsetY
 }
 
 // RenderInnerSubreports finds all inner SubreportObjects in parentBand's

@@ -218,8 +218,12 @@ func msChartTypeStr(t string) chart.SeriesType {
 		return chart.SeriesTypeBar
 	case "area", "stackedarea":
 		return chart.SeriesTypeArea
-	case "pie", "doughnut":
+	case "pie":
 		return chart.SeriesTypePie
+	case "doughnut", "donut":
+		return chart.SeriesTypeDoughnut
+	case "spline", "smoothedline":
+		return chart.SeriesTypeSpline
 	default:
 		return chart.SeriesTypeLine
 	}

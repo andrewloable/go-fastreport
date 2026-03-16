@@ -5,6 +5,7 @@ package functions
 import (
 	"fmt"
 	"math"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -61,6 +62,54 @@ func Ceiling(v float64) float64 { return math.Ceil(v) }
 
 // Floor returns the largest integer ≤ v.
 func Floor(v float64) float64 { return math.Floor(v) }
+
+// Truncate returns the integer part of v, truncating toward zero.
+func Truncate(v float64) float64 { return math.Trunc(v) }
+
+// Sign returns -1 if v < 0, 0 if v == 0, or 1 if v > 0.
+func Sign(v float64) float64 {
+	if v < 0 {
+		return -1
+	}
+	if v > 0 {
+		return 1
+	}
+	return 0
+}
+
+// Log10 returns the base-10 logarithm of v.
+func Log10(v float64) float64 { return math.Log10(v) }
+
+// Exp returns e raised to the power v.
+func Exp(v float64) float64 { return math.Exp(v) }
+
+// Pow returns base raised to the power exp.
+func Pow(base, exp float64) float64 { return math.Pow(base, exp) }
+
+// Sqrt returns the square root of v.
+func Sqrt(v float64) float64 { return math.Sqrt(v) }
+
+// Sin returns the sine of v (in radians).
+func Sin(v float64) float64 { return math.Sin(v) }
+
+// Cos returns the cosine of v (in radians).
+func Cos(v float64) float64 { return math.Cos(v) }
+
+// Tan returns the tangent of v (in radians).
+func Tan(v float64) float64 { return math.Tan(v) }
+
+// Asin returns the arcsine of v in radians.
+func Asin(v float64) float64 { return math.Asin(v) }
+
+// Acos returns the arccosine of v in radians.
+func Acos(v float64) float64 { return math.Acos(v) }
+
+// Atan returns the arctangent of v in radians.
+func Atan(v float64) float64 { return math.Atan(v) }
+
+// Atan2 returns the arctangent of y/x, using the signs of the two to
+// determine the quadrant of the return value.
+func Atan2(y, x float64) float64 { return math.Atan2(y, x) }
 
 // ── String functions ──────────────────────────────────────────────────────────
 
@@ -229,6 +278,50 @@ func Asc(s string) int {
 // Chr returns the string containing the rune for Unicode code point i.
 func Chr(i int) string { return string(rune(i)) }
 
+// TrimStart removes leading whitespace from s.
+func TrimStart(s string) string {
+	return strings.TrimLeftFunc(s, func(r rune) bool { return unicode.IsSpace(r) })
+}
+
+// TrimEnd removes trailing whitespace from s.
+func TrimEnd(s string) string {
+	return strings.TrimRightFunc(s, func(r rune) bool { return unicode.IsSpace(r) })
+}
+
+// LastIndexOf returns the rune index of the last occurrence of value in s, or -1.
+func LastIndexOf(s, value string) int {
+	idx := strings.LastIndex(s, value)
+	if idx < 0 {
+		return -1
+	}
+	return len([]rune(s[:idx]))
+}
+
+// Split splits s by separator and returns the resulting []string slice.
+func Split(s, separator string) []string {
+	return strings.Split(s, separator)
+}
+
+// Join joins elements of parts with separator sep.
+func Join(sep string, parts []string) string {
+	return strings.Join(parts, sep)
+}
+
+// IsNullOrEmpty returns true if s is the empty string.
+func IsNullOrEmpty(s string) bool {
+	return s == ""
+}
+
+// IsNullOrWhiteSpace returns true if s is empty or contains only whitespace.
+func IsNullOrWhiteSpace(s string) bool {
+	return strings.TrimSpace(s) == ""
+}
+
+// Concat concatenates all provided strings and returns the result.
+func Concat(parts ...string) string {
+	return strings.Join(parts, "")
+}
+
 // ── Date / time functions ─────────────────────────────────────────────────────
 
 // AddDays adds value days to date.
@@ -291,6 +384,17 @@ func DaysInMonth(year, month int) int {
 	// First day of next month minus one day.
 	t := time.Date(year, time.Month(month+1), 0, 0, 0, 0, 0, time.UTC)
 	return t.Day()
+}
+
+// IsLeapYear reports whether year is a leap year.
+func IsLeapYear(year int) bool {
+	return year%4 == 0 && (year%100 != 0 || year%400 == 0)
+}
+
+// TimeSerial returns a time.Time with the date component set to the zero date
+// (year 0001, January 1) and the time set to hour, minute, second.
+func TimeSerial(hour, minute, second int) time.Time {
+	return time.Date(1, time.January, 1, hour, minute, second, 0, time.UTC)
 }
 
 // MonthName returns the full English name of the given month (1–12).
@@ -472,8 +576,108 @@ func ToString(v any) string {
 	if v == nil {
 		return ""
 	}
-	return fmt.Sprint(v)
+	return fmt.Sprintf("%v", v)
 }
+
+// ToBoolean converts a value to bool. Numeric non-zero → true. String is parsed
+// with strconv.ParseBool ("1", "t", "T", "TRUE", "true", "True", "0", "f", etc.).
+// Returns false on nil or parse failure.
+func ToBoolean(v any) bool {
+	if v == nil {
+		return false
+	}
+	switch t := v.(type) {
+	case bool:
+		return t
+	case int:
+		return t != 0
+	case int8:
+		return t != 0
+	case int16:
+		return t != 0
+	case int32:
+		return t != 0
+	case int64:
+		return t != 0
+	case uint:
+		return t != 0
+	case uint8:
+		return t != 0
+	case uint16:
+		return t != 0
+	case uint32:
+		return t != 0
+	case uint64:
+		return t != 0
+	case float32:
+		return t != 0
+	case float64:
+		return t != 0
+	case string:
+		b, err := strconv.ParseBool(t)
+		if err != nil {
+			return false
+		}
+		return b
+	}
+	return false
+}
+
+// ToInt32 converts a value to int (same as ToInt; Go int is at least 32-bit).
+func ToInt32(v any) int { return ToInt(v) }
+
+// ToInt64 converts a value to int64. Supports numeric types and string parsing.
+// Returns 0 on conversion failure.
+func ToInt64(v any) int64 {
+	if v == nil {
+		return 0
+	}
+	switch t := v.(type) {
+	case int64:
+		return t
+	case int:
+		return int64(t)
+	case int8:
+		return int64(t)
+	case int16:
+		return int64(t)
+	case int32:
+		return int64(t)
+	case uint:
+		return int64(t)
+	case uint8:
+		return int64(t)
+	case uint16:
+		return int64(t)
+	case uint32:
+		return int64(t)
+	case uint64:
+		return int64(t)
+	case float32:
+		return int64(t)
+	case float64:
+		return int64(t)
+	case bool:
+		if t {
+			return 1
+		}
+		return 0
+	case string:
+		i, err := strconv.ParseInt(strings.TrimSpace(t), 10, 64)
+		if err != nil {
+			return 0
+		}
+		return i
+	}
+	return 0
+}
+
+// ToDouble converts a value to float64. Alias for ToFloat.
+func ToDouble(v any) float64 { return ToFloat(v) }
+
+// ToDecimal converts a value to float64. Go has no distinct decimal type;
+// this is equivalent to ToFloat and provided for C# compatibility.
+func ToDecimal(v any) float64 { return ToFloat(v) }
 
 // ── Control flow ──────────────────────────────────────────────────────────────
 
@@ -522,24 +726,49 @@ func All() map[string]any {
 		"RoundTo":   RoundTo,
 		"Ceiling":   Ceiling,
 		"Floor":     Floor,
+		"Truncate":  Truncate,
+		"Sign":      Sign,
+		"Log10":     Log10,
+		"Exp":       Exp,
+		"Pow":       Pow,
+		"Sqrt":      Sqrt,
+		"Sin":       Sin,
+		"Cos":       Cos,
+		"Tan":       Tan,
+		"Asin":      Asin,
+		"Acos":      Acos,
+		"Atan":      Atan,
+		"Atan2":     Atan2,
 		// String
-		"Length":     Length,
-		"LowerCase":  LowerCase,
-		"UpperCase":  UpperCase,
-		"TitleCase":  TitleCase,
-		"Trim":       Trim,
-		"PadLeft":    PadLeft,
-		"PadRight":   PadRight,
-		"Insert":     Insert,
-		"Remove":     Remove,
-		"Replace":    Replace,
-		"Substring":  Substring,
-		"Contains":    Contains,
-		"StartsWith":  StartsWith,
-		"EndsWith":    EndsWith,
-		"IndexOf":     IndexOf,
-		"Asc":         Asc,
-		"Chr":         Chr,
+		"Length":              Length,
+		"LowerCase":           LowerCase,
+		"UpperCase":           UpperCase,
+		"TitleCase":           TitleCase,
+		"Trim":                Trim,
+		"TrimStart":           TrimStart,
+		"TrimEnd":             TrimEnd,
+		"PadLeft":             PadLeft,
+		"PadLeftChar":         PadLeftChar,
+		"PadRight":            PadRight,
+		"PadRightChar":        PadRightChar,
+		"Insert":              Insert,
+		"Remove":              Remove,
+		"RemoveCount":         RemoveCount,
+		"Replace":             Replace,
+		"Substring":           Substring,
+		"SubstringLen":        SubstringLen,
+		"Contains":            Contains,
+		"StartsWith":          StartsWith,
+		"EndsWith":            EndsWith,
+		"IndexOf":             IndexOf,
+		"LastIndexOf":         LastIndexOf,
+		"Split":               Split,
+		"Join":                Join,
+		"IsNullOrEmpty":       IsNullOrEmpty,
+		"IsNullOrWhiteSpace":  IsNullOrWhiteSpace,
+		"Concat":              Concat,
+		"Asc":                 Asc,
+		"Chr":                 Chr,
 		// Date/time
 		"AddDays":      AddDays,
 		"AddHours":     AddHours,
@@ -557,6 +786,8 @@ func All() map[string]any {
 		"DayOfWeek":    DayOfWeek,
 		"DayOfYear":    DayOfYear,
 		"DaysInMonth":  DaysInMonth,
+		"IsLeapYear":   IsLeapYear,
+		"TimeSerial":   TimeSerial,
 		"MonthName":    MonthName,
 		"WeekOfYear":   WeekOfYear,
 		"DateDiff":     DateDiff,
@@ -567,9 +798,14 @@ func All() map[string]any {
 		"FormatDateTime": FormatDateTime,
 		"Format":         Format,
 		// Type conversion
-		"ToInt":    ToInt,
-		"ToFloat":  ToFloat,
-		"ToString": ToString,
+		"ToBoolean": ToBoolean,
+		"ToInt":     ToInt,
+		"ToInt32":   ToInt32,
+		"ToInt64":   ToInt64,
+		"ToFloat":   ToFloat,
+		"ToDouble":  ToDouble,
+		"ToDecimal": ToDecimal,
+		"ToString":  ToString,
 		// Control flow
 		"IIF":    IIF,
 		"Choose": Choose,

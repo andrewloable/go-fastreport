@@ -17,6 +17,7 @@ import (
 	"github.com/andrewloable/go-fastreport/band"
 	"github.com/andrewloable/go-fastreport/data"
 	preview "github.com/andrewloable/go-fastreport/preview"
+	"github.com/andrewloable/go-fastreport/report"
 	"github.com/andrewloable/go-fastreport/serial"
 	"github.com/andrewloable/go-fastreport/style"
 )
@@ -1181,5 +1182,274 @@ func TestBuildCalcEnv_WithTotals(t *testing.T) {
 	}
 	if val != 999.0 {
 		t.Errorf("got %v, want 999.0", val)
+	}
+}
+
+// ── serializeBands — non-TitleBeforeHeader paths ──────────────────────────
+
+func TestSerializeBands_DefaultOrder_PageHeaderAndTitle(t *testing.T) {
+	// TitleBeforeHeader=false (default) with both PageHeader and ReportTitle.
+	// Expected order: PageHeader first, then ReportTitle.
+	pg := NewReportPage()
+	// TitleBeforeHeader defaults to false.
+	ph := band.NewPageHeaderBand()
+	ph.SetName("PH1")
+	pg.SetPageHeader(ph)
+	rt := band.NewReportTitleBand()
+	rt.SetName("RT1")
+	pg.SetReportTitle(rt)
+
+	r := NewReport()
+	r.AddPage(pg)
+	xml, err := r.SaveToString()
+	if err != nil {
+		t.Fatalf("SaveToString: %v", err)
+	}
+
+	// Both should appear.
+	if !strings.Contains(xml, "<PageHeader") {
+		t.Error("expected <PageHeader in XML")
+	}
+	if !strings.Contains(xml, "<ReportTitle") {
+		t.Error("expected <ReportTitle in XML")
+	}
+
+	// PageHeader must come before ReportTitle (default order).
+	phPos := strings.Index(xml, "<PageHeader")
+	rtPos := strings.Index(xml, "<ReportTitle")
+	if phPos > rtPos {
+		t.Error("expected PageHeader before ReportTitle in default order")
+	}
+}
+
+func TestSerializeBands_DefaultOrder_ColumnHeader(t *testing.T) {
+	// TitleBeforeHeader=false (default) with ColumnHeader.
+	pg := NewReportPage()
+	ch := band.NewColumnHeaderBand()
+	ch.SetName("CH1")
+	pg.SetColumnHeader(ch)
+
+	r := NewReport()
+	r.AddPage(pg)
+	xml, err := r.SaveToString()
+	if err != nil {
+		t.Fatalf("SaveToString: %v", err)
+	}
+
+	if !strings.Contains(xml, "<ColumnHeader") {
+		t.Error("expected <ColumnHeader in XML")
+	}
+}
+
+// ── stylesSerializer.Serialize — error path ───────────────────────────────
+
+type mockPageWriter struct {
+	failWriteObject bool
+}
+
+func (m *mockPageWriter) WriteStr(name, value string)        {}
+func (m *mockPageWriter) WriteInt(name string, v int)         {}
+func (m *mockPageWriter) WriteBool(name string, v bool)       {}
+func (m *mockPageWriter) WriteFloat(name string, v float32)   {}
+
+func (m *mockPageWriter) WriteObject(obj report.Serializable) error {
+	if m.failWriteObject {
+		return fmt.Errorf("mock WriteObject error")
+	}
+	return nil
+}
+
+func (m *mockPageWriter) WriteObjectNamed(name string, obj report.Serializable) error {
+	if m.failWriteObject {
+		return fmt.Errorf("mock WriteObjectNamed error")
+	}
+	return nil
+}
+
+func TestStylesSerializer_Serialize_Error(t *testing.T) {
+	ss := style.NewStyleSheet()
+	ss.Add(&style.StyleEntry{Name: "S1"})
+	s := &stylesSerializer{ss: ss}
+
+	w := &mockPageWriter{failWriteObject: true}
+	err := s.Serialize(w)
+	if err == nil {
+		t.Error("stylesSerializer.Serialize should propagate WriteObject error")
+	}
+}
+
+// ── serializeBands — error paths ──────────────────────────────────────────
+
+func TestSerializeBands_PageHeader_WriteObjectError(t *testing.T) {
+	pg := NewReportPage()
+	ph := band.NewPageHeaderBand()
+	ph.SetName("PH1")
+	pg.SetPageHeader(ph)
+
+	w := &mockPageWriter{failWriteObject: true}
+	err := pg.serializeBands(w)
+	if err == nil {
+		t.Error("serializeBands should return error when WriteObject fails for PageHeader")
+	}
+}
+
+func TestSerializeBands_TitleBeforeHeader_WriteObjectError(t *testing.T) {
+	pg := NewReportPage()
+	pg.TitleBeforeHeader = true
+	rt := band.NewReportTitleBand()
+	rt.SetName("RT1")
+	pg.SetReportTitle(rt)
+
+	w := &mockPageWriter{failWriteObject: true}
+	err := pg.serializeBands(w)
+	if err == nil {
+		t.Error("serializeBands should return error when WriteObject fails for ReportTitle (TitleBeforeHeader=true)")
+	}
+}
+
+func TestSerializeBands_ColumnHeader_WriteObjectError(t *testing.T) {
+	pg := NewReportPage()
+	ch := band.NewColumnHeaderBand()
+	ch.SetName("CH1")
+	pg.SetColumnHeader(ch)
+
+	w := &mockPageWriter{failWriteObject: true}
+	err := pg.serializeBands(w)
+	if err == nil {
+		t.Error("serializeBands should return error when WriteObject fails for ColumnHeader")
+	}
+}
+
+func TestSerializeBands_DynamicBand_WriteObjectError(t *testing.T) {
+	pg := NewReportPage()
+	db := band.NewDataBand()
+	db.SetName("DB1")
+	pg.AddBand(db)
+
+	w := &mockPageWriter{failWriteObject: true}
+	err := pg.serializeBands(w)
+	if err == nil {
+		t.Error("serializeBands should return error when WriteObject fails for dynamic band")
+	}
+}
+
+func TestSerializeBands_ReportSummary_WriteObjectError(t *testing.T) {
+	pg := NewReportPage()
+	rs := band.NewReportSummaryBand()
+	rs.SetName("RS1")
+	pg.SetReportSummary(rs)
+
+	w := &mockPageWriter{failWriteObject: true}
+	err := pg.serializeBands(w)
+	if err == nil {
+		t.Error("serializeBands should return error when WriteObject fails for ReportSummary")
+	}
+}
+
+// ── SaveTo — compressed path ──────────────────────────────────────────────
+
+func TestSaveTo_Compressed(t *testing.T) {
+	r := NewReport()
+	r.Info.Name = "CompressedTest"
+	r.Compressed = true
+	pg := NewReportPage()
+	pg.SetName("Page1")
+	r.AddPage(pg)
+
+	var buf bytes.Buffer
+	if err := r.SaveTo(&buf); err != nil {
+		t.Fatalf("SaveTo compressed: %v", err)
+	}
+
+	// First two bytes should be gzip magic.
+	data := buf.Bytes()
+	if len(data) < 2 || data[0] != 0x1f || data[1] != 0x8b {
+		t.Errorf("expected gzip magic bytes, got %v", data[:2])
+	}
+
+	// Reload from the compressed stream.
+	r2 := NewReport()
+	if err := r2.LoadFrom(bytes.NewReader(data)); err != nil {
+		t.Fatalf("LoadFrom compressed: %v", err)
+	}
+	if r2.Info.Name != "CompressedTest" {
+		t.Errorf("ReportName: %q", r2.Info.Name)
+	}
+}
+
+// ── Load — file not found error ──────────────────────────────────────────
+
+func TestLoad_FileNotFound(t *testing.T) {
+	r := NewReport()
+	err := r.Load("/nonexistent/path/report.frx")
+	if err == nil {
+		t.Error("Load of non-existent file should return error")
+	}
+}
+
+// ── LoadWithPassword — file not found error ──────────────────────────────
+
+func TestLoadWithPassword_FileNotFound(t *testing.T) {
+	r := NewReport()
+	err := r.LoadWithPassword("/nonexistent/path.frx", "password")
+	if err == nil {
+		t.Error("LoadWithPassword of non-existent file should return error")
+	}
+}
+
+// ── LoadFrom — malformed gzip ────────────────────────────────────────────
+
+func TestLoadFrom_MalformedGzip(t *testing.T) {
+	// Start with gzip magic bytes but invalid gzip data.
+	r := NewReport()
+	bad := []byte{0x1f, 0x8b, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
+	err := r.LoadFrom(bytes.NewReader(bad))
+	if err == nil {
+		t.Error("LoadFrom with malformed gzip should return error")
+	}
+}
+
+// ── SaveToString — compressed error path ─────────────────────────────────
+
+func TestSaveToString_Compressed(t *testing.T) {
+	r := NewReport()
+	r.Info.Name = "CompStr"
+	r.Compressed = true
+	s, err := r.SaveToString()
+	if err != nil {
+		t.Fatalf("SaveToString compressed: %v", err)
+	}
+	if s == "" {
+		t.Error("SaveToString should return non-empty string")
+	}
+	// Reload.
+	r2 := NewReport()
+	if err := r2.LoadFromString(s); err != nil {
+		t.Fatalf("LoadFromString after SaveToString compressed: %v", err)
+	}
+	if r2.Info.Name != "CompStr" {
+		t.Errorf("ReportName: %q", r2.Info.Name)
+	}
+}
+
+// ── loadFromSerialReader — empty document ─────────────────────────────────
+
+func TestLoadFromSerialReader_EmptyDocument(t *testing.T) {
+	r := NewReport()
+	// Empty reader → ReadObjectHeader returns false.
+	rdr := serial.NewReader(strings.NewReader(""))
+	err := r.loadFromSerialReader(rdr)
+	if err == nil {
+		t.Error("loadFromSerialReader should return error for empty document")
+	}
+}
+
+func TestLoadFromSerialReader_WrongRootElement(t *testing.T) {
+	r := NewReport()
+	// Wrong root element name.
+	rdr := serial.NewReader(strings.NewReader(`<?xml version="1.0"?><NotAReport/>`))
+	err := r.loadFromSerialReader(rdr)
+	if err == nil {
+		t.Error("loadFromSerialReader should return error for wrong root element")
 	}
 }

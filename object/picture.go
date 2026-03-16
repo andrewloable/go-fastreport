@@ -1,6 +1,8 @@
 package object
 
 import (
+	"encoding/base64"
+
 	"github.com/andrewloable/go-fastreport/report"
 )
 
@@ -286,5 +288,22 @@ func (p *PictureObject) Deserialize(r report.Reader) error {
 	}
 	p.tile = r.ReadBool("Tile", false)
 	p.transparency = r.ReadFloat("Transparency", 0)
+	// FRX stores inline image data as a base64-encoded "Image" attribute.
+	if imgStr := r.ReadStr("Image", ""); imgStr != "" {
+		if decoded, err := base64.StdEncoding.DecodeString(imgStr); err == nil {
+			p.imageData = decoded
+		}
+	}
+	// Detect format from the "ImageFormat" attribute when present.
+	switch r.ReadStr("ImageFormat", "") {
+	case "Png":
+		p.imageFormat = ImageFormatPng
+	case "Jpeg":
+		p.imageFormat = ImageFormatJpeg
+	case "Gif":
+		p.imageFormat = ImageFormatGif
+	case "Bmp":
+		p.imageFormat = ImageFormatBmp
+	}
 	return nil
 }

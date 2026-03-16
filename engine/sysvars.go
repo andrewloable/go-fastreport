@@ -69,6 +69,7 @@ func (e *ReportEngine) ensureSystemVariables() {
 	if d == nil {
 		return
 	}
+	info := e.report.Info
 	defaults := map[string]any{
 		"PageNumber": 1,
 		"TotalPages": 0,
@@ -81,6 +82,14 @@ func (e *ReportEngine) ensureSystemVariables() {
 		"MachineName": "",
 		"ReportName": e.report.Name(),
 		"ReportAlias": e.report.Name(),
+		// Report.ReportInfo.* fields (dot → underscore for expression eval).
+		"Report_ReportInfo_Description":    info.Description,
+		"Report_ReportInfo_Author":         info.Author,
+		"Report_ReportInfo_Name":           info.Name,
+		"Report_ReportInfo_Version":        info.Version,
+		"Report_ReportInfo_Created":        info.Created,
+		"Report_ReportInfo_Modified":       info.Modified,
+		"Report_ReportInfo_CreatorVersion": info.CreatorVersion,
 	}
 	// Use SetSystemVariable which will add if missing.
 	for k, v := range defaults {

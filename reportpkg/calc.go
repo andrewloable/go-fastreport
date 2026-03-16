@@ -53,6 +53,15 @@ func (r *Report) Calc(expression string) (any, error) {
 	// Replace [Token] patterns with safe identifier forms.
 	goExpr := translateExpression(unwrapped)
 
+	// If the expression is a simple dotted identifier (e.g. "Report.ReportInfo.Description"),
+	// sanitize dots to underscores so it matches keys in the environment.
+	if isSimpleDottedIdent(goExpr) {
+		sanitized := sanitizeIdent(goExpr)
+		if _, exists := env[sanitized]; exists {
+			goExpr = sanitized
+		}
+	}
+
 	return ev.Eval(goExpr)
 }
 
@@ -178,6 +187,20 @@ func translateExpression(s string) string {
 		out.WriteString(sanitizeIdent(inner))
 	}
 	return out.String()
+}
+
+// isSimpleDottedIdent reports whether s is a dotted identifier chain like
+// "Report.ReportInfo.Description" (letters, digits, underscores, and dots only).
+func isSimpleDottedIdent(s string) bool {
+	if s == "" || !strings.Contains(s, ".") {
+		return false
+	}
+	for _, r := range s {
+		if !(r >= 'a' && r <= 'z') && !(r >= 'A' && r <= 'Z') && !(r >= '0' && r <= '9') && r != '_' && r != '.' {
+			return false
+		}
+	}
+	return true
 }
 
 // sanitizeIdent converts a token like "DataSource.Field" into a valid identifier

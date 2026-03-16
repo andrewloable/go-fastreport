@@ -261,6 +261,26 @@ func (r *Report) Deserialize(rd report.Reader) error {
 	r.Info.Version = rd.ReadStr("ReportVersion", "")
 	r.Info.Created = rd.ReadStr("Created", "")
 	r.Info.Modified = rd.ReadStr("Modified", "")
+	// FRX .NET uses dot-qualified attribute names (e.g. "ReportInfo.Description").
+	// Read these as fallbacks when the short forms are empty.
+	if r.Info.Name == "" {
+		r.Info.Name = rd.ReadStr("ReportInfo.Name", "")
+	}
+	if r.Info.Author == "" {
+		r.Info.Author = rd.ReadStr("ReportInfo.Author", "")
+	}
+	if r.Info.Description == "" {
+		r.Info.Description = rd.ReadStr("ReportInfo.Description", "")
+	}
+	if r.Info.Version == "" {
+		r.Info.Version = rd.ReadStr("ReportInfo.Version", "")
+	}
+	if r.Info.Created == "" {
+		r.Info.Created = rd.ReadStr("ReportInfo.Created", "")
+	}
+	if r.Info.Modified == "" {
+		r.Info.Modified = rd.ReadStr("ReportInfo.Modified", "")
+	}
 	r.Info.CreatorVersion = rd.ReadStr("CreatorVersion", "")
 	r.Info.SavePreviewPicture = rd.ReadBool("SavePreviewPicture", false)
 	r.Compressed = rd.ReadBool("Compressed", false)

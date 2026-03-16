@@ -336,6 +336,9 @@ func (e *Exporter) renderObject(obj preview.PreparedObject, scale float32) {
 		}
 
 		innerText := export.HTMLString(obj.Text)
+		// Preserve line breaks: convert \r\n and \n to <br> tags.
+		innerText = strings.ReplaceAll(innerText, "\r\n", "<br>")
+		innerText = strings.ReplaceAll(innerText, "\n", "<br>")
 		if obj.HyperlinkKind == 1 && obj.HyperlinkValue != "" {
 			// Wrap content in an anchor tag for URL hyperlinks.
 			innerText = fmt.Sprintf(`<a href="%s" target="_blank" style="color:inherit;text-decoration:inherit;">%s</a>`,

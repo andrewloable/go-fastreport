@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(bd init:*)",
+      "Bash(bd import:*)",
+      "Bash(mkdir -p /tmp/beads-restore && cp \"G:/projects/loabletech/go-fastreport/beads-export.jsonl\" /tmp/beads-restore/issues.jsonl)",
+      "Bash(bd backup:*)",
+      "Bash(bd count:*)",
+      "Bash(bd sql:*)",
+      "Bash(cd \"G:/projects/loabletech/go-fastreport\" && go run ./examples/frx_to_html/ 2>&1)",
+      "Bash(cd \"G:/projects/loabletech/go-fastreport\" && go run ./examples/frx_to_html/ -frx \"test-reports/About Microsoft Chart.frx\" 2>&1)",
+      "Bash(cd \"G:/projects/loabletech/go-fastreport\" && go build ./... 2>&1)",
+      "Bash(cd \"G:/projects/loabletech/go-fastreport\" && go run ./examples/frx_to_html/ -frx \"test-reports/About Microsoft Chart.frx\" && python3 -c \"\nwith open\\('html-output/About Microsoft Chart.html', 'r', encoding='utf-8'\\) as f:\n    content = f.read\\(\\)\nimport re\nif 'Information about the Microsoft Chart control' in content:\n    print\\('OK: Expression resolved'\\)\nelif 'Report.ReportInfo.Description' in content:\n    print\\('FAIL: Expression not resolved'\\)\nimgs = re.findall\\(r'data:image/', content\\)\nprint\\(f'OK: {len\\(imgs\\)} embedded images'\\)\nbrs = content.count\\('<br>'\\)\nprint\\(f'OK: {brs} <br> tags'\\)\n\" 2>&1)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebSearch",
+      "Bash(cd /G/projects/loabletech/go-fastreport && ls -la preview/ | grep -E \"\\\\.go$\")",
+      "Bash(cd /G/projects/loabletech/go-fastreport && wc -l reportpkg/*.go band/*.go object/*.go engine/*.go serial/*.go export/*.go | tail -1)"
+    ]
+  }
+}

@@ -427,3 +427,23 @@ func TestCrossViewDataSerial_Deserialize_AllThreeChildrenMock(t *testing.T) {
 		t.Errorf("Deserialize: want nil, got %v", err)
 	}
 }
+
+// ── SliceCubeSource.GetMeasureCell: xKey not found in cellData ───────────────
+
+// TestGetMeasureCell_XKeyNotInCellData exercises the branch where xTupleIdx is
+// in range for xTuples, but the corresponding xKey has no entry in cellData.
+// This covers serial.go line 294-296 (if !ok { return MeasureCell{} }).
+func TestGetMeasureCell_XKeyNotInCellData(t *testing.T) {
+	// Build a SliceCubeSource directly by manipulating its internal fields.
+	// xTuples contains one tuple whose key doesn't appear in cellData.
+	src := &SliceCubeSource{
+		xTuples:  [][]string{{"GhostX"}},
+		yTuples:  [][]string{{"GhostY"}},
+		cellData: map[string]map[string][]any{}, // empty: no xKey present
+		measures: []string{"Sales"},
+	}
+	mc := src.GetMeasureCell(0, 0)
+	if mc.Text != "" {
+		t.Errorf("GetMeasureCell with missing xKey: got %q, want empty string", mc.Text)
+	}
+}

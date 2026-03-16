@@ -10,6 +10,9 @@ import (
 	"github.com/boombuler/barcode/pdf417"
 )
 
+// scaleBarcode is the barcode.Scale function, replaceable in tests.
+var scaleBarcode = barcode.Scale
+
 // Encoder encodes PDF417 barcodes.
 type Encoder struct {
 	// SecurityLevel controls error correction (1–8, default: 2).
@@ -47,7 +50,7 @@ func (e *Encoder) Encode(text string, width, height int) (image.Image, error) {
 	if err != nil {
 		return nil, fmt.Errorf("pdf417: encode %w", err)
 	}
-	scaled, err := barcode.Scale(bc, width, height)
+	scaled, err := scaleBarcode(bc, width, height)
 	if err != nil {
 		return nil, fmt.Errorf("pdf417: scale %w", err)
 	}

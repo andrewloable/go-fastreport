@@ -149,23 +149,16 @@ func WithCORS(next http.Handler, cfg CORSConfig) http.Handler {
 			w.Header().Set("Access-Control-Allow-Credentials", "true")
 		}
 		if cfg.MaxAge > 0 {
-			w.Header().Set("Access-Control-Max-Age", http.TimeFormat[:0])
 			// Use simple integer formatting without fmt import.
 			age := cfg.MaxAge
-			ageStr := ""
-			if age <= 0 {
-				ageStr = "0"
-			} else {
-				tmp := [20]byte{}
-				idx := len(tmp)
-				for age > 0 {
-					idx--
-					tmp[idx] = byte('0' + age%10)
-					age /= 10
-				}
-				ageStr = string(tmp[idx:])
+			tmp := [20]byte{}
+			idx := len(tmp)
+			for age > 0 {
+				idx--
+				tmp[idx] = byte('0' + age%10)
+				age /= 10
 			}
-			w.Header().Set("Access-Control-Max-Age", ageStr)
+			w.Header().Set("Access-Control-Max-Age", string(tmp[idx:]))
 		}
 
 		// Handle OPTIONS preflight.

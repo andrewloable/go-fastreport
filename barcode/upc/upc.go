@@ -11,6 +11,12 @@ import (
 	boomean "github.com/boombuler/barcode/ean"
 )
 
+// scaleBarcode is the barcode.Scale function, replaceable in tests.
+var scaleBarcode = barcode.Scale
+
+// encodeEAN is the boombuler EAN Encode function, replaceable in tests.
+var encodeEAN = boomean.Encode
+
 // Encoder encodes UPC-A barcodes.
 type Encoder struct {
 	// ForegroundColor is the bar color (default: black).
@@ -43,11 +49,11 @@ func (e *Encoder) Encode(code string, width, height int) (image.Image, error) {
 
 	// Pad to 12 digits so boombuler treats it as EAN-13 after prepending '0'.
 	ean13Code := "0" + code
-	bc, err := boomean.Encode(ean13Code)
+	bc, err := encodeEAN(ean13Code)
 	if err != nil {
 		return nil, fmt.Errorf("upc: %w", err)
 	}
-	scaled, err := barcode.Scale(bc, width, height)
+	scaled, err := scaleBarcode(bc, width, height)
 	if err != nil {
 		return nil, fmt.Errorf("upc: scale %w", err)
 	}

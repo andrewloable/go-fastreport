@@ -10,6 +10,9 @@ import (
 	"github.com/boombuler/barcode/datamatrix"
 )
 
+// scaleBarcode is the barcode.Scale function, replaceable in tests.
+var scaleBarcode = barcode.Scale
+
 // Encoder encodes DataMatrix barcodes.
 type Encoder struct {
 	// ForegroundColor is the module color (default: black).
@@ -38,7 +41,7 @@ func (e *Encoder) Encode(text string, width, height int) (image.Image, error) {
 	if err != nil {
 		return nil, fmt.Errorf("datamatrix: encode %w", err)
 	}
-	scaled, err := barcode.Scale(bc, width, height)
+	scaled, err := scaleBarcode(bc, width, height)
 	if err != nil {
 		return nil, fmt.Errorf("datamatrix: scale %w", err)
 	}

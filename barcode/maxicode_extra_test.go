@@ -115,3 +115,57 @@ func TestMaxiCodeEncodeText_IdxLessThan1_Clamped(t *testing.T) {
 		t.Errorf("expected 5 codewords, got %d", len(cw))
 	}
 }
+
+// ── maxiCodeEncodeText: non-ASCII rune substitution ───────────────────────────
+//
+// When a rune r > 0x7F is encountered, it is substituted with GS (0x1D).
+// This exercises the `if r > 0x7F { r = 0x1D }` branch directly by calling
+// maxiCodeEncodeText with a Unicode string containing runes > 127.
+
+func TestMaxiCodeEncodeText_NonASCIIRune_SubstitutedWithGS(t *testing.T) {
+	// "é" is rune U+00E9 (233 > 127). It should be substituted with GS (0x1D).
+	// GS < 0x20, so it goes into Set A path: appends LATA (63) then 0x1D.
+	cw := maxiCodeEncodeText("é", 5)
+	if len(cw) != 5 {
+		t.Errorf("expected 5 codewords, got %d", len(cw))
+	}
+	// First codeword should be LATA (63) since we switch to Set A for GS.
+	if cw[0] != 63 {
+		t.Errorf("cw[0] = %d, want 63 (LATA)", cw[0])
+	}
+	// Second codeword should be GS & 0x3F = 0x1D & 0x3F = 29.
+	if cw[1] != 29 {
+		t.Errorf("cw[1] = %d, want 29 (GS & 0x3F)", cw[1])
+	}
+}
+
+func TestMaxiCodeEncodeText_MixedASCIIAndNonASCII(t *testing.T) {
+	// "Héllo" — 'H' is ASCII, 'é' (U+00E9 > 127) is non-ASCII, rest are ASCII.
+	// This exercises the non-ASCII substitution path mid-string with Set switches.
+	cw := maxiCodeEncodeText("Héllo", 10)
+	if len(cw) != 10 {
+		t.Errorf("expected 10 codewords, got %d", len(cw))
+	}
+	// 'H' (0x48) is ASCII >= 0x20 → Set B. idx = 0x48 - 0x1F = 41.
+	if cw[0] != 41 {
+		t.Errorf("cw[0] = %d, want 41 ('H' in Set B)", cw[0])
+	}
+}
+
+func TestMaxiCodeEncodeText_OnlyNonASCII(t *testing.T) {
+	// All runes > 0x7F: "äöü" (U+00E4, U+00F6, U+00FC).
+	// Each substituted with GS (0x1D). First triggers LATA; subsequent stay in Set A.
+	cw := maxiCodeEncodeText("äöü", 10)
+	if len(cw) != 10 {
+		t.Errorf("expected 10 codewords, got %d", len(cw))
+	}
+	// First: LATA (63), then GS&0x3F (29), then GS&0x3F (29), then GS&0x3F (29).
+	if cw[0] != 63 {
+		t.Errorf("cw[0] = %d, want 63 (LATA)", cw[0])
+	}
+	for i := 1; i <= 3; i++ {
+		if cw[i] != 29 {
+			t.Errorf("cw[%d] = %d, want 29 (GS)", i, cw[i])
+		}
+	}
+}

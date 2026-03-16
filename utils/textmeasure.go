@@ -138,9 +138,6 @@ func wordWrap(para string, face font.Face, maxWidth float32) []string {
 			lines = append(lines, currentLine)
 		}
 	}
-	if len(lines) == 0 {
-		lines = []string{para}
-	}
 	return lines
 }
 

@@ -318,12 +318,40 @@ func TestFillTrapezoid_ReversedX(t *testing.T) {
 }
 
 func TestFillTrapezoid_LineYAboveBaseY(t *testing.T) {
-	// lineY > baseY inside the loop triggers the swap-within-loop branch.
-	// Set y0=80, y1=20, baseY=10: lineY starts at 80 > baseY=10 → swap.
+	// lineY > baseY inside the loop triggers the swap-within-loop branch
+	// followed by the restore branch (if lineY < baseY) on the same iteration.
+	// y0=80, y1=20, baseY=10: across x=10..50 lineY descends from 80 to 20,
+	// always above baseY=10, so the swap+restore fires on every iteration.
 	img := image.NewRGBA(image.Rect(0, 0, 100, 100))
 	c := color.RGBA{0, 0, 255, 255}
 	fillTrapezoid(img, 10, 80, 50, 20, 10, c, 200)
-	// Just verify no panic and function completes.
+	// The function should complete without panic and paint pixels.
+	// At x=10, lineY=80 > baseY=10: swap → fill y=10..80, restore baseY=10.
+	// Verify the function ran by checking a pixel in the filled region.
+	got := img.RGBAAt(10, 10)
+	want := color.RGBA{0, 0, 255, 200}
+	if got != want {
+		t.Errorf("LineYAboveBaseY: pixel (10,10) = %v, want %v", got, want)
+	}
+}
+
+func TestFillTrapezoid_RestoreBaseYAcrossIterations(t *testing.T) {
+	// Verify that baseY is correctly restored after each swap so that
+	// subsequent x-columns also get the correct fill range.
+	// y0=70, y1=50, baseY=20: lineY always > baseY → swap+restore each iteration.
+	// After restore, baseY stays 20 for every column.
+	img := image.NewRGBA(image.Rect(0, 0, 100, 100))
+	c := color.RGBA{255, 128, 0, 255}
+	fillTrapezoid(img, 10, 70, 30, 50, 20, c, 255)
+	// At every x in 10..30, the fill runs from baseY=20 up to lineY.
+	// Pixel at (20, 20) should be set (it is within the filled band of every column).
+	if img.RGBAAt(20, 20) != c {
+		t.Errorf("RestoreBaseY: pixel (20,20) not set; baseY restore may be broken")
+	}
+	// Pixel at (30, 20) should also be set (last column).
+	if img.RGBAAt(30, 20) != c {
+		t.Errorf("RestoreBaseY: pixel (30,20) not set; baseY restore may be broken")
+	}
 }
 
 func TestFillTrapezoid_SameX(t *testing.T) {

@@ -10,6 +10,9 @@ import (
 	boomean "github.com/boombuler/barcode/ean"
 )
 
+// scaleBarcode is the barcode.Scale function, replaceable in tests.
+var scaleBarcode = barcode.Scale
+
 // Encoder encodes EAN-8 and EAN-13 barcodes.
 type Encoder struct {
 	// ForegroundColor is the bar color (default: black).
@@ -40,7 +43,7 @@ func (e *Encoder) Encode(code string, width, height int) (image.Image, error) {
 	if err != nil {
 		return nil, fmt.Errorf("ean: %w", err)
 	}
-	scaled, err := barcode.Scale(bc, width, height)
+	scaled, err := scaleBarcode(bc, width, height)
 	if err != nil {
 		return nil, fmt.Errorf("ean: scale %w", err)
 	}

@@ -40,6 +40,9 @@ func toECLevel(level ErrorCorrectionLevel) qr.ErrorCorrectionLevel {
 	}
 }
 
+// scaleBarcode is the barcode.Scale function, replaceable in tests.
+var scaleBarcode = barcode.Scale
+
 // Encoder generates QR Code images from text content.
 type Encoder struct {
 	// ECLevel sets the error-correction level (default ECLevelM).
@@ -79,7 +82,7 @@ func (e *Encoder) Encode(text string, size int) (image.Image, error) {
 	}
 
 	// Scale to the requested size.
-	scaled, err := barcode.Scale(bc, size, size)
+	scaled, err := scaleBarcode(bc, size, size)
 	if err != nil {
 		return nil, fmt.Errorf("qr scale: %w", err)
 	}

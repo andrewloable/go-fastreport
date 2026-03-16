@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/andrewloable/go-fastreport/band"
+	"github.com/andrewloable/go-fastreport/object"
 	"github.com/andrewloable/go-fastreport/reportpkg"
 )
 
@@ -43,6 +44,119 @@ func TestStartKeepBand_NonNilBand_FirstRow(t *testing.T) {
 	if e.keeping {
 		t.Error("startKeepBand with AbsRowNo==1 and !StartNewPage should NOT set keeping=true")
 	}
+}
+
+// ── AddBandToPreparedPages: nil preparedPages guard (bands.go:169) ─────────────
+
+// TestAddBandToPreparedPages_NilPreparedPages exercises the `if e.preparedPages == nil { return false }`
+// guard. Since New() always initialises preparedPages, this requires direct field access.
+func TestAddBandToPreparedPages_NilPreparedPages(t *testing.T) {
+	r := reportpkg.NewReport()
+	pg := reportpkg.NewReportPage()
+	r.AddPage(pg)
+	e := New(r)
+	if err := e.Run(DefaultRunOptions()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	e.preparedPages = nil // force the guard condition
+
+	db := band.NewDataBand()
+	db.SetName("NilPP")
+	db.SetHeight(10)
+	db.SetVisible(true)
+
+	if e.AddBandToPreparedPages(&db.BandBase) {
+		t.Error("AddBandToPreparedPages with nil preparedPages should return false")
+	}
+}
+
+// ── calcBandRequiredHeight: HTML render paths (bands.go:135-138) ────────────
+
+// TestCalcBandRequiredHeight_HtmlTagsRenderType exercises the HtmlTags branch.
+func TestCalcBandRequiredHeight_HtmlTagsRenderType(t *testing.T) {
+	r := reportpkg.NewReport()
+	pg := reportpkg.NewReportPage()
+	r.AddPage(pg)
+	e := New(r)
+	if err := e.Run(DefaultRunOptions()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	db := band.NewDataBand()
+	db.SetName("HtmlTagsBand")
+	db.SetHeight(50)
+	db.SetVisible(true)
+	db.SetCanGrow(true)
+	db.SetWidth(200)
+
+	txt := object.NewTextObject()
+	txt.SetName("HtmlTxt")
+	txt.SetText("<b>Hello</b> <i>World</i>")
+	txt.SetWidth(180)
+	txt.SetHeight(20)
+	txt.SetTop(5)
+	txt.SetTextRenderType(object.TextRenderTypeHtmlTags)
+	db.Objects().Add(txt)
+
+	_ = e.CalcBandHeight(&db.BandBase)
+}
+
+// TestCalcBandRequiredHeight_HtmlParagraphRenderType exercises the HtmlParagraph branch.
+func TestCalcBandRequiredHeight_HtmlParagraphRenderType(t *testing.T) {
+	r := reportpkg.NewReport()
+	pg := reportpkg.NewReportPage()
+	r.AddPage(pg)
+	e := New(r)
+	if err := e.Run(DefaultRunOptions()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	db := band.NewDataBand()
+	db.SetName("HtmlParaBand")
+	db.SetHeight(50)
+	db.SetVisible(true)
+	db.SetCanGrow(true)
+	db.SetWidth(200)
+
+	txt := object.NewTextObject()
+	txt.SetName("HtmlPara")
+	txt.SetText("<p>Paragraph one</p><p>Paragraph two</p>")
+	txt.SetWidth(180)
+	txt.SetHeight(20)
+	txt.SetTop(5)
+	txt.SetTextRenderType(object.TextRenderTypeHtmlParagraph)
+	db.Objects().Add(txt)
+
+	_ = e.CalcBandHeight(&db.BandBase)
+}
+
+// TestCalcBandRequiredHeight_ZeroWidthTextObject exercises the `if objWidth <= 0 { objWidth = bb.Width() }` fallback.
+func TestCalcBandRequiredHeight_ZeroWidthTextObject(t *testing.T) {
+	r := reportpkg.NewReport()
+	pg := reportpkg.NewReportPage()
+	r.AddPage(pg)
+	e := New(r)
+	if err := e.Run(DefaultRunOptions()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	db := band.NewDataBand()
+	db.SetName("ZeroWidthBand")
+	db.SetHeight(50)
+	db.SetVisible(true)
+	db.SetCanGrow(true)
+	db.SetWidth(200)
+
+	txt := object.NewTextObject()
+	txt.SetName("ZeroWidthTxt")
+	txt.SetText("some text")
+	txt.SetWidth(0) // zero width → uses band width
+	txt.SetHeight(20)
+	txt.SetTop(5)
+	db.Objects().Add(txt)
+
+	_ = e.CalcBandHeight(&db.BandBase)
 }
 
 // TestStartKeepBand_AlreadyKeeping exercises the `if e.keeping { return }` guard.

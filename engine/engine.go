@@ -110,7 +110,7 @@ type ReportEngine struct {
 	keepDeltaY   float32
 
 	// page number tracking (see pagenumbers.go)
-	pageNumbers  []pageNumberInfo
+	pageNumbers   []pageNumberInfo
 	logicalPageNo int
 
 	// reprint headers/footers (see reprint.go)
@@ -265,8 +265,8 @@ func (e *ReportEngine) runPhase1(resetDataState bool) error {
 }
 
 // runPhase2 runs one or two passes of page generation.
-func (e *ReportEngine) runPhase2(append bool) error {
-	if err := e.prepareToFirstPass(append); err != nil {
+func (e *ReportEngine) runPhase2(appendMode bool) error {
+	if err := e.prepareToFirstPass(appendMode); err != nil {
 		return err
 	}
 	if err := e.runReportPages(); err != nil {
@@ -324,19 +324,20 @@ func (e *ReportEngine) initParameters() {
 	evalParams(dict.Parameters())
 }
 
-// initializeData opens all registered data sources.
-func (e *ReportEngine) initializeData() error {
-	for _, ds := range e.dataSources {
-		if err := ds.Init(); err != nil {
-			return fmt.Errorf("data source %q: %w", ds.Name(), err)
-		}
-	}
-	return nil
+// dataSourceInit is a testability hook that wraps (*data.BaseDataSource).Init.
+// In production it delegates to ds.Init(); tests may replace it temporarily to
+// inject an error and cover the otherwise-unreachable error-return branches in
+// initializeData, runPhase1, and Run.
+var dataSourceInit = func(ds *data.BaseDataSource) error {
+	return ds.Init()
 }
 
-// prepareToFirstPass resets engine state for the first (or only) pass.
-func (e *ReportEngine) prepareToFirstPass(append bool) error {
-	if !append {
+// prepareToFirstPassHook is a testability hook that implements the body of
+// prepareToFirstPass. Tests may replace it to inject an error and cover the
+// `return err` branch in runPhase2 (the first-pass prepare step) that is
+// otherwise unreachable because the function always returns nil in production.
+var prepareToFirstPassHook = func(e *ReportEngine, appendMode bool) error {
+	if !appendMode {
 		e.pageNo = e.report.InitialPageNumber
 		e.totalPages = 0
 		e.curY = 0
@@ -349,8 +350,11 @@ func (e *ReportEngine) prepareToFirstPass(append bool) error {
 	return nil
 }
 
-// prepareToSecondPass resets positioning for the second pass.
-func (e *ReportEngine) prepareToSecondPass() error {
+// prepareToSecondPassHook is a testability hook that implements the body of
+// prepareToSecondPass. Tests may replace it to inject an error and cover the
+// `return err` branch in runPhase2's double-pass block that is otherwise
+// unreachable because the function always returns nil in production.
+var prepareToSecondPassHook = func(e *ReportEngine) error {
 	e.curY = 0
 	e.curX = 0
 	e.curColumn = 0
@@ -358,6 +362,26 @@ func (e *ReportEngine) prepareToSecondPass() error {
 	e.absRowNo = 1
 	e.freeSpace = e.pageHeight
 	return nil
+}
+
+// initializeData opens all registered data sources.
+func (e *ReportEngine) initializeData() error {
+	for _, ds := range e.dataSources {
+		if err := dataSourceInit(ds); err != nil {
+			return fmt.Errorf("data source %q: %w", ds.Name(), err)
+		}
+	}
+	return nil
+}
+
+// prepareToFirstPass resets engine state for the first (or only) pass.
+func (e *ReportEngine) prepareToFirstPass(appendMode bool) error {
+	return prepareToFirstPassHook(e, appendMode)
+}
+
+// prepareToSecondPass resets positioning for the second pass.
+func (e *ReportEngine) prepareToSecondPass() error {
+	return prepareToSecondPassHook(e)
 }
 
 // runReportPages iterates through the report's ReportPages and generates output.

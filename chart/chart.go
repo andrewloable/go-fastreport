@@ -461,8 +461,8 @@ func fillTrapezoid(img *image.RGBA, x0, y0, x1, y1, baseY int, col color.RGBA, a
 		for y := lineY; y <= baseY; y++ {
 			setPixel(img, x, y, c)
 		}
-		if lineY > baseY {
-			baseY = lineY // restore
+		if lineY < baseY {
+			baseY = lineY // restore original baseY for next iteration
 		}
 	}
 }

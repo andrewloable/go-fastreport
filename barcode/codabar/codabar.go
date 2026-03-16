@@ -10,6 +10,9 @@ import (
 	boomcodabar "github.com/boombuler/barcode/codabar"
 )
 
+// scaleBarcode is the barcode.Scale function, replaceable in tests.
+var scaleBarcode = barcode.Scale
+
 // Encoder encodes Codabar barcodes.
 type Encoder struct {
 	// ForegroundColor is the bar color (default: black).
@@ -39,7 +42,7 @@ func (e *Encoder) Encode(content string, width, height int) (image.Image, error)
 	if err != nil {
 		return nil, fmt.Errorf("codabar: %w", err)
 	}
-	scaled, err := barcode.Scale(bc, width, height)
+	scaled, err := scaleBarcode(bc, width, height)
 	if err != nil {
 		return nil, fmt.Errorf("codabar: scale %w", err)
 	}

@@ -28,6 +28,11 @@ import (
 // rijSignature is the 3-byte magic prefix on encrypted FRX streams.
 var rijSignature = []byte{114, 105, 106} // "rij"
 
+// cryptoAesNewCipher is a package-level hook so tests can inject a failing
+// cipher factory to exercise error branches in EncryptStream, DecryptStream,
+// and aesCBCEncrypt that are unreachable via the public API.
+var cryptoAesNewCipher = aes.NewCipher
+
 // rijPrefix is the literal string prefix on encrypted connection strings.
 const rijPrefix = "rij"
 
@@ -92,7 +97,7 @@ func EncryptStream(dest io.Writer, password string) (io.WriteCloser, error) {
 		return nil, err
 	}
 	key, iv := deriveKeyIV(password)
-	block, err := aes.NewCipher(key)
+	block, err := cryptoAesNewCipher(key)
 	if err != nil {
 		return nil, err
 	}
@@ -108,7 +113,7 @@ func EncryptStream(dest io.Writer, password string) (io.WriteCloser, error) {
 // transparent handling.
 func DecryptStream(source io.Reader, password string) (io.Reader, error) {
 	key, iv := deriveKeyIV(password)
-	block, err := aes.NewCipher(key)
+	block, err := cryptoAesNewCipher(key)
 	if err != nil {
 		return nil, err
 	}
@@ -198,7 +203,7 @@ func deriveKeyIV(password string) (key, iv []byte) {
 // aesCBCEncrypt encrypts plaintext using AES-128-CBC with PKCS7 padding.
 // (ISO10126 is accepted by .NET when decrypting PKCS7 — the last byte is identical.)
 func aesCBCEncrypt(plaintext, key, iv []byte) ([]byte, error) {
-	block, err := aes.NewCipher(key)
+	block, err := cryptoAesNewCipher(key)
 	if err != nil {
 		return nil, err
 	}
@@ -216,7 +221,7 @@ func aesCBCDecrypt(ciphertext, key, iv []byte) ([]byte, error) {
 	if len(ciphertext) == 0 {
 		return nil, nil
 	}
-	block, err := aes.NewCipher(key)
+	block, err := cryptoAesNewCipher(key)
 	if err != nil {
 		return nil, err
 	}

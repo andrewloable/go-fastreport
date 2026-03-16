@@ -283,12 +283,24 @@ func (b *BandBase) UpdateLayout(dx, dy float32) {
 
 // --- Serialization ---
 
+// breakableSerialize is a testability hook that wraps BreakableComponent.Serialize.
+// In production it calls the method directly; tests may override it to inject errors.
+var breakableSerialize = func(bc *report.BreakableComponent, w report.Writer) error {
+	return bc.Serialize(w)
+}
+
+// breakableDeserialize is a testability hook that wraps BreakableComponent.Deserialize.
+// In production it calls the method directly; tests may override it to inject errors.
+var breakableDeserialize = func(bc *report.BreakableComponent, r report.Reader) error {
+	return bc.Deserialize(r)
+}
+
 // serializeAttrs writes BandBase XML attributes only (no child elements).
 // This is called by derived band types that need to add their own attributes
 // before the child elements are written, because XML attributes must precede
 // nested child elements in a streaming encoder.
 func (b *BandBase) serializeAttrs(w report.Writer) error {
-	if err := b.BreakableComponent.Serialize(w); err != nil {
+	if err := breakableSerialize(&b.BreakableComponent, w); err != nil {
 		return err
 	}
 	if b.startNewPage {
@@ -340,7 +352,7 @@ func (b *BandBase) Serialize(w report.Writer) error {
 
 // Deserialize reads BandBase properties.
 func (b *BandBase) Deserialize(r report.Reader) error {
-	if err := b.BreakableComponent.Deserialize(r); err != nil {
+	if err := breakableDeserialize(&b.BreakableComponent, r); err != nil {
 		return err
 	}
 	b.startNewPage = r.ReadBool("StartNewPage", false)

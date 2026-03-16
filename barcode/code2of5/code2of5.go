@@ -11,6 +11,9 @@ import (
 	boomtwooffive "github.com/boombuler/barcode/twooffive"
 )
 
+// scaleBarcode is the barcode.Scale function, replaceable in tests.
+var scaleBarcode = barcode.Scale
+
 // Encoder encodes 2-of-5 barcodes.
 type Encoder struct {
 	// Interleaved selects Interleaved 2-of-5 (ITF) when true (default: true).
@@ -44,7 +47,7 @@ func (e *Encoder) Encode(content string, width, height int) (image.Image, error)
 	if err != nil {
 		return nil, fmt.Errorf("code2of5: %w", err)
 	}
-	scaled, err := barcode.Scale(bc, width, height)
+	scaled, err := scaleBarcode(bc, width, height)
 	if err != nil {
 		return nil, fmt.Errorf("code2of5: scale %w", err)
 	}

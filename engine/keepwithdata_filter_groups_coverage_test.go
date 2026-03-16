@@ -66,6 +66,37 @@ func TestCheckKeepFooterWithData_DoesNotFit_CutsAndPastes(t *testing.T) {
 	e.checkKeepFooterWithData(ftr, 0)
 }
 
+// TestCheckKeepFooterWithData_FreeSpaceExhausted covers the else branch
+// (e.freeSpace = 0) when keepDeltaY >= freeSpace on the new page.
+// keepDeltaY = curY - keepCurY. A4 page height ≈ 1047 px; setting keepCurY=0
+// and curY=2000 gives keepDeltaY=2000 which exceeds the new page's freeSpace.
+func TestCheckKeepFooterWithData_FreeSpaceExhausted(t *testing.T) {
+	e := newKWDEngine(t)
+	ftr := band.NewDataFooterBand()
+	ftr.SetKeepWithData(true)
+	ftr.SetHeight(50)
+	// keepCurY=0, curY=2000 → keepDeltaY=2000 > pageHeight ≈ 1047
+	e.keepCurY = 0
+	e.curY = 2000
+	e.freeSpace = 1 // footer doesn't fit on current page
+	e.checkKeepFooterWithData(ftr, 0)
+	if e.freeSpace != 0 {
+		t.Errorf("expected freeSpace=0 after keepDeltaY exhausts free space, got %v", e.freeSpace)
+	}
+}
+
+// TestCheckKeepFooterWithData_NilPreparedPages_Direct covers the pp==nil branch
+// by explicitly zeroing preparedPages after construction.
+func TestCheckKeepFooterWithData_NilPreparedPages_Direct(t *testing.T) {
+	e := newKWDEngine(t)
+	e.preparedPages = nil // force the nil branch
+	e.freeSpace = 0       // ensure we pass the footerH <= freeSpace guard
+	ftr := band.NewDataFooterBand()
+	ftr.SetKeepWithData(true)
+	ftr.SetHeight(20) // 20 > 0 so we enter the cut path
+	e.checkKeepFooterWithData(ftr, 0)
+}
+
 func TestCheckKeepHeaderWithData_NilHdr(t *testing.T) {
 	e := newKWDEngine(t)
 	db := band.NewDataBand()
@@ -125,6 +156,39 @@ func TestCheckKeepHeaderWithData_DoesNotFit_CutsAndPastes(t *testing.T) {
 	db := band.NewDataBand()
 	db.SetHeight(30)
 	e.keepCurY = e.curY
+	e.checkKeepHeaderWithData(hdr, db, 0)
+}
+
+// TestCheckKeepHeaderWithData_FreeSpaceExhausted covers the else branch
+// (e.freeSpace = 0) when keepDeltaY >= freeSpace on the new page.
+func TestCheckKeepHeaderWithData_FreeSpaceExhausted(t *testing.T) {
+	e := newKWDEngine(t)
+	hdr := band.NewDataHeaderBand()
+	hdr.SetKeepWithData(true)
+	hdr.SetHeight(30)
+	db := band.NewDataBand()
+	db.SetHeight(30)
+	// keepCurY=0, curY=2000 → keepDeltaY=2000 > pageHeight ≈ 1047
+	e.keepCurY = 0
+	e.curY = 2000
+	e.freeSpace = 1 // header+row doesn't fit on current page
+	e.checkKeepHeaderWithData(hdr, db, 0)
+	if e.freeSpace != 0 {
+		t.Errorf("expected freeSpace=0 after keepDeltaY exhausts free space, got %v", e.freeSpace)
+	}
+}
+
+// TestCheckKeepHeaderWithData_NilPreparedPages_Direct covers the pp==nil branch
+// by explicitly zeroing preparedPages after construction.
+func TestCheckKeepHeaderWithData_NilPreparedPages_Direct(t *testing.T) {
+	e := newKWDEngine(t)
+	e.preparedPages = nil // force the nil branch
+	e.freeSpace = 0       // ensure we pass the headerH+rowH <= freeSpace guard
+	hdr := band.NewDataHeaderBand()
+	hdr.SetKeepWithData(true)
+	hdr.SetHeight(20)
+	db := band.NewDataBand()
+	db.SetHeight(20) // 40 > 0 so we enter the cut path
 	e.checkKeepHeaderWithData(hdr, db, 0)
 }
 

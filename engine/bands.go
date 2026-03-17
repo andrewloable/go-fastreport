@@ -2,6 +2,7 @@ package engine
 
 import (
 	"image/color"
+	"strings"
 
 	"github.com/andrewloable/go-fastreport/band"
 	"github.com/andrewloable/go-fastreport/object"
@@ -83,7 +84,7 @@ func (e *ReportEngine) CalcBandHeight(b report.Base) float32 {
 	}
 
 	// Measure TextObject children to compute the required height.
-	requiredHeight := calcBandRequiredHeight(bb, baseHeight)
+	requiredHeight := calcBandLayout(bb, baseHeight, e.evalText).height
 
 	if canGrow && requiredHeight > baseHeight {
 		return requiredHeight
@@ -94,19 +95,29 @@ func (e *ReportEngine) CalcBandHeight(b report.Base) float32 {
 	return baseHeight
 }
 
-// calcBandRequiredHeight measures all TextObject children of the band and
-// returns the minimum height needed to display all content without clipping.
-// baseHeight is used as the starting lower bound.
+// bandLayout holds the results of a band layout calculation.
+type bandLayout struct {
+	// height is the required band height (may differ from declared height when
+	// CanGrow or CanShrink is active).
+	height float32
+	// shifts[i] is the Y offset to add to object i's declared Top position due
+	// to grow/shrink propagation from objects above it. Negative = shift up.
+	// shifts is nil when no grow/shrink objects are present.
+	shifts []float32
+}
+
+// calcBandLayout measures all TextObject children of the band and
+// returns the required height together with per-object Y shifts.
 //
 // The algorithm mirrors FastReport.BandBase.CalcHeight() from the .NET source:
 //  1. For each object that has CanGrow or CanShrink set, measure its content
 //     height and decide the effective height (respecting individual object flags).
 //  2. Compute downward shifts for objects that sit below a growing/shrinking peer.
-//  3. Return the maximum bottom edge across all visible objects.
-func calcBandRequiredHeight(bb *band.BandBase, baseHeight float32) float32 {
+//  3. Return the maximum bottom edge across all visible objects, plus the shifts.
+func calcBandLayout(bb *band.BandBase, baseHeight float32, evalFn func(string) string) bandLayout {
 	objs := bb.Objects()
 	if objs == nil || objs.Len() == 0 {
-		return baseHeight
+		return bandLayout{height: baseHeight}
 	}
 
 	n := objs.Len()
@@ -125,6 +136,7 @@ func calcBandRequiredHeight(bb *band.BandBase, baseHeight float32) float32 {
 	// Step 1: compute effective height for each object.
 	tops := make([]float32, n)
 	effectiveH := make([]float32, n)
+	hasGrowShrink := false
 	for i := 0; i < n; i++ {
 		obj := objs.Get(i)
 		d, hasDim := obj.(hasDims)
@@ -152,20 +164,44 @@ func calcBandRequiredHeight(bb *band.BandBase, baseHeight float32) float32 {
 		if objWidth <= 0 {
 			objWidth = bb.Width()
 		}
+		// Account for left+right padding so measured text fits within the
+		// actual content area.
+		if p := txt.Padding(); p.Left+p.Right > 0 {
+			objWidth -= p.Left + p.Right
+			if objWidth < 1 {
+				objWidth = 1
+			}
+		}
+
+		// Evaluate the text so we measure the actual content, not the template.
+		textToMeasure := txt.Text()
+		if evalFn != nil {
+			textToMeasure = evalFn(textToMeasure)
+		}
+		// Normalize line endings for consistent line counting.
+		textToMeasure = strings.ReplaceAll(textToMeasure, "\r\n", "\n")
+		textToMeasure = strings.ReplaceAll(textToMeasure, "\r", "\n")
+
 		var textH float32
 		switch txt.TextRenderType() {
 		case object.TextRenderTypeHtmlTags, object.TextRenderTypeHtmlParagraph:
-			renderer := utils.NewHtmlTextRenderer(txt.Text(), txt.Font(), defaultTextColor)
+			renderer := utils.NewHtmlTextRenderer(textToMeasure, txt.Font(), defaultTextColor)
 			textH = renderer.MeasureHeight(objWidth)
 		default:
-			_, textH = utils.MeasureText(txt.Text(), txt.Font(), objWidth)
+			_, textH = utils.MeasureText(textToMeasure, txt.Font(), objWidth)
+		}
+		// Add top+bottom padding back into the measured height.
+		if p := txt.Padding(); p.Top+p.Bottom > 0 {
+			textH += p.Top + p.Bottom
 		}
 
 		declaredH := txt.Height()
 		if canGrowObj && textH > declaredH {
 			effectiveH[i] = textH
+			hasGrowShrink = true
 		} else if canShrinkObj && textH < declaredH {
 			effectiveH[i] = textH
+			hasGrowShrink = true
 		}
 		// If neither condition applies, the declared height is unchanged.
 	}
@@ -174,30 +210,32 @@ func calcBandRequiredHeight(bb *band.BandBase, baseHeight float32) float32 {
 	// growing or shrinking peer. Object j is "below" object i when j's top
 	// (after accumulated shifts) is at or below i's original bottom edge.
 	shifts := make([]float32, n)
-	for i := 0; i < n; i++ {
-		obj := objs.Get(i)
-		d, hasDim := obj.(hasDims)
-		if !hasDim {
-			continue
-		}
-		delta := effectiveH[i] - d.Height()
-		if delta == 0 {
-			continue
-		}
-		parentBottom := tops[i] + d.Height()
-		for j := 0; j < n; j++ {
-			if j == i {
+	if hasGrowShrink {
+		for i := 0; i < n; i++ {
+			obj := objs.Get(i)
+			d, hasDim := obj.(hasDims)
+			if !hasDim {
 				continue
 			}
-			if tops[j]+shifts[j] >= parentBottom-1e-4 {
-				proposed := delta + shifts[i]
-				if delta > 0 {
-					if proposed > shifts[j] {
-						shifts[j] = proposed
-					}
-				} else {
-					if proposed < shifts[j] {
-						shifts[j] = proposed
+			delta := effectiveH[i] - d.Height()
+			if delta == 0 {
+				continue
+			}
+			parentBottom := tops[i] + d.Height()
+			for j := 0; j < n; j++ {
+				if j == i {
+					continue
+				}
+				if tops[j]+shifts[j] >= parentBottom-1e-4 {
+					proposed := delta + shifts[i]
+					if delta > 0 {
+						if proposed > shifts[j] {
+							shifts[j] = proposed
+						}
+					} else {
+						if proposed < shifts[j] {
+							shifts[j] = proposed
+						}
 					}
 				}
 			}
@@ -221,9 +259,9 @@ func calcBandRequiredHeight(bb *band.BandBase, baseHeight float32) float32 {
 	}
 
 	if maxBottom <= 0 {
-		return baseHeight
+		return bandLayout{height: baseHeight, shifts: shifts}
 	}
-	return maxBottom
+	return bandLayout{height: maxBottom, shifts: shifts}
 }
 
 // ── AddBandToPreparedPages ────────────────────────────────────────────────────
@@ -265,6 +303,11 @@ func (e *ReportEngine) AddBandToPreparedPages(b *band.BandBase) bool {
 	}
 	e.populateBandObjects(b, pb)
 	applyAnchorAdjustments(b, pb, 0, height-b.Height(), 0)
+	if e.curX != 0 {
+		for i := range pb.Objects {
+			pb.Objects[i].Left += e.curX
+		}
+	}
 	_ = e.preparedPages.AddBand(pb)
 	e.AdvanceY(height)
 	return true
@@ -372,6 +415,19 @@ func (e *ReportEngine) showFullBandOnce(b *band.BandBase) {
 		}
 		e.populateBandObjects(b, pb)
 		applyAnchorAdjustments(b, pb, 0, height-b.Height(), 0)
+		// Apply grow/shrink propagation shifts to PreparedObject Y positions.
+		// When a CanShrink/CanGrow object changes size, objects below it shift
+		// vertically. This mirrors FastReport's CalcHeight shift propagation.
+		if layout := calcBandLayout(b, b.Height(), e.evalText); layout.shifts != nil {
+			applyBandObjectShifts(b, pb, layout.shifts)
+		}
+		// Apply page-level column X offset so data bands in multi-column mode
+		// are rendered in their respective column positions.
+		if e.curX != 0 {
+			for i := range pb.Objects {
+				pb.Objects[i].Left += e.curX
+			}
+		}
 		_ = e.preparedPages.AddBand(pb)
 	}
 	e.AdvanceY(height)
@@ -500,4 +556,65 @@ func (e *ReportEngine) ShowDataBandRow(db *band.DataBand, rowNo, absRowNo int) {
 	}
 
 	e.ShowFullBand(&db.BandBase)
+}
+
+// applyBandObjectShifts adjusts PreparedObject Top positions to account for
+// vertical grow/shrink propagation from sibling objects in the same band.
+//
+// shifts[i] is the Y offset for source object i (computed by calcBandLayout).
+// When object i grows or shrinks, all objects below it shift by the same delta.
+// This mirrors FastReport's CalcHeight shift propagation for visual correctness.
+//
+// The function iterates source objects and PreparedObjects in parallel (same
+// order as populateBandObjects2), applying shifts[i] to the primary
+// PreparedObject for each source object.
+func applyBandObjectShifts(bb *band.BandBase, pb *preview.PreparedBand, shifts []float32) {
+	if len(shifts) == 0 {
+		return
+	}
+	objs := bb.Objects()
+	if objs == nil || objs.Len() == 0 {
+		return
+	}
+
+	// Check if any shift is non-zero.
+	hasNonZero := false
+	for _, s := range shifts {
+		if s != 0 {
+			hasNonZero = true
+			break
+		}
+	}
+	if !hasNonZero {
+		return
+	}
+
+	type hasVisible interface{ Visible() bool }
+	type hasGeom interface {
+		Top() float32
+		Height() float32
+	}
+
+	poIdx := 0
+	for i := 0; i < objs.Len() && i < len(shifts); i++ {
+		obj := objs.Get(i)
+		if poIdx >= len(pb.Objects) {
+			break
+		}
+
+		// Skip invisible objects.
+		if v, ok := obj.(hasVisible); ok && !v.Visible() {
+			continue
+		}
+
+		// Skip objects with no geometry.
+		if _, ok := obj.(hasGeom); !ok {
+			continue
+		}
+
+		if shifts[i] != 0 {
+			pb.Objects[poIdx].Top += shifts[i]
+		}
+		poIdx++
+	}
 }

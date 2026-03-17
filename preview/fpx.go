@@ -77,9 +77,12 @@ type fpxObject struct {
 	VertAlign      int
 	Border         fpxBorder
 	WordWrap       bool
-	Checked        bool
-	Duplicates     int
-	IsBarcode      bool
+	Checked         bool
+	CheckedSymbol   int
+	UncheckedSymbol int
+	CheckColor      color.RGBA
+	Duplicates      int
+	IsBarcode       bool
 	BarcodeModules [][]bool
 	HyperlinkKind  int
 	HyperlinkValue string
@@ -228,9 +231,12 @@ func encodeObjects(objs []PreparedObject) []fpxObject {
 			VertAlign:      o.VertAlign,
 			Border:         encodeBorder(o.Border),
 			WordWrap:       o.WordWrap,
-			Checked:        o.Checked,
-			Duplicates:     int(o.Duplicates),
-			IsBarcode:      o.IsBarcode,
+			Checked:         o.Checked,
+			CheckedSymbol:   int(o.CheckedSymbol),
+			UncheckedSymbol: int(o.UncheckedSymbol),
+			CheckColor:      o.CheckColor,
+			Duplicates:      int(o.Duplicates),
+			IsBarcode:       o.IsBarcode,
 			BarcodeModules: mods,
 			HyperlinkKind:  o.HyperlinkKind,
 			HyperlinkValue: o.HyperlinkValue,
@@ -377,9 +383,12 @@ func decodeObjects(src []fpxObject) []PreparedObject {
 			VertAlign:      fo.VertAlign,
 			Border:         decodeBorder(fo.Border),
 			WordWrap:       fo.WordWrap,
-			Checked:        fo.Checked,
-			Duplicates:     DuplicatesMode(fo.Duplicates),
-			IsBarcode:      fo.IsBarcode,
+			Checked:         fo.Checked,
+			CheckedSymbol:   fo.CheckedSymbol,
+			UncheckedSymbol: fo.UncheckedSymbol,
+			CheckColor:      fo.CheckColor,
+			Duplicates:      DuplicatesMode(fo.Duplicates),
+			IsBarcode:       fo.IsBarcode,
 			BarcodeModules: cloneBoolMatrix(fo.BarcodeModules),
 			HyperlinkKind:  fo.HyperlinkKind,
 			HyperlinkValue: fo.HyperlinkValue,

@@ -216,15 +216,15 @@ func TestRun_PageDimensions(t *testing.T) {
 	r := reportpkg.NewReport()
 	pg := reportpkg.NewReportPage()
 	// A4: 210×297 mm, margins 10 mm each side.
-	// Usable: 190 mm wide, 277 mm tall at 96 dpi (96/25.4 ≈ 3.7795 px/mm).
+	// Usable: 190 mm wide, 277 mm tall at 3.78 px/mm (matching C# Units.Millimeters).
 	r.AddPage(pg)
 	e := engine.New(r)
 	if err := e.Run(engine.DefaultRunOptions()); err != nil {
 		t.Fatalf("Run error: %v", err)
 	}
-	const mmPerPx = float32(96.0 / 25.4)
-	wantW := (210 - 10 - 10) * mmPerPx
-	wantH := (297 - 10 - 10) * mmPerPx
+	const mmPerPx = float32(3.78)
+	wantW := (210 - 10 - 10) * mmPerPx // 190 * 3.78 = 718.2
+	wantH := (297 - 10 - 10) * mmPerPx // 277 * 3.78 = 1047.06
 	if e.PageWidth() != wantW {
 		t.Errorf("PageWidth = %v, want %v", e.PageWidth(), wantW)
 	}

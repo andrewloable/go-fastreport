@@ -9,8 +9,9 @@ import (
 
 // Predefined colors for common use.
 var (
-	// ColorTransparent is a fully transparent black.
-	ColorTransparent = color.RGBA{R: 0, G: 0, B: 0, A: 0}
+	// ColorTransparent matches C# Color.Transparent = Color.FromArgb(0, 255, 255, 255):
+	// white with alpha=0. The RGB values are 255 to match the .NET definition.
+	ColorTransparent = color.RGBA{R: 255, G: 255, B: 255, A: 0}
 	// ColorBlack is fully opaque black.
 	ColorBlack = color.RGBA{R: 0, G: 0, B: 0, A: 255}
 	// ColorWhite is fully opaque white.
@@ -26,7 +27,8 @@ var (
 // namedColors maps .NET/CSS color names (case-insensitive) to color.RGBA.
 // These are the standard System.Drawing.Color named colors used in FRX files.
 var namedColors = map[string]color.RGBA{
-	"transparent":          {0, 0, 0, 0},
+	// C# Color.Transparent = Color.FromArgb(0, 255, 255, 255): white with alpha=0.
+	"transparent":          {255, 255, 255, 0},
 	"aliceblue":            {240, 248, 255, 255},
 	"antiquewhite":         {250, 235, 215, 255},
 	"aqua":                 {0, 255, 255, 255},

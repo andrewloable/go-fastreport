@@ -1,6 +1,6 @@
 // Package html implements an HTML export filter for go-fastreport.
 // It renders prepared pages as a single HTML document with absolute-positioned
-// elements (WYSIWYG mode), one section per page.
+// elements (WYSIWYG mode), one section per page, matching C# FastReport output.
 package html
 
 import (
@@ -18,23 +18,26 @@ import (
 
 // Exporter produces HTML output from a PreparedPages collection.
 //
-// Output structure (non-layered):
+// Output structure (matching C# FastReport HTML export):
 //
 //	<html><body>
-//	  <div class="page" …> <!-- one per page -->
-//	    <div class="band" …> … </div>
+//	  <div class="frpage-container">
+//	    <a name="PageN1" ...></a>
+//	    <div class="frpage0" ...> <!-- one per page, 0-indexed -->
+//	      <div class="sN" style="left:...;top:...;..."> <!-- objects flat, page-absolute -->
+//	        <div class="sM">text content</div>
+//	      </div>
+//	    </div>
 //	  </div>
+//	  <style>...print CSS...</style>
+//	  <style>...content CSS...</style>
 //	</body></html>
-//
-// In Layers mode, band divs are omitted. Every object is positioned
-// absolutely on the page with an explicit z-index, allowing correct
-// rendering of overlapping objects.
 type Exporter struct {
 	export.ExportBase
 
 	// Title is used as the HTML document title.
 	Title string
-	// EmbedCSS controls whether a minimal stylesheet is written inline.
+	// EmbedCSS controls whether CSS style blocks are written inline.
 	EmbedCSS bool
 	// Scale converts pixel values to CSS pixels (default 1.0).
 	Scale float32
@@ -76,12 +79,14 @@ func (e *Exporter) Start() error {
 	e.sb.Reset()
 	e.pageIdx = 0
 	e.css = newCSSRegistry()
-	e.sb.WriteString("<!DOCTYPE html>\n<html>\n<head>\n")
+	e.sb.WriteString("<!DOCTYPE HTML PUBLIC \"-//W3C//DTD HTML 4.01 Transitional//EN\">\n")
+	e.sb.WriteString("<html><head>\n")
+	e.sb.WriteString("<meta http-equiv=\"Content-Type\" content=\"text/html; charset=utf-8\">\n")
+	e.sb.WriteString("<meta name=Generator content=\"FastReport http://www.fast-report.com\">\n")
 	e.sb.WriteString(fmt.Sprintf("<title>%s</title>\n", export.HTMLString(e.Title)))
-	if e.EmbedCSS {
-		e.sb.WriteString(e.defaultCSS())
-	}
-	e.sb.WriteString("</head>\n<body>\n")
+	e.sb.WriteString("</head>\n")
+	e.sb.WriteString("<body bgcolor=\"#FFFFFF\" text=\"#000000\">\n")
+	e.sb.WriteString("<div class=\"frpage-container\">\n")
 	return nil
 }
 
@@ -92,15 +97,20 @@ func (e *Exporter) ExportPageBegin(pg *preview.PreparedPage) error {
 	}
 	w := pg.Width * scale
 	h := pg.Height * scale
+	pageW := w + 3.0*scale // C# adds +3 to page div width
 	e.zIdx = 0
+	pageN := e.pageIdx + 1
 	e.sb.WriteString(fmt.Sprintf(
-		`<div class="page" style="position:relative;width:%.2fpx;height:%.2fpx;`+
-			`overflow:hidden;margin:0 auto 20px auto;background:#fff;box-shadow:0 0 5px #aaa;">`,
-		w, h,
+		"<a name=\"PageN%d\" id=\"PageN%d\" style=\"padding:0;margin:0;font-size:1px;\"></a>",
+		pageN, pageN,
+	))
+	e.sb.WriteString(fmt.Sprintf(
+		"<div class=\"frpage%d\" style=\"position:relative; width:%.2fpx; height:%.2fpx; background-color:rgb(255, 255, 255)\">",
+		e.pageIdx, pageW, h,
 	))
 	e.sb.WriteString("\n")
 
-	// Watermark behind page content (z-index 0).
+	// Watermark behind page content.
 	if wm := pg.Watermark; wm != nil && wm.Enabled {
 		if !wm.ShowImageOnTop {
 			e.renderWatermarkImage(wm, w, h)
@@ -217,18 +227,12 @@ func (e *Exporter) ExportBand(b *preview.PreparedBand) error {
 		return nil
 	}
 
-	top := b.Top * scale
-	h := b.Height * scale
-	label := export.HTMLString(b.Name)
-	e.sb.WriteString(fmt.Sprintf(
-		`<div class="band" data-name="%s" style="position:absolute;top:%.2fpx;`+
-			`left:0;right:0;height:%.2fpx;">`,
-		label, top, h,
-	))
+	// Flat rendering: render each object with page-absolute top coordinate (no band wrappers).
 	for _, obj := range b.Objects {
-		e.renderObject(obj, scale)
+		flat := obj
+		flat.Top += b.Top
+		e.renderObject(flat, scale)
 	}
-	e.sb.WriteString("</div>\n")
 	return nil
 }
 
@@ -237,24 +241,25 @@ func (e *Exporter) ExportBand(b *preview.PreparedBand) error {
 // Each object gets a unique z-index so paint order matches band/object order.
 func (e *Exporter) renderObjectLayered(obj preview.PreparedObject, scale float32) {
 	e.zIdx++
-	// Patch the positional CSS to include z-index.
-	// We do this by temporarily wrapping renderObject with a hook.
-	// Simplest approach: render normally then add z-index via the positional override.
-	//
-	// We use a small helper that delegates to renderObject but intercepts the
-	// positional style. Since renderObject builds its own positional string
-	// internally, we use a two-pass approach: render to a temp builder, inject z-index.
+	// Render to a temp builder, then inject z-index into the first style=" attribute.
 	savedSB := e.sb
 	e.sb.Reset()
 	e.renderObject(obj, scale)
 	rendered := e.sb.String()
 	e.sb = savedSB
 
-	// Inject z-index into the first style=" block of the rendered element.
-	// The positional style always contains "position:absolute;" so we can
-	// reliably target that attribute.
+	// Inject z-index into the first style=" attribute of the rendered element.
+	// For text objects the outer div has inline style="left:...;top:...;" so we
+	// can reliably inject at the start of the first style attribute value.
+	// For non-text objects the positional string contains "position:absolute;".
 	zStyle := fmt.Sprintf("z-index:%d;", e.zIdx)
-	rendered = strings.Replace(rendered, "position:absolute;", "position:absolute;"+zStyle, 1)
+	// Try injecting after "position:absolute;" first (non-text objects).
+	if strings.Contains(rendered, "position:absolute;") {
+		rendered = strings.Replace(rendered, "position:absolute;", "position:absolute;"+zStyle, 1)
+	} else {
+		// Text objects: inject into the first style=" value.
+		rendered = strings.Replace(rendered, `style="`, `style="`+zStyle, 1)
+	}
 	e.sb.WriteString(rendered)
 }
 
@@ -277,9 +282,8 @@ func (e *Exporter) renderObject(obj preview.PreparedObject, scale float32) {
 	// Fill color.
 	if obj.FillColor.A > 0 {
 		shared.WriteString(fmt.Sprintf(
-			"background-color:rgba(%d,%d,%d,%.2f);",
-			obj.FillColor.R, obj.FillColor.G, obj.FillColor.B,
-			float32(obj.FillColor.A)/255.0,
+			"background-color:%s;",
+			rgbColor(obj.FillColor),
 		))
 	}
 
@@ -298,66 +302,109 @@ func (e *Exporter) renderObject(obj preview.PreparedObject, scale float32) {
 
 	switch obj.Kind {
 	case preview.ObjectTypeText:
-		// Build shared text-specific CSS.
-		var textCSS strings.Builder
+		// Build outer div CSS class: text-align, position info, color, background, border, size.
 		font := obj.Font
-		textCSS.WriteString(fmt.Sprintf("font-family:'%s';font-size:%.1fpt;", font.Name, font.Size))
-		if font.Style&style.FontStyleBold != 0 {
-			textCSS.WriteString("font-weight:bold;")
-		}
-		if font.Style&style.FontStyleItalic != 0 {
-			textCSS.WriteString("font-style:italic;")
-		}
-		if font.Style&style.FontStyleUnderline != 0 {
-			textCSS.WriteString("text-decoration:underline;")
-		}
-		tc := obj.TextColor
-		textCSS.WriteString(fmt.Sprintf("color:rgba(%d,%d,%d,%.2f);", tc.R, tc.G, tc.B, float32(tc.A)/255.0))
+		// Convert font size from pt to px (96dpi / 72pt = 1.3333...) to match C# output.
+		fontPx := font.Size * 96.0 / 72.0
+		lineH := fontPx * 1.21 // approximate line height
+
+		var outerCSS strings.Builder
+		// text-align
 		switch obj.HorzAlign {
 		case 1:
-			textCSS.WriteString("text-align:center;")
+			outerCSS.WriteString("text-align:center;")
 		case 2:
-			textCSS.WriteString("text-align:right;")
+			outerCSS.WriteString("text-align:right;")
 		case 3:
-			textCSS.WriteString("text-align:justify;")
+			outerCSS.WriteString("text-align:justify;")
 		default:
-			textCSS.WriteString("text-align:left;")
+			outerCSS.WriteString("text-align:left;")
 		}
-		switch obj.VertAlign {
-		case 1:
-			textCSS.WriteString("display:flex;align-items:center;")
-			// When both vert-center and horz-center, use justify-content too.
-			switch obj.HorzAlign {
-			case 1:
-				textCSS.WriteString("justify-content:center;")
-			case 2:
-				textCSS.WriteString("justify-content:flex-end;")
-			}
-		case 2:
-			textCSS.WriteString("display:flex;align-items:flex-end;")
-			switch obj.HorzAlign {
-			case 1:
-				textCSS.WriteString("justify-content:center;")
-			case 2:
-				textCSS.WriteString("justify-content:flex-end;")
-			}
-		}
-		if obj.WordWrap {
-			textCSS.WriteString("word-wrap:break-word;white-space:normal;")
+		outerCSS.WriteString("position:absolute;")
+		tc := obj.TextColor
+		outerCSS.WriteString(fmt.Sprintf("color:%s;", rgbColor(tc)))
+		fc := obj.FillColor
+		if fc.A > 0 {
+			outerCSS.WriteString(fmt.Sprintf("background-color:%s;", rgbColor(fc)))
 		} else {
-			textCSS.WriteString("white-space:nowrap;")
+			outerCSS.WriteString("background-color:transparent;")
 		}
+		// Border from shared CSS (or border:none if no border)
+		borderStr := borderCSS(&obj.Border, scale)
+		if borderStr != "" {
+			outerCSS.WriteString(borderStr)
+		} else {
+			outerCSS.WriteString("border:none;")
+		}
+		outerCSS.WriteString(fmt.Sprintf("width:%.2fpx;height:%.2fpx;", w, h))
 
-		innerText := export.HTMLString(obj.Text)
-		// Preserve line breaks: convert \r\n and \n to <br> tags.
-		innerText = strings.ReplaceAll(innerText, "\r\n", "<br>")
-		innerText = strings.ReplaceAll(innerText, "\n", "<br>")
-		if obj.HyperlinkKind == 1 && obj.HyperlinkValue != "" {
-			// Wrap content in an anchor tag for URL hyperlinks.
-			innerText = fmt.Sprintf(`<a href="%s" target="_blank" style="color:inherit;text-decoration:inherit;">%s</a>`,
-				export.HTMLString(obj.HyperlinkValue), innerText)
+		outerClass := e.css.Register(outerCSS.String())
+
+		// Build inner div CSS class: font, display, width, padding, vertical alignment.
+		var innerCSS strings.Builder
+		if font.Style&style.FontStyleBold != 0 {
+			innerCSS.WriteString("font-weight:bold;")
 		}
-		e.sb.WriteString(fmt.Sprintf(`<div %s>%s</div>`, styleAttr(textCSS.String()), innerText))
+		if font.Style&style.FontStyleItalic != 0 {
+			innerCSS.WriteString("font-style:italic;")
+		}
+		if font.Style&style.FontStyleUnderline != 0 {
+			innerCSS.WriteString("text-decoration:underline;")
+		}
+		innerCSS.WriteString(fmt.Sprintf("font-family:'%s';font-size:%.2fpx;line-height:%.2f;", font.Name, fontPx, 1.21))
+		if obj.WordWrap {
+			innerCSS.WriteString("word-wrap:break-word;white-space:normal;")
+		} else {
+			innerCSS.WriteString("white-space:nowrap;")
+		}
+		innerCSS.WriteString("overflow:hidden;")
+
+		// Vertical alignment via display:flex + align-items, or margin-top.
+		switch obj.VertAlign {
+		case 1: // center
+			innerCSS.WriteString("display:flex;align-items:center;")
+			switch obj.HorzAlign {
+			case 1:
+				innerCSS.WriteString("justify-content:center;")
+			case 2:
+				innerCSS.WriteString("justify-content:flex-end;")
+			}
+		case 2: // bottom
+			innerCSS.WriteString("display:flex;align-items:flex-end;")
+			switch obj.HorzAlign {
+			case 1:
+				innerCSS.WriteString("justify-content:center;")
+			case 2:
+				innerCSS.WriteString("justify-content:flex-end;")
+			}
+		default: // top (0)
+			// Compute inner width (subtract padding if available; padding not in PreparedObject, use full width).
+			innerW := w
+			innerCSS.WriteString(fmt.Sprintf("display:block;border:0;width:%.2fpx;", innerW))
+		}
+		_ = lineH // used for future paragraph height calculations
+
+		innerClass := e.css.Register(innerCSS.String())
+
+		// Format text content: use <p> tags for line breaks.
+		innerText := export.HTMLString(obj.Text)
+		innerText = formatTextParagraphs(innerText)
+
+		// Outer div style: positional (left, top, width, height).
+		outerStyle := fmt.Sprintf("left:%.2fpx;top:%.2fpx;width:%.2fpx;height:%.2fpx;", left, top, w, h)
+
+		// Hyperlink wrapping (px00): wrap entire div with outer <a> tag.
+		if obj.HyperlinkKind == 1 && obj.HyperlinkValue != "" {
+			linkColor := rgbColor(tc)
+			e.sb.WriteString(fmt.Sprintf(`<a style="color:%s" href="%s" target="_blank">`, linkColor, export.HTMLString(obj.HyperlinkValue)))
+			e.sb.WriteString(fmt.Sprintf(`<div class="%s" style="cursor:pointer;%s">`, outerClass, outerStyle))
+			e.sb.WriteString(fmt.Sprintf(`<div class="%s">%s</div>`, innerClass, innerText))
+			e.sb.WriteString("</div></a>")
+		} else {
+			e.sb.WriteString(fmt.Sprintf(`<div class="%s" style="%s">`, outerClass, outerStyle))
+			e.sb.WriteString(fmt.Sprintf(`<div class="%s">%s</div>`, innerClass, innerText))
+			e.sb.WriteString("</div>")
+		}
 
 	case preview.ObjectTypeHtml:
 		// Emit raw HTML markup inside a positioned container div.
@@ -372,12 +419,20 @@ func (e *Exporter) renderObject(obj preview.PreparedObject, scale float32) {
 	case preview.ObjectTypePicture:
 		if obj.BlobIdx >= 0 && e.pp != nil {
 			if data := e.pp.BlobStore.Get(obj.BlobIdx); len(data) > 0 {
-				mime := imageMIME(data)
-				encoded := base64.StdEncoding.EncodeToString(data)
-				e.sb.WriteString(fmt.Sprintf(
-					`<div %s><img src="data:%s;base64,%s" style="width:100%%;height:100%%;object-fit:contain;" alt=""></div>`,
-					styleAttr(""), mime, encoded,
-				))
+				// Register a CSS class for this image keyed by blob index so
+				// identical images reuse the same class (matching C# pattern).
+				classKey := fmt.Sprintf("img%d", obj.BlobIdx)
+				if !e.css.HasClass(classKey) {
+					mime := imageMIMEForCSS(data)
+					encoded := base64.StdEncoding.EncodeToString(data)
+					e.css.RegisterClass(classKey, fmt.Sprintf(
+						"background: url('data:%s;base64,%s') no-repeat !important;-webkit-print-color-adjust:exact;",
+						mime, encoded,
+					))
+				}
+				// Two overlapping divs: border div + image overlay div (C# pattern).
+				e.sb.WriteString(fmt.Sprintf(`<div %s>&nbsp;</div>`, styleAttr("border:none;")))
+				e.sb.WriteString(fmt.Sprintf(`<div class="%s" %s>&nbsp;</div>`, classKey, styleAttr("")))
 				break
 			}
 		}
@@ -453,14 +508,88 @@ func (e *Exporter) renderObject(obj preview.PreparedObject, scale float32) {
 		e.sb.WriteString(fmt.Sprintf(`<div %s><span>%s</span></div>`, styleAttr(sigExtra), export.HTMLString(label)))
 
 	case preview.ObjectTypeCheckBox:
-		checked := ""
-		if obj.Text == "true" {
-			checked = " checked"
+		// Determine which symbol to draw.
+		symbol := -1 // none
+		if obj.Checked {
+			symbol = obj.CheckedSymbol // 0=check, 1=cross, 2=plus, 3=fill
+		} else {
+			switch obj.UncheckedSymbol {
+			case 0: // None — just the box, no symbol
+			case 1:
+				symbol = 1 // cross
+			case 2:
+				symbol = 10 // minus
+			case 3:
+				symbol = 11 // slash
+			case 4:
+				symbol = 12 // backslash
+			}
 		}
-		e.sb.WriteString(fmt.Sprintf(
-			`<div %s><input type="checkbox"%s disabled style="margin:auto;"></div>`,
-			styleAttr(""), checked,
-		))
+
+		// Get check color; default to opaque black.
+		cc := obj.CheckColor
+		if cc.A == 0 {
+			cc = color.RGBA{A: 255}
+		}
+		strokeColor := fmt.Sprintf("rgb(%d,%d,%d)", cc.R, cc.G, cc.B)
+
+		e.sb.WriteString(fmt.Sprintf(`<div %s>`, styleAttr("")))
+		e.sb.WriteString(fmt.Sprintf(`<svg width="%.2f" height="%.2f" style="position:absolute;top:0;left:0;width:100%%;height:100%%;">`, w, h))
+
+		switch symbol {
+		case 0: // checkmark ✓
+			e.sb.WriteString(fmt.Sprintf(
+				`<polyline points="%.2f,%.2f %.2f,%.2f %.2f,%.2f" stroke="%s" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>`,
+				w*0.15, h*0.5,
+				w*0.4, h*0.75,
+				w*0.85, h*0.25,
+				strokeColor,
+			))
+		case 1: // cross ✗
+			e.sb.WriteString(fmt.Sprintf(
+				`<line x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f" stroke="%s" stroke-width="2"/>`,
+				w*0.2, h*0.2, w*0.8, h*0.8, strokeColor,
+			))
+			e.sb.WriteString(fmt.Sprintf(
+				`<line x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f" stroke="%s" stroke-width="2"/>`,
+				w*0.8, h*0.2, w*0.2, h*0.8, strokeColor,
+			))
+		case 2: // plus +
+			e.sb.WriteString(fmt.Sprintf(
+				`<line x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f" stroke="%s" stroke-width="2"/>`,
+				w*0.5, h*0.15, w*0.5, h*0.85, strokeColor,
+			))
+			e.sb.WriteString(fmt.Sprintf(
+				`<line x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f" stroke="%s" stroke-width="2"/>`,
+				w*0.15, h*0.5, w*0.85, h*0.5, strokeColor,
+			))
+		case 3: // fill — filled rectangle
+			fc := obj.CheckColor
+			if fc.A == 0 {
+				fc = color.RGBA{A: 255}
+			}
+			e.sb.WriteString(fmt.Sprintf(
+				`<rect x="%.2f" y="%.2f" width="%.2f" height="%.2f" fill="rgb(%d,%d,%d)"/>`,
+				w*0.1, h*0.1, w*0.8, h*0.8, fc.R, fc.G, fc.B,
+			))
+		case 10: // minus
+			e.sb.WriteString(fmt.Sprintf(
+				`<line x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f" stroke="%s" stroke-width="2"/>`,
+				w*0.2, h*0.5, w*0.8, h*0.5, strokeColor,
+			))
+		case 11: // slash
+			e.sb.WriteString(fmt.Sprintf(
+				`<line x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f" stroke="%s" stroke-width="2"/>`,
+				w*0.2, h*0.8, w*0.8, h*0.2, strokeColor,
+			))
+		case 12: // backslash
+			e.sb.WriteString(fmt.Sprintf(
+				`<line x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f" stroke="%s" stroke-width="2"/>`,
+				w*0.2, h*0.2, w*0.8, h*0.8, strokeColor,
+			))
+		}
+
+		e.sb.WriteString(`</svg></div>`)
 
 	case preview.ObjectTypePolyLine, preview.ObjectTypePolygon:
 		if len(obj.Points) < 2 {
@@ -567,40 +696,83 @@ func (e *Exporter) ExportPageEnd(pg *preview.PreparedPage) error {
 			e.renderWatermarkText(wm, w, h)
 		}
 	}
-	e.sb.WriteString("</div>\n") // close .page
+	e.sb.WriteString("</div>\n") // close frpage{n}
 	return nil
 }
 
 func (e *Exporter) Finish() error {
-	// Inject collected CSS classes before closing body.
-	if e.css != nil {
-		e.sb.WriteString(e.css.StyleBlock())
+	// Close frpage-container div.
+	e.sb.WriteString("</div>\n")
+
+	// Emit CSS blocks before closing body.
+	if e.EmbedCSS && e.css != nil {
+		// Print CSS block (for page breaks).
+		printCSS := e.buildPrintCSS()
+		if printCSS != "" {
+			e.sb.WriteString(printCSS)
+		}
+		// Content CSS block (s0..sN classes).
+		if block := e.css.StyleBlock(); block != "" {
+			e.sb.WriteString(block)
+		}
 	}
 	e.sb.WriteString("</body>\n</html>\n")
 	_, err := io.WriteString(e.w, e.sb.String())
 	return err
 }
 
-// ── CSS helper ─────────────────────────────────────────────────────────────────
-
-func (e *Exporter) defaultCSS() string {
-	return `<style>
-* { box-sizing: border-box; margin: 0; padding: 0; }
-body { background: #e0e0e0; font-family: Arial, sans-serif; }
-.page { page-break-after: always; }
-.band { font-size: 12px; }
-@media print {
-  body { background: none; }
-  .page { box-shadow: none; margin: 0; page-break-after: always; }
-}
-</style>
-`
+// buildPrintCSS generates the print media CSS block for page break rules.
+func (e *Exporter) buildPrintCSS() string {
+	if e.pageIdx == 0 {
+		return ""
+	}
+	var sb strings.Builder
+	sb.WriteString("<style type=\"text/css\" media=\"print\"><!--\n")
+	for i := 0; i < e.pageIdx; i++ {
+		sb.WriteString(fmt.Sprintf("div.frpage%d { break-after: always; page-break-inside: avoid; }\n", i))
+	}
+	sb.WriteString(" @page { size: portrait; margin: 0; }-->")
+	sb.WriteString("</style>\n")
+	return sb.String()
 }
 
 // HTML returns the complete HTML string that would be written.
 // Useful for testing. Call after Export has been called.
 func (e *Exporter) HTML() string {
 	return e.sb.String()
+}
+
+// ── CSS helpers ─────────────────────────────────────────────────────────────────
+
+// rgbColor returns "rgb(R, G, B)" for fully opaque colors and "rgba(R, G, B, A)" for semi-transparent ones.
+func rgbColor(c color.RGBA) string {
+	if c.A == 255 {
+		return fmt.Sprintf("rgb(%d, %d, %d)", c.R, c.G, c.B)
+	}
+	return fmt.Sprintf("rgba(%d, %d, %d, %.2f)", c.R, c.G, c.B, float32(c.A)/255.0)
+}
+
+// formatTextParagraphs converts plain text line breaks to HTML paragraph tags.
+// Each line break becomes <p style="margin-top:0px;margin-bottom:0px;"></p>.
+func formatTextParagraphs(htmlText string) string {
+	// Split on newlines (normalize \r\n first).
+	normalized := strings.ReplaceAll(htmlText, "\r\n", "\n")
+	lines := strings.Split(normalized, "\n")
+	if len(lines) == 1 {
+		// Single line: add trailing paragraph for C# compatibility.
+		return htmlText + `<p style="margin-top:0px;margin-bottom:0px;"></p>`
+	}
+	var sb strings.Builder
+	for i, line := range lines {
+		sb.WriteString(line)
+		if i < len(lines)-1 {
+			sb.WriteString(`<p style="margin-top:0px;margin-bottom:0px;"></p>`)
+		} else if line != "" {
+			// Last non-empty line: trailing paragraph.
+			sb.WriteString(`<p style="margin-top:0px;margin-bottom:0px;"></p>`)
+		}
+	}
+	return sb.String()
 }
 
 // borderCSS converts a style.Border into CSS border/box-shadow declarations.
@@ -662,6 +834,34 @@ func borderCSS(b *style.Border, scale float32) string {
 	return sb.String()
 }
 
+// imageMIMEForCSS detects the MIME type from image magic bytes and returns the
+// capitalized form used by C# FastReport (e.g. "image/Png", "image/Jpeg").
+// Falls back to "image/Png" for unknown formats.
+func imageMIMEForCSS(data []byte) string {
+	if len(data) >= 3 {
+		switch {
+		case data[0] == 0xFF && data[1] == 0xD8:
+			return "image/Jpeg"
+		case data[0] == 0x47 && data[1] == 0x49 && data[2] == 0x46:
+			return "image/Gif"
+		case len(data) >= 4 && data[0] == 0x42 && data[1] == 0x4D:
+			return "image/Bmp"
+		case len(data) >= 4 && data[0] == 0x49 && data[1] == 0x49 && data[2] == 0x2A:
+			return "image/Tiff"
+		case len(data) >= 4 && data[0] == 0x4D && data[1] == 0x4D && data[2] == 0x00:
+			return "image/Tiff"
+		}
+	}
+	// Check for SVG (text-based).
+	if len(data) > 4 {
+		s := string(data[:min(len(data), 64)])
+		if strings.Contains(s, "<svg") || strings.Contains(s, "<?xml") {
+			return "image/svg+xml"
+		}
+	}
+	return "image/Png" // default / PNG magic is 8 bytes, assume png
+}
+
 // imageMIME detects the MIME type from image magic bytes.
 // Falls back to "image/png" for unknown formats.
 func imageMIME(data []byte) string {
@@ -688,4 +888,3 @@ func imageMIME(data []byte) string {
 	}
 	return "image/png" // default / PNG magic is 8 bytes, assume png
 }
-

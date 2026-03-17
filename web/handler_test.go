@@ -56,8 +56,9 @@ func TestHTMLHandler_StatusOK(t *testing.T) {
 func TestHTMLHandler_BodyContainsDoctype(t *testing.T) {
 	h := web.HTMLHandler(buildPages(1))
 	rec := get(h, "/report.html")
-	if !strings.Contains(rec.Body.String(), "<!DOCTYPE html>") {
-		t.Error("HTML body should contain DOCTYPE")
+	// New format uses HTML 4.01 DOCTYPE (matching C# FastReport).
+	if !strings.Contains(rec.Body.String(), "<!DOCTYPE HTML PUBLIC") {
+		t.Error("HTML body should contain HTML 4.01 DOCTYPE")
 	}
 }
 
@@ -74,7 +75,7 @@ func TestHTMLHandler_WithEmbedCSS(t *testing.T) {
 	rec := get(h, "/")
 	body := rec.Body.String()
 	// Without embedded CSS there should be no <style> block.
-	if strings.Contains(body, "<style>") {
+	if strings.Contains(body, "<style") {
 		t.Error("should not embed CSS when WithEmbedCSS(false)")
 	}
 }

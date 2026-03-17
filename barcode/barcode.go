@@ -31,22 +31,34 @@ import (
 type BarcodeType string
 
 const (
-	BarcodeTypeCode128    BarcodeType = "Code128"
-	BarcodeTypeCode39     BarcodeType = "Code39"
-	BarcodeTypeCode93     BarcodeType = "Code93"
-	BarcodeTypeCode2of5   BarcodeType = "2of5"
-	BarcodeTypeCodabar    BarcodeType = "Codabar"
-	BarcodeTypeEAN13      BarcodeType = "EAN13"
-	BarcodeTypeEAN8       BarcodeType = "EAN8"
-	BarcodeTypeUPCA       BarcodeType = "UPCA"
-	BarcodeTypeUPCE       BarcodeType = "UPCE"
-	BarcodeTypeMSI        BarcodeType = "MSI"
-	BarcodeTypeQR         BarcodeType = "QR"
-	BarcodeTypeDataMatrix BarcodeType = "DataMatrix"
-	BarcodeTypeAztec      BarcodeType = "Aztec"
-	BarcodeTypeMaxiCode   BarcodeType = "MaxiCode"
-	BarcodeTypePDF417     BarcodeType = "PDF417"
-	BarcodeTypeGS1_128    BarcodeType = "GS1-128"
+	BarcodeTypeCode128              BarcodeType = "Code128"
+	BarcodeTypeCode128A             BarcodeType = "Code128A"
+	BarcodeTypeCode128B             BarcodeType = "Code128B"
+	BarcodeTypeCode128C             BarcodeType = "Code128C"
+	BarcodeTypeCode39               BarcodeType = "Code39"
+	BarcodeTypeCode93               BarcodeType = "Code93"
+	BarcodeTypeCode93Extended       BarcodeType = "Code93Extended"
+	BarcodeTypeCode2of5             BarcodeType = "2of5"
+	BarcodeTypeCode2of5Industrial   BarcodeType = "2of5Industrial"
+	BarcodeTypeCode2of5Matrix       BarcodeType = "2of5Matrix"
+	BarcodeTypeCodabar              BarcodeType = "Codabar"
+	BarcodeTypeEAN13                BarcodeType = "EAN13"
+	BarcodeTypeEAN8                 BarcodeType = "EAN8"
+	BarcodeTypeUPCA                 BarcodeType = "UPCA"
+	BarcodeTypeUPCE                 BarcodeType = "UPCE"
+	BarcodeTypeMSI                  BarcodeType = "MSI"
+	BarcodeTypeQR                   BarcodeType = "QR"
+	BarcodeTypeDataMatrix           BarcodeType = "DataMatrix"
+	BarcodeTypeAztec                BarcodeType = "Aztec"
+	BarcodeTypeMaxiCode             BarcodeType = "MaxiCode"
+	BarcodeTypePDF417               BarcodeType = "PDF417"
+	BarcodeTypeGS1_128              BarcodeType = "GS1-128"
+	BarcodeTypeITF14                BarcodeType = "ITF14"
+	BarcodeTypeDeutscheIdentcode    BarcodeType = "DeutscheIdentcode"
+	BarcodeTypeDeutscheLeitcode     BarcodeType = "DeutscheLeitcode"
+	BarcodeTypeSupplement2          BarcodeType = "Supplement2"
+	BarcodeTypeSupplement5          BarcodeType = "Supplement5"
+	BarcodeTypeJapanPost4State      BarcodeType = "JapanPost4State"
 )
 
 // -----------------------------------------------------------------------
@@ -674,22 +686,40 @@ func NewBarcodeByType(t BarcodeType) BarcodeBase {
 	switch t {
 	case BarcodeTypeCode128:
 		return NewCode128Barcode()
+	case BarcodeTypeCode128A:
+		return NewCode128ABarcode()
+	case BarcodeTypeCode128B:
+		return NewCode128BBarcode()
+	case BarcodeTypeCode128C:
+		return NewCode128CBarcode()
 	case BarcodeTypeGS1_128:
 		return NewGS1Barcode()
 	case BarcodeTypeCode39:
 		return NewCode39Barcode()
 	case BarcodeTypeQR:
 		return NewQRBarcode()
-	case BarcodeTypeEAN13, BarcodeTypeEAN8, BarcodeTypeUPCA, BarcodeTypeUPCE:
+	case BarcodeTypeEAN13:
 		return NewEAN13Barcode()
+	case BarcodeTypeEAN8:
+		return NewEAN8Barcode()
+	case BarcodeTypeUPCA:
+		return NewUPCABarcode()
+	case BarcodeTypeUPCE:
+		return NewUPCEBarcode()
 	case BarcodeTypeAztec:
 		return NewAztecBarcode()
 	case BarcodeTypePDF417:
 		return NewPDF417Barcode()
 	case BarcodeTypeCode93:
 		return NewCode93Barcode()
+	case BarcodeTypeCode93Extended:
+		return NewCode93ExtendedBarcode()
 	case BarcodeTypeCode2of5:
 		return NewCode2of5Barcode()
+	case BarcodeTypeCode2of5Industrial:
+		return NewCode2of5IndustrialBarcode()
+	case BarcodeTypeCode2of5Matrix:
+		return NewCode2of5MatrixBarcode()
 	case BarcodeTypeCodabar:
 		return NewCodabarBarcode()
 	case BarcodeTypeDataMatrix:
@@ -708,6 +738,18 @@ func NewBarcodeByType(t BarcodeType) BarcodeBase {
 		return NewPostNetBarcode()
 	case BarcodeTypeSwissQR:
 		return NewSwissQRBarcode()
+	case BarcodeTypeITF14:
+		return NewITF14Barcode()
+	case BarcodeTypeDeutscheIdentcode:
+		return NewDeutscheIdentcodeBarcode()
+	case BarcodeTypeDeutscheLeitcode:
+		return NewDeutscheLeitcodeBarcode()
+	case BarcodeTypeSupplement2:
+		return NewSupplement2Barcode()
+	case BarcodeTypeSupplement5:
+		return NewSupplement5Barcode()
+	case BarcodeTypeJapanPost4State:
+		return NewJapanPost4StateBarcode()
 	default:
 		return NewCode128Barcode()
 	}
@@ -716,43 +758,46 @@ func NewBarcodeByType(t BarcodeType) BarcodeBase {
 // barcodeDisplayNames maps FRX display names (as used by FastReport .NET in the
 // Barcode="..." attribute) to internal BarcodeType constants.
 var barcodeDisplayNames = map[string]BarcodeType{
-	"2/5 Interleaved":                  BarcodeTypeCode2of5,
-	"2/5 Industrial":                   BarcodeTypeCode2of5,
-	"2/5 Matrix":                       BarcodeTypeCode2of5,
-	"Codabar":                          BarcodeTypeCodabar,
-	"Code128":                          BarcodeTypeCode128,
-	"Code39":                           BarcodeTypeCode39,
-	"Code39 Extended":                  BarcodeTypeCode39,
-	"Code93":                           BarcodeTypeCode93,
-	"Code93 Extended":                  BarcodeTypeCode93,
-	"EAN8":                             BarcodeTypeEAN8,
-	"EAN13":                            BarcodeTypeEAN13,
-	"MSI":                              BarcodeTypeMSI,
-	"PostNet":                          BarcodeTypePostNet,
-	"UPC-A":                            BarcodeTypeUPCA,
-	"UPC-E0":                           BarcodeTypeUPCE,
-	"UPC-E1":                           BarcodeTypeUPCE,
-	"PDF417":                           BarcodeTypePDF417,
-	"Datamatrix":                       BarcodeTypeDataMatrix,
-	"QR Code":                          BarcodeTypeQR,
-	"Aztec":                            BarcodeTypeAztec,
-	"Plessey":                          BarcodeTypePlessey,
-	"GS1-128 (UCC/EAN-128)":            BarcodeTypeGS1_128,
-	"Pharmacode":                       BarcodeTypePharmacode,
-	"Intelligent Mail (USPS)":          BarcodeTypeIntelligentMail,
-	"MaxiCode":                         BarcodeTypeMaxiCode,
-	"ITF-14":                           BarcodeTypeCode2of5,
-	"Deutsche Identcode":               BarcodeTypeCode2of5,
-	"Deutsche Leitcode":                BarcodeTypeCode2of5,
-	"Japan Post 4 State Code":          BarcodeTypePostNet,
-	"Supplement 2":                     BarcodeTypeEAN13,
-	"Supplement 5":                     BarcodeTypeEAN13,
-	"GS1 DataBar Omnidirectional":      BarcodeTypeCode128,
-	"GS1 DataBar Limited":              BarcodeTypeCode128,
-	"GS1 DataBar Stacked":              BarcodeTypeCode128,
+	"2/5 Interleaved":                     BarcodeTypeCode2of5,
+	"2/5 Industrial":                      BarcodeTypeCode2of5Industrial,
+	"2/5 Matrix":                          BarcodeTypeCode2of5Matrix,
+	"Codabar":                             BarcodeTypeCodabar,
+	"Code128":                             BarcodeTypeCode128,
+	"Code128 A":                           BarcodeTypeCode128A,
+	"Code128 B":                           BarcodeTypeCode128B,
+	"Code128 C":                           BarcodeTypeCode128C,
+	"Code39":                              BarcodeTypeCode39,
+	"Code39 Extended":                     BarcodeTypeCode39,
+	"Code93":                              BarcodeTypeCode93,
+	"Code93 Extended":                     BarcodeTypeCode93Extended,
+	"EAN8":                                BarcodeTypeEAN8,
+	"EAN13":                               BarcodeTypeEAN13,
+	"MSI":                                 BarcodeTypeMSI,
+	"PostNet":                             BarcodeTypePostNet,
+	"UPC-A":                               BarcodeTypeUPCA,
+	"UPC-E0":                              BarcodeTypeUPCE,
+	"UPC-E1":                              BarcodeTypeUPCE,
+	"PDF417":                              BarcodeTypePDF417,
+	"Datamatrix":                          BarcodeTypeDataMatrix,
+	"QR Code":                             BarcodeTypeQR,
+	"Aztec":                               BarcodeTypeAztec,
+	"Plessey":                             BarcodeTypePlessey,
+	"GS1-128 (UCC/EAN-128)":               BarcodeTypeGS1_128,
+	"Pharmacode":                          BarcodeTypePharmacode,
+	"Intelligent Mail (USPS)":             BarcodeTypeIntelligentMail,
+	"MaxiCode":                            BarcodeTypeMaxiCode,
+	"ITF-14":                              BarcodeTypeITF14,
+	"Deutsche Identcode":                  BarcodeTypeDeutscheIdentcode,
+	"Deutsche Leitcode":                   BarcodeTypeDeutscheLeitcode,
+	"Japan Post 4 State Code":             BarcodeTypeJapanPost4State,
+	"Supplement 2":                        BarcodeTypeSupplement2,
+	"Supplement 5":                        BarcodeTypeSupplement5,
+	"GS1 DataBar Omnidirectional":         BarcodeTypeCode128,
+	"GS1 DataBar Limited":                 BarcodeTypeCode128,
+	"GS1 DataBar Stacked":                 BarcodeTypeCode128,
 	"GS1 DataBar Stacked Omnidirectional": BarcodeTypeCode128,
-	"GS1 Datamatrix":                   BarcodeTypeDataMatrix,
-	"SwissQR":                          BarcodeTypeSwissQR,
+	"GS1 Datamatrix":                      BarcodeTypeDataMatrix,
+	"SwissQR":                             BarcodeTypeSwissQR,
 }
 
 // NewBarcodeByName constructs a BarcodeBase from an FRX display name

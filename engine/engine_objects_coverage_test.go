@@ -126,6 +126,112 @@ func TestBuildPreparedObject_CellularTextObject(t *testing.T) {
 	runReport(t, r)
 }
 
+// TestCellularTextObject_CharacterGrid verifies that the engine expands a
+// CellularTextObject into individual PreparedObject character cells.
+// With explicitly set CellWidth=28 and HorzSpacing=2 the grid will have
+// colCount = int((84+2+1)/(28+2)) = int(87/30) = 2 columns.
+// Text "AB" should produce exactly 2 character cells (one per column) plus
+// the bounding-box shape object — 3 objects total in the band.
+func TestCellularTextObject_CharacterGrid(t *testing.T) {
+	r, hdr, pg := newCoveragePageHeader(t)
+	obj := object.NewCellularTextObject()
+	obj.SetName("CG1")
+	obj.SetLeft(10)
+	obj.SetTop(5)
+	// Width=84, CellWidth=28, HorzSpacing=2 → colCount = int((84+2+1)/(28+2)) = 2
+	obj.SetWidth(84)
+	obj.SetHeight(28)
+	obj.SetCellWidth(28)
+	obj.SetCellHeight(28)
+	obj.SetHorzSpacing(2)
+	obj.SetVisible(true)
+	obj.SetText("AB")
+	hdr.Objects().Add(obj)
+	pg.SetPageHeader(hdr)
+	r.AddPage(pg)
+	e := runReport(t, r)
+
+	pp := e.PreparedPages()
+	if pp.Count() == 0 {
+		t.Fatal("no prepared pages")
+	}
+	pg0 := pp.GetPage(0)
+	if len(pg0.Bands) == 0 {
+		t.Fatal("no bands on page 0")
+	}
+	// Find the band containing CG1 objects.
+	var objs []interface{ GetName() string }
+	_ = objs
+	var found []string
+	for _, b := range pg0.Bands {
+		for _, po := range b.Objects {
+			if po.Name == "CG1" || (len(po.Name) > 3 && po.Name[:3] == "CG1") {
+				found = append(found, po.Name+":"+po.Text)
+			}
+		}
+	}
+	// Expect the bounding-box shape (Name="CG1") plus 2 character cells.
+	if len(found) < 3 {
+		t.Errorf("expected >=3 PreparedObjects for CG1 (1 shape + 2 cells), got %d: %v", len(found), found)
+	}
+}
+
+// TestCellularTextObject_HorzAlignRight verifies right-aligned text places
+// characters at the end columns of the grid.
+func TestCellularTextObject_HorzAlignRight(t *testing.T) {
+	r, hdr, pg := newCoveragePageHeader(t)
+	obj := object.NewCellularTextObject()
+	obj.SetName("CR1")
+	obj.SetLeft(0)
+	obj.SetTop(0)
+	// Width=84, CellWidth=28, HorzSpacing=2 → 2 columns
+	// Text "A" (1 char) right-aligned in 2 cols → offset = 2-1 = 1, so col[1]="A"
+	obj.SetWidth(84)
+	obj.SetHeight(28)
+	obj.SetCellWidth(28)
+	obj.SetCellHeight(28)
+	obj.SetHorzSpacing(2)
+	obj.SetHorzAlign(object.HorzAlignRight)
+	obj.SetVisible(true)
+	obj.SetText("A")
+	hdr.Objects().Add(obj)
+	pg.SetPageHeader(hdr)
+	r.AddPage(pg)
+	e := runReport(t, r)
+
+	pp := e.PreparedPages()
+	if pp.Count() == 0 {
+		t.Fatal("no prepared pages")
+	}
+	pg0 := pp.GetPage(0)
+	// Collect cell objects (name starts with "CR1_")
+	type cellInfo struct{ col int; text string }
+	var cells []cellInfo
+	for _, b := range pg0.Bands {
+		for _, po := range b.Objects {
+			if len(po.Name) >= 5 && po.Name[:4] == "CR1_" {
+				// Determine column from Left position.
+				// cellLeft = originX + col*(cellW+horzSpacing) = 0 + col*30
+				col := int(po.Left / 30)
+				cells = append(cells, cellInfo{col, po.Text})
+			}
+		}
+	}
+	// With right-align and 1 character in 2 columns, col 0 = "", col 1 = "A"
+	foundCharInCol1 := false
+	for _, c := range cells {
+		if c.col == 1 && c.text == "A" {
+			foundCharInCol1 = true
+		}
+		if c.col == 0 && c.text != "" {
+			t.Errorf("right-aligned: expected col 0 to be empty, got %q", c.text)
+		}
+	}
+	if !foundCharInCol1 {
+		t.Errorf("right-aligned: expected 'A' in col 1, cells=%v", cells)
+	}
+}
+
 // ── ZipCodeObject in band ────────────────────────────────────────────────────
 
 func TestBuildPreparedObject_ZipCodeObject(t *testing.T) {

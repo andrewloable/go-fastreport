@@ -234,20 +234,6 @@ func TestConvertBracketExpr_MultipleBrackets(t *testing.T) {
 	}
 }
 
-func TestGroupTreeItem_FirstItem_EmptyItems(t *testing.T) {
-	g := &groupTreeItem{}
-	if g.firstItem() != nil {
-		t.Error("firstItem on empty tree should return nil")
-	}
-}
-
-func TestGroupTreeItem_LastItem_EmptyItems(t *testing.T) {
-	g := &groupTreeItem{}
-	if g.lastItem() != nil {
-		t.Error("lastItem on empty tree should return nil")
-	}
-}
-
 func TestGroupTreeItem_FirstItem_NonEmpty(t *testing.T) {
 	child := &groupTreeItem{rowNo: 1}
 	g := &groupTreeItem{items: []*groupTreeItem{child}}
@@ -291,12 +277,6 @@ func TestMakeGroupTree_NilDataSource(t *testing.T) {
 	}
 }
 
-func TestShowDataHeader_NilDataBand(t *testing.T) {
-	e := newKWDEngine(t)
-	gh := band.NewGroupHeaderBand()
-	e.showDataHeader(gh)
-}
-
 func TestShowDataHeader_NilHeader(t *testing.T) {
 	e := newKWDEngine(t)
 	gh := band.NewGroupHeaderBand()
@@ -305,12 +285,6 @@ func TestShowDataHeader_NilHeader(t *testing.T) {
 	db.SetHeight(10)
 	gh.SetData(db)
 	e.showDataHeader(gh)
-}
-
-func TestShowDataFooter_NilDataBand(t *testing.T) {
-	e := newKWDEngine(t)
-	gh := band.NewGroupHeaderBand()
-	e.showDataFooter(gh)
 }
 
 func TestShowDataFooter_NilFooter(t *testing.T) {

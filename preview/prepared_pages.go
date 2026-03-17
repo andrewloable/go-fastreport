@@ -264,6 +264,12 @@ type PreparedObject struct {
 	WordWrap bool
 	// Checked is the checked state for ObjectTypeCheckBox.
 	Checked bool
+	// CheckedSymbol is the symbol drawn when checked (0=Check, 1=Cross, 2=Plus, 3=Fill).
+	CheckedSymbol int
+	// UncheckedSymbol is the symbol drawn when unchecked (0=None, 1=Cross, 2=Minus, 3=Slash, 4=BackSlash).
+	UncheckedSymbol int
+	// CheckColor is the color of the check symbol.
+	CheckColor color.RGBA
 	// Duplicates controls how repeated values with the same object name are handled.
 	Duplicates DuplicatesMode
 

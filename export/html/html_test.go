@@ -2,6 +2,7 @@ package html_test
 
 import (
 	"bytes"
+	"fmt"
 	"image/color"
 	"strings"
 	"testing"
@@ -36,17 +37,13 @@ func TestExporter_BasicHTML(t *testing.T) {
 	}
 
 	out := buf.String()
-	if !strings.Contains(out, "<!DOCTYPE html>") {
-		t.Error("output should contain DOCTYPE")
+	// New DOCTYPE is HTML 4.01.
+	if !strings.Contains(out, "<!DOCTYPE HTML PUBLIC") {
+		t.Error("output should contain HTML 4.01 DOCTYPE")
 	}
-	if !strings.Contains(out, "Header") {
-		t.Error("output should contain band name 'Header'")
-	}
-	if !strings.Contains(out, "DataBand") {
-		t.Error("output should contain band name 'DataBand'")
-	}
-	if !strings.Contains(out, `class="page"`) {
-		t.Error("output should contain page div")
+	// Page div is now frpage0 (not class="page").
+	if !strings.Contains(out, `class="frpage0"`) {
+		t.Error("output should contain frpage0 div")
 	}
 }
 
@@ -75,7 +72,7 @@ func TestExporter_NoCSSWhenDisabled(t *testing.T) {
 		t.Fatalf("Export: %v", err)
 	}
 
-	if strings.Contains(buf.String(), "<style>") {
+	if strings.Contains(buf.String(), "<style") {
 		t.Error("CSS should not be embedded when EmbedCSS=false")
 	}
 }
@@ -89,9 +86,16 @@ func TestExporter_MultiplePages(t *testing.T) {
 		t.Fatalf("Export: %v", err)
 	}
 
-	count := strings.Count(buf.String(), `class="page"`)
+	out := buf.String()
+	// Count frpage divs (frpage0, frpage1, frpage2).
+	count := 0
+	for i := 0; i < 3; i++ {
+		if strings.Contains(out, fmt.Sprintf(`class="frpage%d"`, i)) {
+			count++
+		}
+	}
 	if count != 3 {
-		t.Errorf("expected 3 page divs, got %d", count)
+		t.Errorf("expected 3 frpage divs, got %d", count)
 	}
 }
 
@@ -106,9 +110,13 @@ func TestExporter_PageRangeCurrent(t *testing.T) {
 		t.Fatalf("Export: %v", err)
 	}
 
-	count := strings.Count(buf.String(), `class="page"`)
-	if count != 1 {
-		t.Errorf("PageRangeCurrent: expected 1 page, got %d", count)
+	out := buf.String()
+	// Only one page rendered → frpage0 present, frpage1 not.
+	if !strings.Contains(out, `class="frpage0"`) {
+		t.Error("PageRangeCurrent: expected frpage0 div")
+	}
+	if strings.Contains(out, `class="frpage1"`) {
+		t.Error("PageRangeCurrent: should not have frpage1 div")
 	}
 }
 
@@ -144,8 +152,10 @@ func TestExporter_HTMLEscaping(t *testing.T) {
 		t.Fatalf("Export: %v", err)
 	}
 
+	// Band names no longer appear in the output (flat rendering, no band divs).
+	// Just verify the output doesn't have raw <script> tags.
 	if strings.Contains(buf.String(), "<script>") {
-		t.Error("HTML should escape < and > in band names")
+		t.Error("HTML should not contain raw <script> from band names")
 	}
 }
 
@@ -247,7 +257,8 @@ func TestExporter_LayersMode_BothObjectsPresent(t *testing.T) {
 	}
 }
 
-func TestExporter_NonLayered_HasBandDivs(t *testing.T) {
+func TestExporter_NonLayered_FlatLayout(t *testing.T) {
+	// New behavior: flat layout — no band wrapper divs, objects at page-absolute coords.
 	pp := buildLayeredPages()
 	exp := html.NewExporter()
 	// Layers=false by default.
@@ -258,11 +269,17 @@ func TestExporter_NonLayered_HasBandDivs(t *testing.T) {
 	}
 	out := buf.String()
 
-	if !strings.Contains(out, `class="band"`) {
-		t.Error("non-layered mode should emit band wrapper divs")
+	// Flat mode should NOT emit band wrapper divs.
+	if strings.Contains(out, `class="band"`) {
+		t.Error("flat mode should not emit band wrapper divs")
 	}
+	// No z-index in flat mode.
 	if strings.Contains(out, "z-index:") {
-		t.Error("non-layered mode should not have z-index")
+		t.Error("flat mode should not have z-index")
+	}
+	// Objects should still appear.
+	if !strings.Contains(out, "Layer1") || !strings.Contains(out, "Layer2") {
+		t.Error("both objects should appear in flat output")
 	}
 }
 
@@ -276,9 +293,9 @@ func TestExporter_Scale(t *testing.T) {
 		t.Fatalf("Export: %v", err)
 	}
 
-	// At 0.5 scale, the 794px page becomes 397px.
-	if !strings.Contains(buf.String(), "397.00px") {
-		t.Error("scaled output should contain 397px page width")
+	// At 0.5 scale, the 794px page becomes 794*0.5 + 3*0.5 = 397 + 1.5 = 398.50px.
+	if !strings.Contains(buf.String(), "398.50px") {
+		t.Error("scaled output should contain 398.50px page width")
 	}
 }
 

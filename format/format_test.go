@@ -623,60 +623,61 @@ func TestDateFormat_Nil(t *testing.T) {
 }
 
 func TestDateFormat_TimeTime(t *testing.T) {
+	// Default format is C# "d" (short date = M/d/yyyy).
 	f := NewDateFormat()
 	tm := time.Date(2024, 6, 15, 0, 0, 0, 0, time.UTC)
-	if got := f.FormatValue(tm); got != "2024-06-15" {
-		t.Fatalf("got %q, want %q", got, "2024-06-15")
+	if got := f.FormatValue(tm); got != "6/15/2024" {
+		t.Fatalf("got %q, want %q", got, "6/15/2024")
 	}
 }
 
 func TestDateFormat_PointerToTime(t *testing.T) {
 	f := NewDateFormat()
 	tm := time.Date(2024, 6, 15, 0, 0, 0, 0, time.UTC)
-	if got := f.FormatValue(&tm); got != "2024-06-15" {
-		t.Fatalf("got %q, want %q", got, "2024-06-15")
+	if got := f.FormatValue(&tm); got != "6/15/2024" {
+		t.Fatalf("got %q, want %q", got, "6/15/2024")
 	}
 }
 
 func TestDateFormat_StringISO(t *testing.T) {
 	f := NewDateFormat()
-	if got := f.FormatValue("2024-06-15"); got != "2024-06-15" {
-		t.Fatalf("got %q, want %q", got, "2024-06-15")
+	if got := f.FormatValue("2024-06-15"); got != "6/15/2024" {
+		t.Fatalf("got %q, want %q", got, "6/15/2024")
 	}
 }
 
 func TestDateFormat_StringRFC3339(t *testing.T) {
 	f := NewDateFormat()
-	if got := f.FormatValue("2024-06-15T00:00:00Z"); got != "2024-06-15" {
-		t.Fatalf("got %q, want %q", got, "2024-06-15")
+	if got := f.FormatValue("2024-06-15T00:00:00Z"); got != "6/15/2024" {
+		t.Fatalf("got %q, want %q", got, "6/15/2024")
 	}
 }
 
 func TestDateFormat_StringSlash(t *testing.T) {
 	f := NewDateFormat()
-	if got := f.FormatValue("06/15/2024"); got != "2024-06-15" {
-		t.Fatalf("got %q, want %q", got, "2024-06-15")
+	if got := f.FormatValue("06/15/2024"); got != "6/15/2024" {
+		t.Fatalf("got %q, want %q", got, "6/15/2024")
 	}
 }
 
 func TestDateFormat_StringDash(t *testing.T) {
 	f := NewDateFormat()
-	if got := f.FormatValue("15-06-2024"); got != "2024-06-15" {
-		t.Fatalf("got %q, want %q", got, "2024-06-15")
+	if got := f.FormatValue("15-06-2024"); got != "6/15/2024" {
+		t.Fatalf("got %q, want %q", got, "6/15/2024")
 	}
 }
 
 func TestDateFormat_StringDateTime(t *testing.T) {
 	f := NewDateFormat()
-	if got := f.FormatValue("2024-06-15T10:30:00"); got != "2024-06-15" {
-		t.Fatalf("got %q, want %q", got, "2024-06-15")
+	if got := f.FormatValue("2024-06-15T10:30:00"); got != "6/15/2024" {
+		t.Fatalf("got %q, want %q", got, "6/15/2024")
 	}
 }
 
 func TestDateFormat_StringSpaceDateTime(t *testing.T) {
 	f := NewDateFormat()
-	if got := f.FormatValue("2024-06-15 10:30:00"); got != "2024-06-15" {
-		t.Fatalf("got %q, want %q", got, "2024-06-15")
+	if got := f.FormatValue("2024-06-15 10:30:00"); got != "6/15/2024" {
+		t.Fatalf("got %q, want %q", got, "6/15/2024")
 	}
 }
 
@@ -688,10 +689,20 @@ func TestDateFormat_UnparsableString(t *testing.T) {
 }
 
 func TestDateFormat_EmptyFormat(t *testing.T) {
+	// Empty format falls back to "d" (C# short date = M/d/yyyy).
 	f := &DateFormat{Format: ""}
 	tm := time.Date(2024, 6, 15, 0, 0, 0, 0, time.UTC)
-	if got := f.FormatValue(tm); got != "2024-06-15" {
-		t.Fatalf("got %q, want %q", got, "2024-06-15")
+	if got := f.FormatValue(tm); got != "6/15/2024" {
+		t.Fatalf("got %q, want %q", got, "6/15/2024")
+	}
+}
+
+func TestDateFormat_CsharpShortDate(t *testing.T) {
+	// "d" is C# short date pattern → M/d/yyyy.
+	f := &DateFormat{Format: "d"}
+	tm := time.Date(2013, 8, 12, 0, 0, 0, 0, time.UTC)
+	if got := f.FormatValue(tm); got != "8/12/2013" {
+		t.Fatalf("got %q, want %q", got, "8/12/2013")
 	}
 }
 

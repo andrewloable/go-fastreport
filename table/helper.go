@@ -51,6 +51,10 @@ type TableHelper struct {
 	// Original (template) indices set by the last PrintRow/PrintColumn call.
 	origRowIdx int
 	origColIdx int
+
+	// CellTextEval, when non-nil, is applied to each cell's text during copyCells.
+	// Set before PrintColumn/PrintRow and clear it after PrintRows/PrintColumns.
+	CellTextEval func(text string) string
 }
 
 type nowPrinting int
@@ -68,6 +72,12 @@ func newTableHelper(src *TableObject) *TableHelper {
 		result:      NewTableBase(),
 		nowPrinting: npNone,
 	}
+}
+
+// NewTableHelper creates an exported TableHelper backed by the given template table.
+// Use this when building a table programmatically from outside the table package.
+func NewTableHelper(src *TableObject) *TableHelper {
+	return newTableHelper(src)
 }
 
 // Result returns the accumulated result table produced by PrintRow/PrintColumn calls.
@@ -122,12 +132,18 @@ func (h *TableHelper) PrintRow(index int) {
 	}
 }
 
-// PrintRows calls PrintRow for every template row followed by PrintColumns
-// for all columns. This is the simplest way to print the full template table.
+// PrintRows calls PrintRow for every template row. In row-first mode (when
+// PrintRow was the first call, or row priority is already set) it also calls
+// PrintColumns after each row, replicating the full grid shortcut. In
+// column-first mode it only calls PrintRow for each row, filling cells into
+// the currently selected column — matching the C# TableObject.PrintRows()
+// semantics used after PrintColumn.
 func (h *TableHelper) PrintRows() {
 	for i := 0; i < h.src.RowCount(); i++ {
 		h.PrintRow(i)
-		h.PrintColumns()
+		if h.rowsPriority {
+			h.PrintColumns()
+		}
 	}
 }
 
@@ -212,6 +228,9 @@ func (h *TableHelper) copyCells(srcColIdx, srcRowIdx, dstColIdx, dstRowIdx int) 
 			// Reset spans — auto-span is resolved during rendering.
 			dst.SetColSpan(1)
 			dst.SetRowSpan(1)
+		}
+		if h.CellTextEval != nil {
+			dst.SetText(h.CellTextEval(dst.Text()))
 		}
 		row.cells[dstColIdx] = dst
 	}

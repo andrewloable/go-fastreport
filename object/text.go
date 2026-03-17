@@ -773,6 +773,13 @@ func (t *TextObject) Deserialize(r report.Reader) error {
 	t.paragraphOffset = r.ReadFloat("ParagraphOffset", 0)
 	t.mergeMode = MergeMode(r.ReadInt("MergeMode", 0))
 	t.autoWidth = r.ReadBool("AutoWidth", false)
+	// TextFill.Color — foreground text color (FastReport uses TextFill as a SolidFill).
+	// This attribute is stored directly on the TextObject element, e.g. TextFill.Color="Brown".
+	if cs := r.ReadStr("TextFill.Color", ""); cs != "" {
+		if c, err := utils.ParseColor(cs); err == nil {
+			t.textColor = c
+		}
+	}
 	// TextOutline
 	t.textOutline.Enabled = r.ReadBool("TextOutline.Enabled", false)
 	if cs := r.ReadStr("TextOutline.Color", ""); cs != "" {

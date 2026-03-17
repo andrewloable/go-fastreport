@@ -33,7 +33,30 @@
       "Bash(cd \"G:/projects/loabletech/go-fastreport/csharp-validation/FrxToHtml\" && dotnet run -- --frx \"../../test-reports/Badges.frx\" --out \"../../csharp-html-output\" 2>&1)",
       "Bash(cd \"G:/projects/loabletech/go-fastreport/csharp-validation/FrxToHtml\" && dotnet run -- --frx \"../../test-reports/simple-list.frx\" --out \"../../csharp-html-output\" 2>&1)",
       "Bash(cd \"G:/projects/loabletech/go-fastreport/csharp-validation/FrxToHtml\" && dotnet run -- --dir \"../../test-reports\" --out \"../../csharp-html-output\" 2>&1)",
-      "Bash(cd \"G:/projects/loabletech/go-fastreport/csharp-validation/FrxToHtml\" && dotnet run -- --dir \"../../test-reports\" --out \"../../csharp-html-output\" 2>&1 | grep \"FAIL\")"
+      "Bash(cd \"G:/projects/loabletech/go-fastreport/csharp-validation/FrxToHtml\" && dotnet run -- --dir \"../../test-reports\" --out \"../../csharp-html-output\" 2>&1 | grep \"FAIL\")",
+      "Bash(cd:*)",
+      "Bash(go run:*)",
+      "Bash(brew list:*)",
+      "Bash(COREHOST_TRACE=1 dotnet run -- --frx \"../../test-reports/Simple List.frx\" 2>&1 | grep -E \"\\(Exception|Error|fail|FastReport\\)\" | head -30)",
+      "Bash(brew install:*)",
+      "Bash(DYLD_LIBRARY_PATH=/opt/homebrew/lib dotnet run 2>&1)",
+      "Bash(bd create:*)",
+      "Bash(python3:*)",
+      "Bash(bd list:*)",
+      "Bash(bd dep:*)",
+      "Bash(grep:*)",
+      "Bash(go test:*)",
+      "Bash(bd close:*)",
+      "Bash(bd update:*)",
+      "Bash(go build:*)",
+      "Bash(bd ready:*)",
+      "Bash(bd show:*)",
+      "Bash(find:*)",
+      "Bash(ls:*)",
+      "Bash(wc:*)",
+      "Bash(go tool:*)",
+      "Bash(bd stats:*)",
+      "Bash(go vet:*)"
     ]
   }
 }

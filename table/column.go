@@ -89,6 +89,9 @@ func (c *TableColumn) Deserialize(r report.Reader) error {
 	if err := c.ComponentBase.Deserialize(r); err != nil {
 		return err
 	}
+	// ComponentBase.Deserialize defaults Width to 0; re-read with the table column
+	// default of 100 so that columns without an explicit Width attribute are usable.
+	c.SetWidth(r.ReadFloat("Width", 100))
 	c.minWidth = r.ReadFloat("MinWidth", 0)
 	c.maxWidth = r.ReadFloat("MaxWidth", 5000)
 	c.autoSize = r.ReadBool("AutoSize", false)

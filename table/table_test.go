@@ -544,6 +544,47 @@ func TestTableLayout_Constants(t *testing.T) {
 	}
 }
 
+// TestTableColumn_Deserialize_DefaultWidth verifies that a TableColumn
+// deserialized without a Width attribute retains the default width (100),
+// not 0 (the ComponentBase zero value).
+func TestTableColumn_Deserialize_DefaultWidth(t *testing.T) {
+	// Serialize a column with explicit width 100 (default), then remove
+	// the Width attribute by serializing a column with default width and
+	// manually verifying the Deserialize default.
+	// Simplest approach: use a minimal FRX snippet without Width.
+	xml := `<TableColumn Name="C1"/>`
+	r := serial.NewReader(strings.NewReader(xml))
+	typeName, ok := r.ReadObjectHeader()
+	if !ok || typeName != "TableColumn" {
+		t.Fatalf("ReadObjectHeader: got %q ok=%v", typeName, ok)
+	}
+	got := table.NewTableColumn()
+	if err := got.Deserialize(r); err != nil {
+		t.Fatalf("Deserialize: %v", err)
+	}
+	if got.Width() != 100 {
+		t.Errorf("Width after Deserialize without Width attr: got %v, want 100", got.Width())
+	}
+}
+
+// TestTableRow_Deserialize_DefaultHeight verifies that a TableRow deserialized
+// without a Height attribute retains the default height (30), not 0.
+func TestTableRow_Deserialize_DefaultHeight(t *testing.T) {
+	xml := `<TableRow Name="R1"/>`
+	r := serial.NewReader(strings.NewReader(xml))
+	typeName, ok := r.ReadObjectHeader()
+	if !ok || typeName != "TableRow" {
+		t.Fatalf("ReadObjectHeader: got %q ok=%v", typeName, ok)
+	}
+	got := table.NewTableRow()
+	if err := got.Deserialize(r); err != nil {
+		t.Fatalf("Deserialize: %v", err)
+	}
+	if got.Height() != 30 {
+		t.Errorf("Height after Deserialize without Height attr: got %v, want 30", got.Height())
+	}
+}
+
 func TestCellDuplicates_Constants(t *testing.T) {
 	dups := []table.CellDuplicates{
 		table.CellDuplicatesShow,

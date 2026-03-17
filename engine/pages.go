@@ -22,7 +22,7 @@ func (e *ReportEngine) PreparedPages() *preview.PreparedPages {
 // It sets up page dimensions, adds a page to PreparedPages, and shows the
 // Overlay, ReportTitle (if first page), and PageHeader bands.
 func (e *ReportEngine) startPage(pg *reportpkg.ReportPage, isFirst bool) {
-	const mmPerPx = 96.0 / 25.4
+	const mmPerPx = 3.78
 	e.pageWidth = (pg.PaperWidth - pg.LeftMargin - pg.RightMargin) * mmPerPx
 	e.pageHeight = (pg.PaperHeight - pg.TopMargin - pg.BottomMargin) * mmPerPx
 	e.freeSpace = e.pageHeight
@@ -82,12 +82,19 @@ func (e *ReportEngine) startPage(pg *reportpkg.ReportPage, isFirst bool) {
 
 // endPage finalises the current page.
 // It shows ColumnFooter, ReportSummary (on last page), and PageFooter.
+// PageFooter and ReportSummary always span the full page width, so curX is
+// reset to 0 before rendering them to prevent the column X offset from
+// being applied to their objects.
 func (e *ReportEngine) endPage(pg *reportpkg.ReportPage, isLast bool) {
 	e.showBand(pg.ColumnFooter())
+	// Full-page bands must not inherit any column X offset.
+	savedX := e.curX
+	e.curX = 0
 	if isLast {
 		e.showBand(pg.ReportSummary())
 	}
 	e.showBand(pg.PageFooter())
+	e.curX = savedX
 	e.OnStateChanged(pg, EngineStatePageFinished)
 }
 

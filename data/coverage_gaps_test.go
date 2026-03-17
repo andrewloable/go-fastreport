@@ -166,3 +166,12 @@ func TestTableDataSource_Init_QueryError(t *testing.T) {
 	_ = c.Close()
 }
 
+
+// TestDataComponentBase_InitializeComponent ensures the InitializeComponent
+// method is exercised (it has an empty body but the coverage tool still
+// reports 0% if it is never called).
+func TestDataComponentBase_InitializeComponent(t *testing.T) {
+	d := data.NewDataComponentBase("test")
+	// InitializeComponent is a no-op hook for subclasses.
+	d.InitializeComponent() // must not panic
+}

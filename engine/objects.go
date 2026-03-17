@@ -7,6 +7,7 @@ import (
 	"image"
 	"image/color"
 	"image/png"
+	"math"
 	"strings"
 
 	"github.com/andrewloable/go-fastreport/band"
@@ -62,6 +63,8 @@ func (e *ReportEngine) populateBandObjects2(objs *report.ObjectCollection, pb *p
 				if tbl.IsManualBuild() {
 					if built := tbl.InvokeManualBuild(); built != nil {
 						base = built
+					} else if built := e.autoManualBuild(tbl); built != nil {
+						base = built
 					}
 				}
 				e.populateTableObjects(base, tbl.Left(), tbl.Top(), pb)
@@ -69,6 +72,11 @@ func (e *ReportEngine) populateBandObjects2(objs *report.ObjectCollection, pb *p
 			// Render AdvMatrixObject physical cells as individual PreparedObjects.
 			if adv, ok := obj.(*object.AdvMatrixObject); ok {
 				e.populateAdvMatrixCells(adv, pb)
+			}
+			// Render CellularTextObject as a character-grid of PreparedObjects.
+			if cellular, ok := obj.(*object.CellularTextObject); ok {
+				text := e.evalText(cellular.Text())
+				e.populateCellularTextCells(cellular, text, pb)
 			}
 			// Register deferred text evaluation if ProcessAt != Default.
 			if txt, ok := obj.(*object.TextObject); ok && txt.ProcessAt() != object.ProcessAtDefault {
@@ -190,6 +198,123 @@ func (e *ReportEngine) populateTableObjects(tbl *table.TableBase, originX, origi
 	}
 }
 
+// autoManualBuild attempts to automatically build a ManualBuild table when the
+// FRX specifies a ManualBuildEvent script but no Go callback is registered.
+//
+// It supports the standard column-first pattern (FixedColumns > 0):
+//   - Prints FixedColumns header columns once.
+//   - Detects the data source by scanning the first data column's cells for
+//     [DataSourceAlias.Column] expressions.
+//   - Iterates the detected data source and prints the data column once per row,
+//     evaluating expressions at each row's context.
+//   - Prints any remaining trailer columns once.
+//
+// Returns nil when the pattern cannot be detected or the data source is absent.
+func (e *ReportEngine) autoManualBuild(tbl *table.TableObject) *table.TableBase {
+	if tbl.ManualBuild != nil || tbl.ManualBuildEvent == "" {
+		return nil
+	}
+
+	nCols := tbl.ColumnCount()
+	if nCols < 2 {
+		return nil
+	}
+
+	fixedCols := tbl.FixedColumns()
+	if fixedCols <= 0 {
+		return nil // only handle column-first pattern
+	}
+
+	dataColIdx := fixedCols // first non-fixed (data) column
+
+	// Detect data source alias from expressions in the data column.
+	dsAlias := ""
+	for ri := 0; ri < tbl.RowCount(); ri++ {
+		cell := tbl.Cell(ri, dataColIdx)
+		if cell != nil {
+			if a := tableExtractDSAlias(cell.Text()); a != "" {
+				dsAlias = a
+				break
+			}
+		}
+	}
+	if dsAlias == "" {
+		return nil
+	}
+
+	dict := e.report.Dictionary()
+	if dict == nil {
+		return nil
+	}
+	ds := dict.FindDataSourceByAlias(dsAlias)
+	if ds == nil {
+		ds = dict.FindDataSourceByName(dsAlias)
+	}
+	if ds == nil {
+		return nil
+	}
+
+	if err := ds.Init(); err != nil {
+		return nil
+	}
+	if err := ds.First(); err != nil {
+		// Empty data source: fall back to static template.
+		return nil
+	}
+
+	h := table.NewTableHelper(tbl)
+
+	// Print header columns (0 .. fixedCols-1).
+	for i := 0; i < fixedCols; i++ {
+		h.PrintColumn(i)
+		h.PrintRows() // column-first: PrintRows fills rows for current column
+	}
+
+	// Print one data column per data source row.
+	for !ds.EOF() {
+		e.report.SetCalcContext(ds)
+		eval := func(text string) string { return e.evalText(text) }
+		h.CellTextEval = eval
+		h.PrintColumn(dataColIdx)
+		h.PrintRows()
+		h.CellTextEval = nil
+		_ = ds.Next()
+	}
+
+	// Print trailer columns (dataColIdx+1 .. nCols-1).
+	for i := dataColIdx + 1; i < nCols; i++ {
+		h.PrintColumn(i)
+		h.PrintRows()
+	}
+
+	return h.Result()
+}
+
+// tableExtractDSAlias extracts the data source alias from the first
+// [Alias.Column] bracket expression found in text. Returns "" if not found.
+func tableExtractDSAlias(text string) string {
+	// Quick scan without regexp: find first '[', then look for '.' before ']'.
+	for i := 0; i < len(text); i++ {
+		if text[i] != '[' {
+			continue
+		}
+		start := i + 1
+		for j := start; j < len(text); j++ {
+			if text[j] == ']' {
+				break
+			}
+			if text[j] == '.' && j > start {
+				alias := text[start:j]
+				if strings.ContainsAny(alias, " \t") {
+					break // skip qualified names with spaces for now
+				}
+				return alias
+			}
+		}
+	}
+	return ""
+}
+
 // populateAdvMatrixCells renders the physical table cells of an AdvMatrixObject
 // as individual PreparedObjects. Each AdvMatrixRow holds AdvMatrixCell entries;
 // column widths come from TableColumns.  Absolute positions are computed from
@@ -282,6 +407,162 @@ func (e *ReportEngine) populateAdvMatrixCells(adv *object.AdvMatrixObject, pb *p
 			}
 			if cell.Border != nil {
 				po.Border = *cell.Border
+			}
+			pb.Objects = append(pb.Objects, po)
+		}
+	}
+}
+
+// populateCellularTextCells renders a CellularTextObject as a character grid of
+// individual PreparedObjects. The algorithm mirrors FastReport .NET's GetTable()
+// method in CellularTextObject.cs:
+//
+//   - If CellWidth/CellHeight are 0, auto-size from the font height.
+//   - Compute colCount = (Width + HorzSpacing + 1) / (cellWidth + HorzSpacing).
+//   - Layout text with optional word-wrap, one character per column per row.
+//   - Apply HorzAlign offset per row (right/center push the characters).
+//   - Emit one PreparedObject per cell with the character centered inside.
+func (e *ReportEngine) populateCellularTextCells(v *object.CellularTextObject, text string, pb *preview.PreparedBand) {
+	cellW := v.CellWidth()
+	cellH := v.CellHeight()
+	horzSpacing := v.HorzSpacing()
+	vertSpacing := v.VertSpacing()
+
+	// Auto-calculate cell size from font height when not explicitly set.
+	// Mirrors GetCellWidthInternal: round (fontHeight + 10) up to nearest 0.25 cm.
+	if cellW == 0 || cellH == 0 {
+		// Font size in pt → pixels at 96 DPI: px = pt * 96/72
+		fontPx := v.Font().Size * 96.0 / 72.0
+		// 0.25 cm in pixels = 37.8 * 0.25 = 9.45
+		quarterCm := float32(9.45)
+		raw := fontPx + 10
+		auto := float32(math.Round(float64(raw)/float64(quarterCm))) * quarterCm
+		if auto <= 0 {
+			auto = quarterCm
+		}
+		if cellW == 0 {
+			cellW = auto
+		}
+		if cellH == 0 {
+			cellH = auto
+		}
+	}
+
+	// Compute column count: how many cells fit in the total width.
+	totalW := v.Width()
+	colCount := int((totalW + horzSpacing + 1) / (cellW + horzSpacing))
+	if colCount < 1 {
+		colCount = 1
+	}
+
+	// Compute row count: how many rows fit in the total height.
+	totalH := v.Height()
+	rowCount := int((totalH + vertSpacing + 1) / (cellH + vertSpacing))
+	if rowCount < 1 {
+		rowCount = 1
+	}
+
+	// Build grid: grid[row][col] holds the character for that cell (empty string = blank).
+	grid := make([][]string, rowCount)
+	for i := range grid {
+		grid[i] = make([]string, colCount)
+	}
+
+	// Fill grid with text, handling word-wrap and CRLF.
+	normalized := strings.ReplaceAll(text, "\r\n", "\n")
+	row := 0
+	lineBegin := 0
+	lastSpace := 0
+	runes := []rune(normalized)
+	wordWrap := v.WordWrap()
+	horzAlign := v.HorzAlign()
+
+	fillRow := func(rowIdx int, line []rune) {
+		if rowIdx >= rowCount {
+			return
+		}
+		// Trim trailing spaces.
+		for len(line) > 0 && line[len(line)-1] == ' ' {
+			line = line[:len(line)-1]
+		}
+		if len(line) > colCount {
+			line = line[:colCount]
+		}
+		// Compute HorzAlign offset.
+		offset := 0
+		switch horzAlign {
+		case object.HorzAlignRight:
+			offset = colCount - len(line)
+		case object.HorzAlignCenter:
+			offset = (colCount - len(line)) / 2
+		}
+		if offset < 0 {
+			offset = 0
+		}
+		for i, ch := range line {
+			col := i + offset
+			if col >= 0 && col < colCount {
+				grid[rowIdx][col] = string(ch)
+			}
+		}
+	}
+
+	for i := 0; i < len(runes); i++ {
+		isCRLF := runes[i] == '\n'
+		if runes[i] == ' ' || isCRLF {
+			lastSpace = i
+		}
+
+		if i-lineBegin+1 > colCount || isCRLF {
+			if wordWrap && lastSpace > lineBegin {
+				fillRow(row, runes[lineBegin:lastSpace])
+				lineBegin = lastSpace + 1
+			} else if i-lineBegin > 0 {
+				fillRow(row, runes[lineBegin:i])
+				lineBegin = i
+			} else {
+				lineBegin = i + 1
+			}
+			lastSpace = lineBegin
+			row++
+		}
+	}
+	// Finish the last line.
+	if lineBegin < len(runes) {
+		fillRow(row, runes[lineBegin:])
+	}
+
+	// Emit PreparedObjects for each cell.
+	originX := v.Left()
+	originY := v.Top()
+	border := v.Border()
+	font := v.Font()
+	textColor := v.TextColor()
+	var fillColor color.RGBA
+	if f, ok := v.Fill().(*style.SolidFill); ok {
+		fillColor = f.Color
+	}
+
+	for ri := 0; ri < rowCount; ri++ {
+		cellTop := originY + float32(ri)*(cellH+vertSpacing)
+		for ci := 0; ci < colCount; ci++ {
+			cellLeft := originX + float32(ci)*(cellW+horzSpacing)
+			po := preview.PreparedObject{
+				Name:      fmt.Sprintf("%s_r%dc%d", v.Name(), ri, ci),
+				Kind:      preview.ObjectTypeText,
+				Left:      cellLeft,
+				Top:       cellTop,
+				Width:     cellW,
+				Height:    cellH,
+				Text:      grid[ri][ci],
+				BlobIdx:   -1,
+				Font:      font,
+				TextColor: textColor,
+				FillColor: fillColor,
+				HorzAlign: 1, // Center — each character is always centered in its cell
+				VertAlign: 1, // Center
+				WordWrap:  false,
+				Border:    border,
 			}
 			pb.Objects = append(pb.Objects, po)
 		}
@@ -385,6 +666,12 @@ func (e *ReportEngine) buildPreparedObject(obj report.Base) *preview.PreparedObj
 			po.FillColor = f.Color
 		}
 		po.Text = e.evalTextWithFormat(v.Text(), v.Format())
+		// When the text color has alpha=0 (fully transparent), the text is
+		// invisible. Suppress the text content so the object renders as a
+		// background-only shape, matching C# HTML export behaviour.
+		if po.TextColor.A == 0 && po.Text != "" {
+			po.Text = ""
+		}
 		po.TextRenderType = int(v.TextRenderType())
 		// Apply highlight conditions — first matching condition wins.
 		if e.report != nil {
@@ -471,15 +758,16 @@ func (e *ReportEngine) buildPreparedObject(obj report.Base) *preview.PreparedObj
 		}
 
 	case *object.CellularTextObject:
-		// CellularTextObject renders like a TextObject; the cellular grid is a
-		// visual presentation detail handled at export time.
-		po.Kind = preview.ObjectTypeText
-		po.Font = v.Font()
-		po.TextColor = color.RGBA{A: 255}
-		po.HorzAlign = int(v.HorzAlign())
-		po.VertAlign = int(v.VertAlign())
-		po.WordWrap = v.WordWrap()
-		po.Text = e.evalText(v.Text())
+		// CellularTextObject is rendered as a grid of individual character cells.
+		// The anchor PreparedObject is a transparent shape (bounding box) that
+		// carries the border and fill; individual character cells are emitted by
+		// populateCellularTextCells, called from populateBandObjects2 below.
+		po.Kind = preview.ObjectTypeShape
+		po.ShapeKind = 0 // Rectangle
+		po.Border = v.Border()
+		if f, ok := v.Fill().(*style.SolidFill); ok {
+			po.FillColor = f.Color
+		}
 
 	case *object.ZipCodeObject:
 		// Render as text showing the evaluated zip code value.
@@ -493,7 +781,26 @@ func (e *ReportEngine) buildPreparedObject(obj report.Base) *preview.PreparedObj
 
 	case *object.CheckBoxObject:
 		po.Kind = preview.ObjectTypeCheckBox
+		// Evaluate expression or data column binding to determine checked state.
+		// If no expression/binding, fall back to the statically deserialized value.
+		if expr := v.Expression(); expr != "" {
+			result, err := e.report.Calc(expr)
+			if err == nil {
+				switch bv := result.(type) {
+				case bool:
+					v.SetChecked(bv)
+				case string:
+					v.SetChecked(bv == "true" || bv == "True" || bv == "1")
+				}
+			}
+		} else if col := v.DataColumn(); col != "" {
+			result := e.evalText("[" + col + "]")
+			v.SetChecked(result == "true" || result == "True" || result == "1")
+		}
 		po.Checked = v.Checked()
+		po.CheckedSymbol = int(v.CheckedSymbol())
+		po.UncheckedSymbol = int(v.UncheckedSymbol())
+		po.CheckColor = v.CheckColor()
 
 	case *gauge.LinearGauge:
 		e.evalGaugeValue(&v.GaugeObject)
@@ -573,6 +880,12 @@ func (e *ReportEngine) buildPreparedObject(obj report.Base) *preview.PreparedObj
 		text = e.evalText(text)
 		if text == "" && !v.HideIfNoData() {
 			text = v.NoDataText()
+		}
+		// Fall back to the barcode's built-in default value when text is still
+		// empty and HideIfNoData is false (matches FastReport .NET behaviour:
+		// always show a demo barcode when no data is bound).
+		if text == "" && !v.HideIfNoData() && v.Barcode != nil {
+			text = v.Barcode.DefaultValue()
 		}
 		if text != "" && v.Barcode != nil {
 			if err := v.Barcode.Encode(text); err == nil {

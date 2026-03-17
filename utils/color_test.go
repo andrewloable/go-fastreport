@@ -132,7 +132,8 @@ func TestParseColor_Named(t *testing.T) {
 		{"White", color.RGBA{R: 255, G: 255, B: 255, A: 255}},
 		{"white", color.RGBA{R: 255, G: 255, B: 255, A: 255}},
 		{"Black", color.RGBA{R: 0, G: 0, B: 0, A: 255}},
-		{"Transparent", color.RGBA{R: 0, G: 0, B: 0, A: 0}},
+		// C# Color.Transparent = Color.FromArgb(0, 255, 255, 255): white with alpha=0.
+		{"Transparent", color.RGBA{R: 255, G: 255, B: 255, A: 0}},
 		{"Red", color.RGBA{R: 255, G: 0, B: 0, A: 255}},
 		{"LightGray", color.RGBA{R: 211, G: 211, B: 211, A: 255}},
 		{"WhiteSmoke", color.RGBA{R: 245, G: 245, B: 245, A: 255}},

@@ -73,7 +73,11 @@ func (d *DataComponentBase) SetReference(ref any) { d.reference = ref }
 
 // InitializeComponent is called by the engine before running a report.
 // Subclasses override this to perform late initialization.
-func (d *DataComponentBase) InitializeComponent() {}
+// The base implementation is intentionally a no-op; types that embed
+// DataComponentBase override this method to add their own setup logic.
+func (d *DataComponentBase) InitializeComponent() {
+	_ = d // no-op base implementation; subclasses re-implement as needed
+}
 
 // Serialize writes the component's non-default properties to w.
 func (d *DataComponentBase) Serialize(w report.Writer) error {

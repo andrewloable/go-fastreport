@@ -49,6 +49,7 @@ func (r *Report) Calc(expression string) (any, error) {
 
 	// If the whole expression is a single [bracketed] token, unwrap it.
 	unwrapped := unwrapBrackets(expression)
+	wasSingleBracket := unwrapped != expression
 
 	// Replace [Token] patterns with safe identifier forms.
 	goExpr := translateExpression(unwrapped)
@@ -57,6 +58,13 @@ func (r *Report) Calc(expression string) (any, error) {
 	// sanitize dots to underscores so it matches keys in the environment.
 	if isSimpleDottedIdent(goExpr) {
 		sanitized := sanitizeIdent(goExpr)
+		if _, exists := env[sanitized]; exists {
+			goExpr = sanitized
+		}
+	} else if wasSingleBracket {
+		// The unwrapped token may contain spaces (e.g. "Order Details.Products.ProductName").
+		// Sanitize it and check the env before passing to the evaluator.
+		sanitized := sanitizeIdent(unwrapped)
 		if _, exists := env[sanitized]; exists {
 			goExpr = sanitized
 		}
@@ -124,6 +132,15 @@ func (r *Report) buildCalcEnv() expr.Env {
 				// Also expose the bare column name for convenience.
 				env[sanitizeIdent(col.Name)] = val
 			}
+		}
+
+		// Traverse relations: for relations where the current data source is the
+		// child, find the matching parent row and inject parent fields using the
+		// naming convention "CurrentAlias_ParentAlias_ColumnName".
+		// This enables expressions like [Order Details.Products.ProductName] to
+		// resolve when iterating Order Details rows.
+		if r.dictionary != nil {
+			r.injectRelatedFields(env, r.calcDS)
 		}
 	}
 
@@ -215,4 +232,79 @@ func sanitizeIdent(s string) string {
 // BaseDataSource satisfies this interface.
 type columnarDataSource interface {
 	Columns() []data.Column
+}
+
+// injectRelatedFields traverses all relations in the dictionary where currentDS
+// is the child data source. For each such relation it seeks the parent data
+// source to the first row whose join-key columns match the current child row
+// values, then injects the parent row's columns into env under the key
+// "ChildAlias_ParentAlias_ColumnName" (dots replaced with underscores).
+//
+// This enables expressions like [Order Details.Products.ProductName] to resolve
+// when iterating Order Details rows, given a relation Products→Order Details on
+// ProductID.
+func (r *Report) injectRelatedFields(env expr.Env, currentDS data.DataSource) {
+	dict := r.dictionary
+	currentAlias := currentDS.Alias()
+
+	for _, rel := range dict.Relations() {
+		// We handle the case where currentDS is the child (detail) data source.
+		if rel.ChildDataSource == nil || rel.ParentDataSource == nil {
+			continue
+		}
+		if len(rel.ParentColumns) == 0 || len(rel.ChildColumns) == 0 {
+			continue
+		}
+
+		childAlias := rel.ChildDataSource.Alias()
+		if !strings.EqualFold(childAlias, currentAlias) {
+			continue
+		}
+
+		// Read the child join-key values from the current row.
+		parentDS := rel.ParentDataSource
+		parentAlias := parentDS.Alias()
+
+		childVals := make([]string, len(rel.ChildColumns))
+		for i, col := range rel.ChildColumns {
+			v, _ := currentDS.GetValue(col)
+			childVals[i] = fmt.Sprintf("%v", v)
+		}
+
+		// Seek parentDS to the row whose parent join-key columns match childVals.
+		if err := parentDS.First(); err != nil {
+			continue
+		}
+		found := false
+		for !parentDS.EOF() {
+			match := true
+			for i, col := range rel.ParentColumns {
+				v, _ := parentDS.GetValue(col)
+				if fmt.Sprintf("%v", v) != childVals[i] {
+					match = false
+					break
+				}
+			}
+			if match {
+				found = true
+				break
+			}
+			if err := parentDS.Next(); err != nil {
+				break
+			}
+		}
+
+		if !found {
+			continue
+		}
+
+		// Inject parent columns under "CurrentAlias_ParentAlias_ColumnName".
+		if pcds, ok := parentDS.(columnarDataSource); ok {
+			for _, col := range pcds.Columns() {
+				val, _ := parentDS.GetValue(col.Name)
+				key := sanitizeIdent(currentAlias + "_" + parentAlias + "_" + col.Name)
+				env[key] = val
+			}
+		}
+	}
 }

@@ -3,6 +3,7 @@ package export_test
 
 import (
 	"bytes"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -71,8 +72,8 @@ func TestHTMLExport_SimpleReport_Structure(t *testing.T) {
 	}
 
 	out := buf.String()
-	// Must be valid HTML5.
-	if !strings.Contains(out, "<!DOCTYPE html>") {
+	// Must be valid HTML 4.01 (C# FastReport format).
+	if !strings.Contains(out, "<!DOCTYPE HTML PUBLIC") {
 		t.Error("output missing DOCTYPE")
 	}
 	if !strings.Contains(out, "<html>") {
@@ -81,15 +82,12 @@ func TestHTMLExport_SimpleReport_Structure(t *testing.T) {
 	if !strings.Contains(out, "</html>") {
 		t.Error("output missing </html>")
 	}
-	// Must contain one page div.
-	if !strings.Contains(out, `class="page"`) {
-		t.Error("output missing page div")
+	// Must contain one frpage div (new C# structure, 0-indexed).
+	if !strings.Contains(out, `class="frpage0"`) {
+		t.Error("output missing page div (frpage0)")
 	}
-	// Must contain all 3 data band divs.
-	count := strings.Count(out, `data-name="DataBand"`)
-	if count != 3 {
-		t.Errorf("expected 3 DataBand divs, got %d", count)
-	}
+	// Flat rendering: no band wrapper divs, DataBand name not in data-name attributes.
+	// Just verify the page structure is present.
 }
 
 // Scenario 2: Custom title appears in <title> tag.
@@ -124,11 +122,11 @@ func TestHTMLExport_EmbedCSS(t *testing.T) {
 		pg.AddBand(db)
 	})
 
-	// Default: CSS embedded.
+	// Default: CSS embedded (new format uses type="text/css").
 	expOn := html.NewExporter()
 	var bufOn bytes.Buffer
 	_ = expOn.Export(pp, &bufOn)
-	if !strings.Contains(bufOn.String(), "<style>") {
+	if !strings.Contains(bufOn.String(), "<style") {
 		t.Error("CSS should be embedded by default")
 	}
 
@@ -137,7 +135,7 @@ func TestHTMLExport_EmbedCSS(t *testing.T) {
 	expOff.EmbedCSS = false
 	var bufOff bytes.Buffer
 	_ = expOff.Export(pp, &bufOff)
-	if strings.Contains(bufOff.String(), "<style>") {
+	if strings.Contains(bufOff.String(), "<style") {
 		t.Error("CSS should not be embedded when EmbedCSS=false")
 	}
 }
@@ -167,7 +165,14 @@ func TestHTMLExport_MultiPage(t *testing.T) {
 		t.Fatalf("HTML Export: %v", err)
 	}
 
-	pageCount := strings.Count(buf.String(), `class="page"`)
+	// Count frpage{n} divs — one per page (0-indexed).
+	out := buf.String()
+	pageCount := 0
+	for i := 0; i < pp.Count(); i++ {
+		if strings.Contains(out, fmt.Sprintf(`class="frpage%d"`, i)) {
+			pageCount++
+		}
+	}
 	if pageCount != pp.Count() {
 		t.Errorf("HTML page div count = %d, want %d", pageCount, pp.Count())
 	}
@@ -225,9 +230,13 @@ func TestHTMLExport_PageRangeCurrent(t *testing.T) {
 		t.Fatalf("HTML Export: %v", err)
 	}
 
-	count := strings.Count(buf.String(), `class="page"`)
-	if count != 1 {
-		t.Errorf("PageRangeCurrent: page count = %d, want 1", count)
+	// With PageRangeCurrent, only one page exported → frpage0 present, frpage1 not.
+	outStr := buf.String()
+	if !strings.Contains(outStr, `class="frpage0"`) {
+		t.Errorf("PageRangeCurrent: expected frpage0 div, got: %s", outStr)
+	}
+	if strings.Contains(outStr, `class="frpage1"`) {
+		t.Errorf("PageRangeCurrent: should not have frpage1 div")
 	}
 }
 
@@ -498,7 +507,7 @@ func TestBothFormats_NonEmpty(t *testing.T) {
 	if pdfBuf.Len() == 0 {
 		t.Error("PDF output should not be empty")
 	}
-	if !strings.Contains(htmlBuf.String(), "<!DOCTYPE html>") {
+	if !strings.Contains(htmlBuf.String(), "<!DOCTYPE HTML PUBLIC") {
 		t.Error("HTML output missing DOCTYPE")
 	}
 	if !strings.HasPrefix(pdfBuf.String(), "%PDF-") {

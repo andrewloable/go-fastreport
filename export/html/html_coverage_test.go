@@ -51,19 +51,20 @@ func singlePageWithWatermark(wm *preview.PreparedWatermark) *preview.PreparedPag
 
 func TestExporter_ZeroScale_ExportPageBegin(t *testing.T) {
 	// Scale=0 should be clamped to 1.0 in ExportPageBegin, so the page div should
-	// show the raw page dimensions (594 × 841 at scale 1).
+	// show the raw page dimensions (594 × 841 at scale 1) plus the +3 C# offset.
 	pp := singlePageWithBand()
 	exp := html.NewExporter()
 	exp.Scale = 0 // triggers the `scale <= 0 → scale = 1` branch
 
 	out := exportHTMLWith(t, exp, pp)
 	// The page div must still be present even when Scale==0.
-	if !strings.Contains(out, `class="page"`) {
-		t.Error("ZeroScale: expected page div in output")
+	// New structure uses frpage0 class (not class="page").
+	if !strings.Contains(out, `class="frpage0"`) {
+		t.Error("ZeroScale: expected frpage0 div in output")
 	}
-	// Width must be the raw page width (594px), not 0px.
-	if !strings.Contains(out, "594.00px") {
-		t.Errorf("ZeroScale: expected 594.00px page width, got:\n%s", out)
+	// Width must be page width + 3 (C# +3 offset): 594+3=597px.
+	if !strings.Contains(out, "597.00px") {
+		t.Errorf("ZeroScale: expected 597.00px page width, got:\n%s", out)
 	}
 }
 
@@ -74,8 +75,9 @@ func TestExporter_NegativeScale_ExportPageBegin(t *testing.T) {
 	exp.Scale = -2
 
 	out := exportHTMLWith(t, exp, pp)
-	if !strings.Contains(out, "594.00px") {
-		t.Errorf("NegativeScale: expected 594.00px, got:\n%s", out)
+	// Width must be page width + 3 (C# +3 offset): 594+3=597px.
+	if !strings.Contains(out, "597.00px") {
+		t.Errorf("NegativeScale: expected 597.00px, got:\n%s", out)
 	}
 }
 
@@ -187,7 +189,8 @@ func TestExporter_WatermarkImage_EmptyBlobData(t *testing.T) {
 
 func TestExporter_ZeroScale_ExportBand(t *testing.T) {
 	// Scale=0 must be clamped to 1.0 inside ExportBand.
-	// A band at Top=100, Height=40 should appear at top:100.00px in the output.
+	// With flat rendering (no band wrappers), the page div should still appear.
+	// We verify the page structure is valid with clamped scale.
 	pp := preview.New()
 	pp.AddPage(594, 841, 1)
 	_ = pp.AddBand(&preview.PreparedBand{Name: "MyBand", Top: 100, Height: 40})
@@ -197,9 +200,13 @@ func TestExporter_ZeroScale_ExportBand(t *testing.T) {
 
 	out := exportHTMLWith(t, exp, pp)
 
-	// With clamped scale=1, the band top should be 100.00px.
-	if !strings.Contains(out, "top:100.00px") {
-		t.Errorf("ZeroScale ExportBand: expected top:100.00px, got:\n%s", out)
+	// With clamped scale=1 and flat rendering, page div must be present.
+	if !strings.Contains(out, `class="frpage0"`) {
+		t.Errorf("ZeroScale ExportBand: expected frpage0 div, got:\n%s", out)
+	}
+	// Width must use clamped scale=1: 594+3=597px.
+	if !strings.Contains(out, "597.00px") {
+		t.Errorf("ZeroScale ExportBand: expected 597.00px page width, got:\n%s", out)
 	}
 }
 

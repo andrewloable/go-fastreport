@@ -128,6 +128,9 @@ func (r *TableRow) Deserialize(rd report.Reader) error {
 	if err := r.ComponentBase.Deserialize(rd); err != nil {
 		return err
 	}
+	// ComponentBase.Deserialize defaults Height to 0; re-read with the table row
+	// default of 30 so that rows without an explicit Height attribute are usable.
+	r.SetHeight(rd.ReadFloat("Height", 30))
 	r.minHeight = rd.ReadFloat("MinHeight", 0)
 	r.maxHeight = rd.ReadFloat("MaxHeight", 1000)
 	r.autoSize = rd.ReadBool("AutoSize", false)

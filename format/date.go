@@ -5,22 +5,45 @@ import (
 	"time"
 )
 
+
 // DateFormat defines how date values are formatted and displayed.
-// The Format field uses Go time layout strings (e.g. "2006-01-02").
-// The zero value Format defaults to "2006-01-02" (ISO 8601 short date),
-// matching the intent of C#'s short-date "d" pattern.
+// The Format field accepts either Go time layout strings (e.g. "2006-01-02")
+// or C# standard date/time format specifiers (e.g. "d" for short date).
 type DateFormat struct {
-	// Format is a Go time layout string.
-	// Default: "2006-01-02"
+	// Format is a Go time layout string or a C# standard format specifier.
+	// Default: "d" (C# short date → M/d/yyyy, e.g. "8/12/2013")
 	Format string
 	// UseLocaleSettings is reserved for future locale-aware formatting.
 	UseLocaleSettings bool
 }
 
+// csharpDateLayouts maps C# standard date/time format specifiers to Go layouts.
+// These are the en-US defaults; locale-aware formatting is not yet supported.
+var csharpDateLayouts = map[string]string{
+	"d": "1/2/2006",                   // short date   → M/d/yyyy
+	"D": "Monday, January 2, 2006",    // long date
+	"f": "Monday, January 2, 2006 3:04 PM",  // full date/time (short time)
+	"F": "Monday, January 2, 2006 3:04:05 PM", // full date/time (long time)
+	"g": "1/2/2006 3:04 PM",           // general date/time (short time)
+	"G": "1/2/2006 3:04:05 PM",        // general date/time (long time)
+	"t": "3:04 PM",                    // short time
+	"T": "3:04:05 PM",                 // long time
+	"M": "January 2",                  // month/day
+	"m": "January 2",
+	"Y": "January 2006",               // year/month
+	"y": "January 2006",
+	"s": "2006-01-02T15:04:05",        // sortable
+	"u": "2006-01-02 15:04:05Z",       // universal sortable
+	"R": "Mon, 02 Jan 2006 15:04:05 GMT", // RFC1123
+	"r": "Mon, 02 Jan 2006 15:04:05 GMT",
+	"o": time.RFC3339Nano,             // round-trip
+	"O": time.RFC3339Nano,
+}
+
 // NewDateFormat returns a DateFormat with default settings.
 func NewDateFormat() *DateFormat {
 	return &DateFormat{
-		Format:            "2006-01-02",
+		Format:            "d",
 		UseLocaleSettings: false,
 	}
 }
@@ -36,7 +59,11 @@ func (f *DateFormat) FormatValue(v any) string {
 	}
 	layout := f.Format
 	if layout == "" {
-		layout = "2006-01-02"
+		layout = "d"
+	}
+	// Translate C# standard format specifiers to Go layout strings.
+	if goLayout, ok := csharpDateLayouts[layout]; ok {
+		layout = goLayout
 	}
 
 	if t, ok := toTime(v); ok {

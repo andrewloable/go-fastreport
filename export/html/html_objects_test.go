@@ -258,8 +258,9 @@ func TestRenderObject_Text_Hyperlink(t *testing.T) {
 		},
 	})
 	out := exportHTML(t, pp)
-	if !strings.Contains(out, `<a href="https://example.com"`) {
-		t.Errorf("hyperlink: expected anchor tag, got %q", out)
+	// New structure: outer <a> tag wraps the entire object div.
+	if !strings.Contains(out, `href="https://example.com"`) {
+		t.Errorf("hyperlink: expected href attribute, got %q", out)
 	}
 	if !strings.Contains(out, `target="_blank"`) {
 		t.Errorf("hyperlink: expected target=_blank, got %q", out)
@@ -344,8 +345,9 @@ func TestRenderObject_Picture_WithBlob(t *testing.T) {
 		},
 	})
 	out := exportHTML(t, pp)
-	if !strings.Contains(out, `<img src="data:image/png;base64,`) {
-		t.Errorf("picture with blob: expected base64 img tag, got %q", out)
+	// New rendering: images use CSS background in a <style> block (C# pattern).
+	if !strings.Contains(out, `url('data:image/Png;base64,`) {
+		t.Errorf("picture with blob: expected CSS background url with image/Png, got %q", out)
 	}
 }
 
@@ -367,8 +369,9 @@ func TestRenderObject_Picture_JPEG_Blob(t *testing.T) {
 		},
 	})
 	out := exportHTML(t, pp)
-	if !strings.Contains(out, `data:image/jpeg;base64,`) {
-		t.Errorf("JPEG picture: expected image/jpeg MIME in data URL, got %q", out)
+	// New rendering: images use CSS background (C# pattern) with capitalized MIME.
+	if !strings.Contains(out, `url('data:image/Jpeg;base64,`) {
+		t.Errorf("JPEG picture: expected CSS background url with image/Jpeg MIME, got %q", out)
 	}
 }
 
@@ -551,34 +554,38 @@ func TestRenderObject_DigitalSignature_EmptyText(t *testing.T) {
 func TestRenderObject_CheckBox_Checked(t *testing.T) {
 	pp := buildPage([]preview.PreparedObject{
 		{
-			Kind:  preview.ObjectTypeCheckBox,
-			Left:  0, Top: 0, Width: 20, Height: 20,
-			Text:  "true",
+			Kind:    preview.ObjectTypeCheckBox,
+			Left:    0, Top: 0, Width: 20, Height: 20,
+			Checked: true,
+			// CheckedSymbol 0 = checkmark (default)
 		},
 	})
 	out := exportHTML(t, pp)
-	if !strings.Contains(out, `type="checkbox"`) {
-		t.Errorf("checkbox checked: expected checkbox input, got %q", out)
+	// New rendering uses inline SVG with a polyline for the checkmark.
+	if !strings.Contains(out, `<svg`) {
+		t.Errorf("checkbox checked: expected SVG element, got %q", out)
 	}
-	if !strings.Contains(out, " checked") {
-		t.Errorf("checkbox checked: expected 'checked' attribute, got %q", out)
+	if !strings.Contains(out, `<polyline`) {
+		t.Errorf("checkbox checked: expected polyline checkmark in SVG, got %q", out)
 	}
 }
 
 func TestRenderObject_CheckBox_Unchecked(t *testing.T) {
 	pp := buildPage([]preview.PreparedObject{
 		{
-			Kind:  preview.ObjectTypeCheckBox,
-			Left:  0, Top: 0, Width: 20, Height: 20,
-			Text:  "false",
+			Kind:    preview.ObjectTypeCheckBox,
+			Left:    0, Top: 0, Width: 20, Height: 20,
+			Checked: false,
+			// UncheckedSymbol 0 = None (default) — just the box, no symbol
 		},
 	})
 	out := exportHTML(t, pp)
-	if !strings.Contains(out, `type="checkbox"`) {
-		t.Errorf("checkbox unchecked: expected checkbox input, got %q", out)
+	// New rendering uses inline SVG; unchecked with no symbol has an empty SVG.
+	if !strings.Contains(out, `<svg`) {
+		t.Errorf("checkbox unchecked: expected SVG element, got %q", out)
 	}
-	if strings.Contains(out, " checked") {
-		t.Errorf("checkbox unchecked: should not have 'checked' attribute, got %q", out)
+	if strings.Contains(out, `<polyline`) || strings.Contains(out, `<line`) {
+		t.Errorf("checkbox unchecked (None symbol): should not have symbol element, got %q", out)
 	}
 }
 
@@ -973,16 +980,18 @@ func TestExportPageEnd_WatermarkText_OnTop(t *testing.T) {
 }
 
 func TestExportPageEnd_PageClosingDiv(t *testing.T) {
-	// Every page should be closed by a </div>.
+	// Every page should produce a frpage{n} div.
 	pp := preview.New()
 	pp.AddPage(794, 1123, 1)
 	pp.AddPage(794, 1123, 2)
 	_ = pp.AddBand(&preview.PreparedBand{Name: "B", Top: 0, Height: 20})
 	out := exportHTML(t, pp)
-	// Two pages → two page-closing </div>s (at minimum).
-	count := strings.Count(out, `class="page"`)
-	if count != 2 {
-		t.Errorf("two pages: expected 2 page divs, got %d in %q", count, out)
+	// Two pages → frpage0 and frpage1 divs.
+	if !strings.Contains(out, `class="frpage0"`) {
+		t.Errorf("two pages: expected frpage0 div in %q", out)
+	}
+	if !strings.Contains(out, `class="frpage1"`) {
+		t.Errorf("two pages: expected frpage1 div in %q", out)
 	}
 }
 

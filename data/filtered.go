@@ -99,6 +99,11 @@ func (f *FilteredDataSource) seekInner() error {
 
 // ── DataSource interface ───────────────────────────────────────────────────────
 
+// Inner returns the underlying (unfiltered) DataSource that this
+// FilteredDataSource wraps. Used by relation-matching code to unwrap the
+// filter layer when comparing data source pointers.
+func (f *FilteredDataSource) Inner() DataSource { return f.inner }
+
 // Name delegates to inner.
 func (f *FilteredDataSource) Name() string { return f.inner.Name() }
 

@@ -86,6 +86,9 @@ func measureLine(line string, face font.Face) float32 {
 // wrapLines splits text into display lines, respecting explicit \n breaks and
 // word-wrapping at maxWidth pixels (if maxWidth > 0).
 func wrapLines(text string, face font.Face, maxWidth float32) []string {
+	// Normalize line endings before splitting.
+	text = strings.ReplaceAll(text, "\r\n", "\n")
+	text = strings.ReplaceAll(text, "\r", "\n")
 	// Split on explicit newlines first.
 	paragraphs := strings.Split(text, "\n")
 	if maxWidth <= 0 || face == nil {

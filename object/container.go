@@ -147,7 +147,9 @@ func (c *CheckBoxObject) Deserialize(r report.Reader) error {
 	if err := c.ReportComponentBase.Deserialize(r); err != nil {
 		return err
 	}
-	c.isChecked = r.ReadBool("Checked", false)
+	// FastReport.NET defaults Checked to true — the FRX only writes
+	// Checked="false" explicitly for unchecked boxes.
+	c.isChecked = r.ReadBool("Checked", true)
 	c.checkedSymbol = CheckedSymbol(r.ReadInt("CheckedSymbol", 0))
 	c.uncheckedSymbol = UncheckedSymbol(r.ReadInt("UncheckedSymbol", 0))
 	c.dataColumn = r.ReadStr("DataColumn", "")

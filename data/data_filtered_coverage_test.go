@@ -265,3 +265,30 @@ func TestFilteredDataSource_MultiKey_AllMatch(t *testing.T) {
 		t.Errorf("GetValue(status) = %v, want fresh", v2)
 	}
 }
+
+// TestFilteredDataSource_SeekInner_NextError_MockFail exercises seekInner's inner.Next()
+// error path (filtered.go:93-95). This requires target row index > 0 so seekInner
+// must call Next to advance; if Next fails the error propagates.
+func TestFilteredDataSource_SeekInner_NextError_MockFail(t *testing.T) {
+	inner := newMockFailSource("inner")
+	inner.addRow(map[string]any{"col": "x"})
+	inner.addRow(map[string]any{"col": "y"})
+	// Build with failNext=false so rebuildIndex captures both rows (indices 0 and 1).
+	fds, err := data.NewFilteredDataSource(inner, nil, nil)
+	if err != nil {
+		t.Fatalf("NewFilteredDataSource: %v", err)
+	}
+	if fds.RowCount() != 2 {
+		t.Fatalf("RowCount = %d, want 2", fds.RowCount())
+	}
+	// First(): cursor=0, target=0, seekInner calls First only (CurrentRowNo=0 not < 0) → ok.
+	if err := fds.First(); err != nil {
+		t.Fatalf("First: %v", err)
+	}
+	// Next(): cursor=1, target=1. seekInner calls First() (ok), then needs Next() to advance
+	// from CurrentRowNo=0 to target=1. With failNext=true, Next() returns error.
+	inner.failNext = true
+	if err := fds.Next(); err == nil {
+		t.Error("Next should propagate seekInner error when inner.Next() fails")
+	}
+}

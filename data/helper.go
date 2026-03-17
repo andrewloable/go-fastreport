@@ -114,14 +114,37 @@ func GetDataSource(dict DictionaryLookup, complexName string) DataSource {
 	return ds
 }
 
+// unwrapDS unwraps any FilteredDataSource layers to return the underlying
+// base DataSource. This is needed for pointer-based relation matching because
+// the engine wraps child data sources in FilteredDataSource during master-detail
+// rendering, and those wrappers should still match relations registered against
+// the original data source pointer.
+func unwrapDS(ds DataSource) DataSource {
+	type hasInner interface{ Inner() DataSource }
+	for {
+		if u, ok := ds.(hasInner); ok {
+			ds = u.Inner()
+		} else {
+			return ds
+		}
+	}
+}
+
 // FindRelation returns the Relation where parent and child match the given
 // data sources, or nil when no such relation is registered.
 // It first compares resolved DataSource pointers; if those are nil it falls
 // back to matching by data source name.
+// FilteredDataSource wrappers are unwrapped before pointer comparison so that
+// nested master-detail bands (whose parent DS is already wrapped) still find
+// the correct relation for their own children.
 func FindRelation(dict DictionaryLookup, parent, child DataSource) *Relation {
+	// Unwrap any FilteredDataSource layers for pointer comparison.
+	parentBase := unwrapDS(parent)
+	childBase := unwrapDS(child)
+
 	for _, r := range dict.Relations() {
 		if r.ParentDataSource != nil && r.ChildDataSource != nil {
-			if r.ParentDataSource == parent && r.ChildDataSource == child {
+			if r.ParentDataSource == parentBase && r.ChildDataSource == childBase {
 				return r
 			}
 			continue

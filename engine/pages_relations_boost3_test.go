@@ -329,3 +329,136 @@ func TestApplyRelationFilters_ChildAliasResolved(t *testing.T) {
 		t.Error("expected at least 1 prepared page")
 	}
 }
+
+// TestApplyRelationFilters_ThreeLevelNestedMasterDetail verifies that a 3-level
+// master-detail hierarchy (grandparent → parent → child) does NOT produce a
+// cartesian product when the parent DataBand's data source has been wrapped in a
+// FilteredDataSource by the grandparent's applyRelationFilters call.
+//
+// Bug: when the parent band's DS is a FilteredDataSource, FindRelation could not
+// match it against the relation's ParentDataSource pointer (which is the unwrapped
+// base DS), so the grandchild band never got filtered, iterating ALL grandchild
+// rows for every parent row → O(N*M) instead of O(M).
+//
+// Setup:
+//   - Employees: 2 rows (IDs 1, 2)
+//   - Orders: 3 rows (2 for employee 1, 1 for employee 2)
+//   - OrderDetails: 4 rows (2 for order 10, 1 for order 11, 1 for order 12)
+//
+// Relations: Employees→Orders (EmployeeID), Orders→OrderDetails (OrderID)
+//
+// Expected rendered DataBand rows:
+//   - Employee 1 → Orders 10, 11 → OrderDetails: 2+1 = 3 detail rows
+//   - Employee 2 → Order 12 → OrderDetails: 1 detail row
+//
+// Total detail (Data3/OrderDetails) band invocations: 4 (NOT 2*4=8 cartesian).
+func TestApplyRelationFilters_ThreeLevelNestedMasterDetail(t *testing.T) {
+	// ── Employees ──────────────────────────────────────────────────────────────
+	empDS := data.NewBaseDataSource("Employees")
+	empDS.SetAlias("Employees")
+	empDS.AddColumn(data.Column{Name: "EmployeeID"})
+	empDS.AddRow(map[string]any{"EmployeeID": "1"})
+	empDS.AddRow(map[string]any{"EmployeeID": "2"})
+	if err := empDS.Init(); err != nil {
+		t.Fatalf("empDS.Init: %v", err)
+	}
+
+	// ── Orders ─────────────────────────────────────────────────────────────────
+	ordDS := data.NewBaseDataSource("Orders")
+	ordDS.SetAlias("Orders")
+	ordDS.AddColumn(data.Column{Name: "OrderID"})
+	ordDS.AddColumn(data.Column{Name: "EmployeeID"})
+	ordDS.AddRow(map[string]any{"OrderID": "10", "EmployeeID": "1"})
+	ordDS.AddRow(map[string]any{"OrderID": "11", "EmployeeID": "1"})
+	ordDS.AddRow(map[string]any{"OrderID": "12", "EmployeeID": "2"})
+	if err := ordDS.Init(); err != nil {
+		t.Fatalf("ordDS.Init: %v", err)
+	}
+
+	// ── OrderDetails ───────────────────────────────────────────────────────────
+	detDS := data.NewBaseDataSource("OrderDetails")
+	detDS.SetAlias("OrderDetails")
+	detDS.AddColumn(data.Column{Name: "OrderID"})
+	detDS.AddRow(map[string]any{"OrderID": "10"})
+	detDS.AddRow(map[string]any{"OrderID": "10"})
+	detDS.AddRow(map[string]any{"OrderID": "11"})
+	detDS.AddRow(map[string]any{"OrderID": "12"})
+	if err := detDS.Init(); err != nil {
+		t.Fatalf("detDS.Init: %v", err)
+	}
+
+	// ── Relations ──────────────────────────────────────────────────────────────
+	relEmpOrd := &data.Relation{
+		Name:             "EmpOrd",
+		ParentDataSource: empDS,
+		ChildDataSource:  ordDS,
+		ParentColumns:    []string{"EmployeeID"},
+		ChildColumns:     []string{"EmployeeID"},
+	}
+	relOrdDet := &data.Relation{
+		Name:             "OrdDet",
+		ParentDataSource: ordDS,
+		ChildDataSource:  detDS,
+		ParentColumns:    []string{"OrderID"},
+		ChildColumns:     []string{"OrderID"},
+	}
+
+	// ── Report & bands ─────────────────────────────────────────────────────────
+	r := reportpkg.NewReport()
+	dict := r.Dictionary()
+	dict.AddDataSource(empDS)
+	dict.AddDataSource(ordDS)
+	dict.AddDataSource(detDS)
+	dict.AddRelation(relEmpOrd)
+	dict.AddRelation(relOrdDet)
+
+	pg := reportpkg.NewReportPage()
+
+	// Employee band (Data1)
+	empBand := band.NewDataBand()
+	empBand.SetName("Data1")
+	empBand.SetHeight(10)
+	empBand.SetVisible(true)
+	empBand.SetDataSource(empDS)
+
+	// Orders band (Data2) — nested inside empBand
+	ordBand := band.NewDataBand()
+	ordBand.SetName("Data2")
+	ordBand.SetHeight(10)
+	ordBand.SetVisible(true)
+	ordBand.SetDataSource(ordDS)
+
+	// OrderDetails band (Data3) — nested inside ordBand
+	detBand := band.NewDataBand()
+	detBand.SetName("Data3")
+	detBand.SetHeight(10)
+	detBand.SetVisible(true)
+	detBand.SetDataSource(detDS)
+
+	ordBand.Objects().Add(detBand)
+	empBand.Objects().Add(ordBand)
+	pg.AddBand(empBand)
+	r.AddPage(pg)
+
+	e := New(r)
+	if err := e.Run(DefaultRunOptions()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	// Count how many Data3 (OrderDetails) PreparedBands were rendered.
+	var detCount int
+	for i := 0; i < e.preparedPages.Count(); i++ {
+		pp := e.preparedPages.GetPage(i)
+		for _, pb := range pp.Bands {
+			if pb.Name == "Data3" {
+				detCount++
+			}
+		}
+	}
+
+	// Expect exactly 4 detail rows (2 for order 10, 1 for order 11, 1 for order 12).
+	// Without the fix, this would be 8 (2 employees × 4 detail rows = cartesian product).
+	if detCount != 4 {
+		t.Errorf("expected 4 OrderDetails band invocations, got %d (cartesian product bug?)", detCount)
+	}
+}

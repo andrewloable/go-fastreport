@@ -188,53 +188,76 @@ func (e *ReportEngine) BandHasHardPageBreaks(b *band.BandBase) bool {
 }
 
 // SplitHardPageBreaks splits b at the positions of objects with PageBreak=true
-// and returns the resulting band parts. Each part after the first has
-// StartNewPage=true, triggering a page break when rendered.
+// and returns the resulting band parts.
+//
+// The algorithm mirrors C# ReportEngine.SplitHardPageBreaks exactly:
+// iterate objects in order; when a PageBreak object is encountered, finish
+// the current part (if any) and start a new one with StartNewPage=true and
+// FirstRowStartsNewPage=true. Every object (including the PageBreak one) is
+// added to the current part with its Top adjusted relative to the part offset.
 //
 // If there are no hard breaks, a single-element slice containing the original
 // band is returned.
 func (e *ReportEngine) SplitHardPageBreaks(b *band.BandBase) []*band.BandBase {
-	// Collect break positions from objects that have PageBreak=true.
-	type breakPart struct {
-		name    string
-		topY    float32
-		height  float32
-		newPage bool
-	}
-
-	var breaks []float32
+	// Quick check: any PageBreak objects at all?
+	hasBreak := false
 	for i := 0; i < b.Objects().Len(); i++ {
-		obj := b.Objects().Get(i)
-		if pb, ok := obj.(pageBreaker); ok && pb.PageBreak() {
-			breaks = append(breaks, pb.Top())
+		if pb, ok := b.Objects().Get(i).(pageBreaker); ok && pb.PageBreak() {
+			hasBreak = true
+			break
 		}
 	}
-
-	if len(breaks) == 0 {
+	if !hasBreak {
 		return []*band.BandBase{b}
 	}
 
 	var parts []*band.BandBase
+	var currentPart *band.BandBase
 	offsetY := float32(0)
-	for idx, breakY := range breaks {
-		part := band.NewBandBase()
-		part.SetName(b.Name())
-		part.SetHeight(breakY - offsetY)
-		part.SetVisible(true)
-		if idx > 0 {
-			part.SetStartNewPage(true)
-		}
-		parts = append(parts, part)
-		offsetY = breakY
-	}
-	// Trailing part after last break.
-	last := band.NewBandBase()
-	last.SetName(b.Name())
-	last.SetHeight(b.Height() - offsetY)
-	last.SetVisible(true)
-	last.SetStartNewPage(true)
-	parts = append(parts, last)
 
+	for i := 0; i < b.Objects().Len(); i++ {
+		obj := b.Objects().Get(i)
+
+		// Check if this object triggers a page break.
+		pb, isPageBreak := obj.(pageBreaker)
+		if isPageBreak && pb.PageBreak() {
+			// End the current part.
+			if currentPart != nil {
+				currentPart.SetHeight(pb.Top() - offsetY)
+			}
+			currentPart = nil
+			offsetY = pb.Top()
+		}
+
+		// Start a new part if needed.
+		if currentPart == nil {
+			currentPart = band.NewBandBase()
+			currentPart.SetName(b.Name())
+			currentPart.SetVisible(true)
+			currentPart.SetWidth(b.Width())
+			if isPageBreak && pb.PageBreak() {
+				currentPart.SetStartNewPage(true)
+				currentPart.SetFirstRowStartsNewPage(true)
+			}
+			parts = append(parts, currentPart)
+		}
+
+		// Clone the object into the current part with adjusted Top.
+		// We add it to the part's Objects collection so showBand renders it.
+		type settableTop interface {
+			Top() float32
+			SetTop(float32)
+		}
+		if st, ok := obj.(settableTop); ok {
+			st.SetTop(st.Top() - offsetY)
+		}
+		currentPart.Objects().Add(obj)
+	}
+
+	// Set height of the last part.
+	if currentPart != nil {
+		currentPart.SetHeight(b.Height() - offsetY)
+	}
 	return parts
 }
 

@@ -6,6 +6,7 @@ package engine
 import (
 	"context"
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/andrewloable/go-fastreport/data"
@@ -56,6 +57,11 @@ type ReportEngine struct {
 	// totalPages is the total number of logical pages in the prepared output.
 	totalPages int
 
+	// knownTotalPages, when > 0, is the first-pass page count used by
+	// syncPageVariables as the TotalPages system variable during the second pass.
+	// This allows [TotalPages] expressions to resolve correctly in double-pass reports.
+	knownTotalPages int
+
 	// rowNo is the current data row number within the current data band (1-based).
 	rowNo int
 
@@ -103,15 +109,18 @@ type ReportEngine struct {
 	columnStartY float32
 
 	// keep-together state (see keep.go)
-	keeping      bool
-	keepPosition int
-	keepCurX     float32
-	keepCurY     float32
-	keepDeltaY   float32
+	keeping       bool
+	keepPosition  int
+	keepOutline   *preview.OutlineItem
+	keepBookmarks int
+	keepCurX      float32
+	keepCurY      float32
+	keepDeltaY    float32
 
 	// page number tracking (see pagenumbers.go)
 	pageNumbers   []pageNumberInfo
 	logicalPageNo int
+	curPage       int // zero-based index of the current prepared page (-1 before first AddPage)
 
 	// reprint headers/footers (see reprint.go)
 	reprintHeaders     []reprintEntry
@@ -125,6 +134,18 @@ type ReportEngine struct {
 
 	// ctx is an optional context for cancellation. Nil means no cancellation.
 	ctx context.Context
+
+	// isFirstReportPage is true until the first ReportPage template has
+	// started rendering. Used for page numbering and CanPrint logic.
+	isFirstReportPage bool
+
+	// firstReportPage is the PreparedPages index of the first page rendered
+	// for the current report. Used to determine first/last page for PrintOn.
+	firstReportPage int
+
+	// originX is the X offset used for reprint bands in subreport contexts.
+	// Mirrors C# ReportEngine.originX.
+	originX float32
 
 	// outputBand, when non-nil, redirects subreport band output into this
 	// PreparedBand instead of adding new PreparedBands to the page.
@@ -142,6 +163,7 @@ func New(r *reportpkg.Report) *ReportEngine {
 		pageNo:        1,
 		rowNo:         1,
 		absRowNo:      1,
+		curPage:       -1,
 		preparedPages: preview.New(),
 	}
 }
@@ -170,13 +192,46 @@ func (e *ReportEngine) PageWidth() float32 { return e.pageWidth }
 func (e *ReportEngine) PageHeight() float32 { return e.pageHeight }
 
 // FreeSpace returns the remaining vertical space on the current page in pixels.
-func (e *ReportEngine) FreeSpace() float32 { return e.freeSpace }
+// This mirrors the C# FreeSpace property:
+//
+//	PageHeight - PageFooterHeight - ColumnFooterHeight - GetFootersHeight() - CurY
+//
+// It computes dynamically from the current state rather than relying on a
+// decremented field.
+func (e *ReportEngine) FreeSpace() float32 {
+	// UnlimitedHeight: return effectively unlimited space so page breaks never trigger.
+	if e.currentPage != nil && e.currentPage.UnlimitedHeight {
+		return math.MaxFloat32 / 2
+	}
+	fs := e.pageHeight
+	fs -= e.PageFooterHeight()
+	fs -= e.ColumnFooterHeight()
+	fs -= e.getReprintFootersHeight()
+	fs -= e.curY
+	if fs < 0 {
+		fs = 0
+	}
+	return fs
+}
+
+// effectiveFreeSpace returns the free space available for data bands.
+// This is the same as FreeSpace() — it computes the C# FreeSpace property
+// which already deducts footer heights.
+func (e *ReportEngine) effectiveFreeSpace() float32 {
+	return e.FreeSpace()
+}
 
 // PageNo returns the current logical page number (1-based).
-func (e *ReportEngine) PageNo() int { return e.pageNo }
+// In C#, this calls GetLogicalPageNumber() which reads from the pageNumbers
+// array and applies InitialPageNumber. The Go version delegates to the same
+// helper, falling back to the raw pageNo when the array is empty.
+func (e *ReportEngine) PageNo() int { return e.GetLogicalPageNumber() }
 
 // TotalPages returns the total number of logical pages prepared so far.
-func (e *ReportEngine) TotalPages() int { return e.totalPages }
+// In C#, this calls GetLogicalTotalPages() which reads from the pageNumbers
+// array. The Go version delegates to the same helper, falling back to the
+// raw totalPages when the array is empty.
+func (e *ReportEngine) TotalPages() int { return e.GetLogicalTotalPages() }
 
 // RowNo returns the current data row number within the current data band (1-based).
 func (e *ReportEngine) RowNo() int { return e.rowNo }
@@ -243,7 +298,6 @@ func (e *ReportEngine) Run(opts RunOptions) error {
 func (e *ReportEngine) runPhase1(resetDataState bool) error {
 	e.date = time.Now()
 	e.aborted = false
-	e.finalPass = false
 	e.startReportFired = false
 
 	// Seed system variables into the dictionary before data init.
@@ -280,20 +334,47 @@ func (e *ReportEngine) runPhase2(appendMode bool) error {
 	if err := e.prepareToFirstPass(appendMode); err != nil {
 		return err
 	}
+
+	// Fire ReportStarted before page iteration (matches C# RunReportPages wrapper).
+	e.OnStateChanged(e.report, EngineStateReportStarted)
+
 	if err := e.runReportPages(); err != nil {
 		return err
 	}
 
+	// Fire ReportFinished after first pass page iteration.
+	e.OnStateChanged(e.report, EngineStateReportFinished)
+
+	// Reset logical page numbers between passes.
+	e.ResetLogicalPageNumber()
+
 	// Double-pass: run a second (final) pass to resolve TotalPages references.
+	// The first pass establishes totalPages; the second pass re-renders the
+	// report with that value known. The first-pass output must be discarded so
+	// that the final PreparedPages contains only the second-pass result.
 	if e.report.DoublePass && !e.aborted {
 		e.finalPass = true
+		// Save first-pass total so TotalPages expressions resolve correctly.
+		e.knownTotalPages = e.totalPages
+		e.totalPages = 0
 		e.resetPageNumber()
+		// Clear first-pass output before re-rendering.
+		if e.preparedPages != nil {
+			e.preparedPages.Clear()
+		}
 		if err := e.prepareToSecondPass(); err != nil {
 			return err
 		}
+
+		e.OnStateChanged(e.report, EngineStateReportStarted)
+
 		if err := e.runReportPages(); err != nil {
 			return err
 		}
+
+		e.OnStateChanged(e.report, EngineStateReportFinished)
+
+		e.knownTotalPages = 0 // reset after second pass
 	}
 	return nil
 }
@@ -307,8 +388,6 @@ func (e *ReportEngine) runFinished() {
 	if e.report.OnFinishReport != nil {
 		e.report.OnFinishReport()
 	}
-	// Process any deferred text objects waiting for ReportFinished.
-	e.OnStateChanged(nil, EngineStateReportFinished)
 	e.limitPreparedPages()
 }
 
@@ -351,6 +430,8 @@ var dataSourceInit = func(ds *data.BaseDataSource) error {
 // `return err` branch in runPhase2 (the first-pass prepare step) that is
 // otherwise unreachable because the function always returns nil in production.
 var prepareToFirstPassHook = func(e *ReportEngine, appendMode bool) error {
+	// Mirror C# PrepareToFirstPass: set finalPass based on DoublePass.
+	e.finalPass = !e.report.DoublePass
 	if !appendMode {
 		e.pageNo = e.report.InitialPageNumber
 		e.totalPages = 0
@@ -359,8 +440,17 @@ var prepareToFirstPassHook = func(e *ReportEngine, appendMode bool) error {
 		e.curColumn = 0
 		e.rowNo = 1
 		e.absRowNo = 1
+		if e.preparedPages != nil {
+			e.preparedPages.Clear()
+		}
 	}
+	e.isFirstReportPage = true
+	e.hierarchyLevel = 1
 	e.freeSpace = e.pageHeight
+	// Initialise reprint lists, page numbers, and clear deferred objects.
+	e.initReprint()
+	e.initPageNumbers()
+	e.deferredObjects = nil
 	return nil
 }
 
@@ -375,6 +465,8 @@ var prepareToSecondPassHook = func(e *ReportEngine) error {
 	e.rowNo = 1
 	e.absRowNo = 1
 	e.freeSpace = e.pageHeight
+	// Mirror C# PrepareToSecondPass: clear totals, deferred objects, first-pass output.
+	e.deferredObjects = nil
 	return nil
 }
 
@@ -423,6 +515,9 @@ func (e *ReportEngine) runReportPages() error {
 // resetPageNumber resets the logical page counter for the second pass.
 func (e *ReportEngine) resetPageNumber() {
 	e.pageNo = e.report.InitialPageNumber
+	e.curPage = -1
+	e.isFirstReportPage = true
+	e.firstReportPage = 0
 }
 
 // limitPreparedPages enforces the MaxPages limit by trimming both the counter
@@ -448,7 +543,8 @@ func (e *ReportEngine) DataSources() []*data.BaseDataSource {
 
 // ── Position helpers ──────────────────────────────────────────────────────────
 
-// AdvanceY moves the vertical position down by delta pixels and reduces free space.
+// AdvanceY moves the vertical position down by delta pixels.
+// Also decrements the freeSpace field to keep it in sync with curY.
 func (e *ReportEngine) AdvanceY(delta float32) {
 	e.curY += delta
 	e.freeSpace -= delta
@@ -458,11 +554,13 @@ func (e *ReportEngine) AdvanceY(delta float32) {
 }
 
 // NewPage resets the vertical position for a new page and increments counters.
+// It also updates the logical page numbering to keep TotalPages() correct.
 func (e *ReportEngine) NewPage() {
 	e.curY = 0
 	e.curX = 0
 	e.curColumn = 0
-	e.freeSpace = e.pageHeight
 	e.totalPages++
 	e.pageNo++
+	e.curPage++
+	e.IncLogicalPageNumber()
 }

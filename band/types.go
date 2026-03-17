@@ -296,6 +296,9 @@ type DataBand struct {
 	parentIDColumn       string
 	indent               float32
 	keepSummary          bool
+	collectChildRows     bool
+	resetPageNumber      bool
+	rowCount             int // virtual row count when no DataSource is set (default 1)
 
 	// dataSourceAlias is the name/alias from the FRX DataSource attribute.
 	// The engine resolves this to a live DataSource from the Dictionary at run time.
@@ -312,6 +315,7 @@ type DataBand struct {
 func NewDataBand() *DataBand {
 	b := NewBandBase()
 	b.FlagCheckFreeSpace = true // DataBands respect page free-space by default.
+	b.FlagIsDataBand = true     // Used by engine child-band filtering (C# "band is DataBand").
 	return &DataBand{
 		BandBase: *b,
 		columns:  NewBandColumns(),
@@ -419,6 +423,44 @@ func (d *DataBand) KeepSummary() bool { return d.keepSummary }
 // SetKeepSummary sets keep-summary.
 func (d *DataBand) SetKeepSummary(v bool) { d.keepSummary = v }
 
+// CollectChildRows returns whether the master band collects all child rows
+// under a single master row (flattened master-detail).
+func (d *DataBand) CollectChildRows() bool { return d.collectChildRows }
+
+// SetCollectChildRows sets the collect-child-rows flag.
+func (d *DataBand) SetCollectChildRows(v bool) { d.collectChildRows = v }
+
+// ResetPageNumber returns whether the page number resets when this band starts printing.
+func (d *DataBand) ResetPageNumber() bool { return d.resetPageNumber }
+
+// SetResetPageNumber sets the reset-page-number flag.
+func (d *DataBand) SetResetPageNumber(v bool) { d.resetPageNumber = v }
+
+// VirtualRowCount returns the number of virtual rows when no DataSource is set (default 1).
+func (d *DataBand) VirtualRowCount() int { return d.rowCount }
+
+// SetVirtualRowCount sets the virtual row count.
+func (d *DataBand) SetVirtualRowCount(n int) { d.rowCount = n }
+
+// IsDatasourceEmpty returns true when the data source is nil or has zero rows.
+func (d *DataBand) IsDatasourceEmpty() bool {
+	return d.dataSource == nil || d.dataSource.RowCount() == 0
+}
+
+// IsDeepmostDataBand returns true when this DataBand has no nested sub-bands.
+func (d *DataBand) IsDeepmostDataBand() bool {
+	if d.objects == nil {
+		return true
+	}
+	for i := 0; i < d.objects.Len(); i++ {
+		switch d.objects.Get(i).(type) {
+		case *DataBand, *GroupHeaderBand:
+			return false
+		}
+	}
+	return true
+}
+
 // Serialize writes DataBand properties that differ from defaults.
 // Attributes are written before child objects (required by the streaming XML encoder).
 func (d *DataBand) Serialize(w report.Writer) error {
@@ -469,6 +511,15 @@ func (d *DataBand) Serialize(w report.Writer) error {
 	if d.keepSummary {
 		w.WriteBool("KeepSummary", true)
 	}
+	if d.collectChildRows {
+		w.WriteBool("CollectChildRows", true)
+	}
+	if d.resetPageNumber {
+		w.WriteBool("ResetPageNumber", true)
+	}
+	if d.rowCount != 1 {
+		w.WriteInt("RowCount", d.rowCount)
+	}
 	// Write child objects after all attrs.
 	return d.BandBase.serializeChildren(w)
 }
@@ -503,6 +554,9 @@ func (d *DataBand) Deserialize(r report.Reader) error {
 	d.parentIDColumn = r.ReadStr("ParentIdColumn", "")
 	d.indent = r.ReadFloat("Indent", 0)
 	d.keepSummary = r.ReadBool("KeepSummary", false)
+	d.collectChildRows = r.ReadBool("CollectChildRows", false)
+	d.resetPageNumber = r.ReadBool("ResetPageNumber", false)
+	d.rowCount = r.ReadInt("RowCount", 1)
 	if n := r.ReadInt("Columns.Count", 0); n > 0 {
 		_ = d.columns.SetCount(n)
 	}

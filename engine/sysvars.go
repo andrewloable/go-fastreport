@@ -23,10 +23,12 @@ func (e *ReportEngine) syncSystemVariables() {
 	if d == nil {
 		return
 	}
-	d.SetSystemVariable("PageNumber", e.pageNo)
-	d.SetSystemVariable("TotalPages", e.totalPages)
-	d.SetSystemVariable("PageN", fmt.Sprintf("Page %d", e.pageNo))
-	d.SetSystemVariable("PageNofM", fmt.Sprintf("Page %d of %d", e.pageNo, e.totalPages))
+	pageNo := e.GetLogicalPageNumber()
+	totalPages := e.GetLogicalTotalPages()
+	d.SetSystemVariable("PageNumber", pageNo)
+	d.SetSystemVariable("TotalPages", totalPages)
+	d.SetSystemVariable("PageN", fmt.Sprintf("Page %d", pageNo))
+	d.SetSystemVariable("PageNofM", fmt.Sprintf("Page %d of %d", pageNo, totalPages))
 	d.SetSystemVariable("Date", e.date.Format("2006-01-02"))
 	d.SetSystemVariable("Time", e.date.Format("15:04:05"))
 	d.SetSystemVariable("Row", e.rowNo)
@@ -50,6 +52,8 @@ func (e *ReportEngine) syncRowVariables() {
 }
 
 // syncPageVariables updates page-related system variables when a new page starts.
+// Uses GetLogicalPageNumber/GetLogicalTotalPages which read from the
+// pageNumbers array (mirroring C# PageNo/TotalPages properties).
 func (e *ReportEngine) syncPageVariables() {
 	if e.report == nil {
 		return
@@ -58,10 +62,12 @@ func (e *ReportEngine) syncPageVariables() {
 	if d == nil {
 		return
 	}
-	d.SetSystemVariable("PageNumber", e.pageNo)
-	d.SetSystemVariable("TotalPages", e.totalPages)
-	d.SetSystemVariable("PageN", fmt.Sprintf("Page %d", e.pageNo))
-	d.SetSystemVariable("PageNofM", fmt.Sprintf("Page %d of %d", e.pageNo, e.totalPages))
+	pageNo := e.GetLogicalPageNumber()
+	totalPages := e.GetLogicalTotalPages()
+	d.SetSystemVariable("PageNumber", pageNo)
+	d.SetSystemVariable("TotalPages", totalPages)
+	d.SetSystemVariable("PageN", fmt.Sprintf("Page %d", pageNo))
+	d.SetSystemVariable("PageNofM", fmt.Sprintf("Page %d of %d", pageNo, totalPages))
 	d.SetSystemVariable("Date", e.date.Format("2006-01-02"))
 	d.SetSystemVariable("Time", e.date.Format("15:04:05"))
 }

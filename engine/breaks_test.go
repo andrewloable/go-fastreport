@@ -88,11 +88,49 @@ func TestSplitHardPageBreaks_OneBreak(t *testing.T) {
 	b.AddChild(rc)
 
 	parts := e.SplitHardPageBreaks(b)
+	// C# behaviour: when the only object has PageBreak=true, a single part is
+	// created starting at that object's position with StartNewPage=true.
+	// There is no "before" part because there are no objects before the break.
+	if len(parts) != 1 {
+		t.Fatalf("1 break (only PageBreak obj): expected 1 part, got %d", len(parts))
+	}
+	if parts[0].Height() != 60 {
+		t.Errorf("part[0] height = %v, want 60", parts[0].Height())
+	}
+	if !parts[0].StartNewPage() {
+		t.Error("part[0] should have StartNewPage=true")
+	}
+}
+
+func TestSplitHardPageBreaks_OneBreak_WithObjsBefore(t *testing.T) {
+	e := engine.New(reportpkg.NewReport())
+	b := band.NewBandBase()
+	b.SetHeight(100)
+	b.SetName("TestBand2")
+
+	// Object before the break.
+	obj1 := report.NewReportComponentBase()
+	obj1.SetTop(10)
+	obj1.SetHeight(15)
+	b.AddChild(obj1)
+
+	// PageBreak object.
+	rc := report.NewReportComponentBase()
+	rc.SetTop(40)
+	rc.SetPageBreak(true)
+	b.AddChild(rc)
+
+	parts := e.SplitHardPageBreaks(b)
+	// C# behaviour: 2 parts. First part has objects before the break,
+	// second part starts at the break with StartNewPage=true.
 	if len(parts) != 2 {
-		t.Fatalf("1 break: expected 2 parts, got %d", len(parts))
+		t.Fatalf("1 break with objs before: expected 2 parts, got %d", len(parts))
 	}
 	if parts[0].Height() != 40 {
 		t.Errorf("part[0] height = %v, want 40", parts[0].Height())
+	}
+	if parts[0].StartNewPage() {
+		t.Error("part[0] should NOT have StartNewPage=true")
 	}
 	if parts[1].Height() != 60 {
 		t.Errorf("part[1] height = %v, want 60", parts[1].Height())

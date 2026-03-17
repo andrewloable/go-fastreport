@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"image/color"
 	"io"
+	"math"
 	"strings"
 
 	"github.com/andrewloable/go-fastreport/export"
@@ -21,16 +22,16 @@ import (
 // Output structure (matching C# FastReport HTML export):
 //
 //	<html><body>
+//	  <style media="print">...page break CSS...</style>
+//	  <style>...content CSS classes...</style>
 //	  <div class="frpage-container">
 //	    <a name="PageN1" ...></a>
-//	    <div class="frpage0" ...> <!-- one per page, 0-indexed -->
-//	      <div class="sN" style="left:...;top:...;..."> <!-- objects flat, page-absolute -->
+//	    <div class="frpage0" ...>  <!-- one per page, 0-indexed -->
+//	      <div class="sN" style="left:...;top:...;...">  <!-- objects -->
 //	        <div class="sM">text content</div>
 //	      </div>
 //	    </div>
 //	  </div>
-//	  <style>...print CSS...</style>
-//	  <style>...content CSS...</style>
 //	</body></html>
 type Exporter struct {
 	export.ExportBase
@@ -79,14 +80,8 @@ func (e *Exporter) Start() error {
 	e.sb.Reset()
 	e.pageIdx = 0
 	e.css = newCSSRegistry()
-	e.sb.WriteString("<!DOCTYPE HTML PUBLIC \"-//W3C//DTD HTML 4.01 Transitional//EN\">\n")
-	e.sb.WriteString("<html><head>\n")
-	e.sb.WriteString("<meta http-equiv=\"Content-Type\" content=\"text/html; charset=utf-8\">\n")
-	e.sb.WriteString("<meta name=Generator content=\"FastReport http://www.fast-report.com\">\n")
-	e.sb.WriteString(fmt.Sprintf("<title>%s</title>\n", export.HTMLString(e.Title)))
-	e.sb.WriteString("</head>\n")
-	e.sb.WriteString("<body bgcolor=\"#FFFFFF\" text=\"#000000\">\n")
-	e.sb.WriteString("<div class=\"frpage-container\">\n")
+	// Head and body preamble are written here; the CSS blocks and frpage-container
+	// are assembled in Finish() to match C# order (CSS before content).
 	return nil
 }
 
@@ -100,15 +95,21 @@ func (e *Exporter) ExportPageBegin(pg *preview.PreparedPage) error {
 	pageW := w + 3.0*scale // C# adds +3 to page div width
 	e.zIdx = 0
 	pageN := e.pageIdx + 1
+
 	e.sb.WriteString(fmt.Sprintf(
 		"<a name=\"PageN%d\" id=\"PageN%d\" style=\"padding:0;margin:0;font-size:1px;\"></a>",
 		pageN, pageN,
 	))
+
+	// C# inserts a page-break div before pages 2+ (singlePage && pageBreaks).
+	if e.pageIdx > 0 {
+		e.sb.WriteString("<div style=\"break-after:page\"></div>")
+	}
+
 	e.sb.WriteString(fmt.Sprintf(
-		"<div class=\"frpage%d\" style=\"position:relative; width:%.2fpx; height:%.2fpx; background-color:rgb(255, 255, 255)\">",
-		e.pageIdx, pageW, h,
+		"<div class=\"frpage%d\" style=\"position:relative; width:%spx; height:%spx; background-color:%s\">",
+		e.pageIdx, pxVal(pageW), pxVal(h), "rgb(255, 255, 255)",
 	))
-	e.sb.WriteString("\n")
 
 	// Watermark behind page content.
 	if wm := pg.Watermark; wm != nil && wm.Enabled {
@@ -249,9 +250,6 @@ func (e *Exporter) renderObjectLayered(obj preview.PreparedObject, scale float32
 	e.sb = savedSB
 
 	// Inject z-index into the first style=" attribute of the rendered element.
-	// For text objects the outer div has inline style="left:...;top:...;" so we
-	// can reliably inject at the start of the first style attribute value.
-	// For non-text objects the positional string contains "position:absolute;".
 	zStyle := fmt.Sprintf("z-index:%d;", e.zIdx)
 	// Try injecting after "position:absolute;" first (non-text objects).
 	if strings.Contains(rendered, "position:absolute;") {
@@ -302,109 +300,7 @@ func (e *Exporter) renderObject(obj preview.PreparedObject, scale float32) {
 
 	switch obj.Kind {
 	case preview.ObjectTypeText:
-		// Build outer div CSS class: text-align, position info, color, background, border, size.
-		font := obj.Font
-		// Convert font size from pt to px (96dpi / 72pt = 1.3333...) to match C# output.
-		fontPx := font.Size * 96.0 / 72.0
-		lineH := fontPx * 1.21 // approximate line height
-
-		var outerCSS strings.Builder
-		// text-align
-		switch obj.HorzAlign {
-		case 1:
-			outerCSS.WriteString("text-align:center;")
-		case 2:
-			outerCSS.WriteString("text-align:right;")
-		case 3:
-			outerCSS.WriteString("text-align:justify;")
-		default:
-			outerCSS.WriteString("text-align:left;")
-		}
-		outerCSS.WriteString("position:absolute;")
-		tc := obj.TextColor
-		outerCSS.WriteString(fmt.Sprintf("color:%s;", rgbColor(tc)))
-		fc := obj.FillColor
-		if fc.A > 0 {
-			outerCSS.WriteString(fmt.Sprintf("background-color:%s;", rgbColor(fc)))
-		} else {
-			outerCSS.WriteString("background-color:transparent;")
-		}
-		// Border from shared CSS (or border:none if no border)
-		borderStr := borderCSS(&obj.Border, scale)
-		if borderStr != "" {
-			outerCSS.WriteString(borderStr)
-		} else {
-			outerCSS.WriteString("border:none;")
-		}
-		outerCSS.WriteString(fmt.Sprintf("width:%.2fpx;height:%.2fpx;", w, h))
-
-		outerClass := e.css.Register(outerCSS.String())
-
-		// Build inner div CSS class: font, display, width, padding, vertical alignment.
-		var innerCSS strings.Builder
-		if font.Style&style.FontStyleBold != 0 {
-			innerCSS.WriteString("font-weight:bold;")
-		}
-		if font.Style&style.FontStyleItalic != 0 {
-			innerCSS.WriteString("font-style:italic;")
-		}
-		if font.Style&style.FontStyleUnderline != 0 {
-			innerCSS.WriteString("text-decoration:underline;")
-		}
-		innerCSS.WriteString(fmt.Sprintf("font-family:'%s';font-size:%.2fpx;line-height:%.2f;", font.Name, fontPx, 1.21))
-		if obj.WordWrap {
-			innerCSS.WriteString("word-wrap:break-word;white-space:normal;")
-		} else {
-			innerCSS.WriteString("white-space:nowrap;")
-		}
-		innerCSS.WriteString("overflow:hidden;")
-
-		// Vertical alignment via display:flex + align-items, or margin-top.
-		switch obj.VertAlign {
-		case 1: // center
-			innerCSS.WriteString("display:flex;align-items:center;")
-			switch obj.HorzAlign {
-			case 1:
-				innerCSS.WriteString("justify-content:center;")
-			case 2:
-				innerCSS.WriteString("justify-content:flex-end;")
-			}
-		case 2: // bottom
-			innerCSS.WriteString("display:flex;align-items:flex-end;")
-			switch obj.HorzAlign {
-			case 1:
-				innerCSS.WriteString("justify-content:center;")
-			case 2:
-				innerCSS.WriteString("justify-content:flex-end;")
-			}
-		default: // top (0)
-			// Compute inner width (subtract padding if available; padding not in PreparedObject, use full width).
-			innerW := w
-			innerCSS.WriteString(fmt.Sprintf("display:block;border:0;width:%.2fpx;", innerW))
-		}
-		_ = lineH // used for future paragraph height calculations
-
-		innerClass := e.css.Register(innerCSS.String())
-
-		// Format text content: use <p> tags for line breaks.
-		innerText := export.HTMLString(obj.Text)
-		innerText = formatTextParagraphs(innerText)
-
-		// Outer div style: positional (left, top, width, height).
-		outerStyle := fmt.Sprintf("left:%.2fpx;top:%.2fpx;width:%.2fpx;height:%.2fpx;", left, top, w, h)
-
-		// Hyperlink wrapping (px00): wrap entire div with outer <a> tag.
-		if obj.HyperlinkKind == 1 && obj.HyperlinkValue != "" {
-			linkColor := rgbColor(tc)
-			e.sb.WriteString(fmt.Sprintf(`<a style="color:%s" href="%s" target="_blank">`, linkColor, export.HTMLString(obj.HyperlinkValue)))
-			e.sb.WriteString(fmt.Sprintf(`<div class="%s" style="cursor:pointer;%s">`, outerClass, outerStyle))
-			e.sb.WriteString(fmt.Sprintf(`<div class="%s">%s</div>`, innerClass, innerText))
-			e.sb.WriteString("</div></a>")
-		} else {
-			e.sb.WriteString(fmt.Sprintf(`<div class="%s" style="%s">`, outerClass, outerStyle))
-			e.sb.WriteString(fmt.Sprintf(`<div class="%s">%s</div>`, innerClass, innerText))
-			e.sb.WriteString("</div>")
-		}
+		e.renderTextObject(obj, scale)
 
 	case preview.ObjectTypeHtml:
 		// Emit raw HTML markup inside a positioned container div.
@@ -537,7 +433,7 @@ func (e *Exporter) renderObject(obj preview.PreparedObject, scale float32) {
 		e.sb.WriteString(fmt.Sprintf(`<svg width="%.2f" height="%.2f" style="position:absolute;top:0;left:0;width:100%%;height:100%%;">`, w, h))
 
 		switch symbol {
-		case 0: // checkmark ✓
+		case 0: // checkmark
 			e.sb.WriteString(fmt.Sprintf(
 				`<polyline points="%.2f,%.2f %.2f,%.2f %.2f,%.2f" stroke="%s" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>`,
 				w*0.15, h*0.5,
@@ -545,7 +441,7 @@ func (e *Exporter) renderObject(obj preview.PreparedObject, scale float32) {
 				w*0.85, h*0.25,
 				strokeColor,
 			))
-		case 1: // cross ✗
+		case 1: // cross
 			e.sb.WriteString(fmt.Sprintf(
 				`<line x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f" stroke="%s" stroke-width="2"/>`,
 				w*0.2, h*0.2, w*0.8, h*0.8, strokeColor,
@@ -554,7 +450,7 @@ func (e *Exporter) renderObject(obj preview.PreparedObject, scale float32) {
 				`<line x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f" stroke="%s" stroke-width="2"/>`,
 				w*0.8, h*0.2, w*0.2, h*0.8, strokeColor,
 			))
-		case 2: // plus +
+		case 2: // plus
 			e.sb.WriteString(fmt.Sprintf(
 				`<line x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f" stroke="%s" stroke-width="2"/>`,
 				w*0.5, h*0.15, w*0.5, h*0.85, strokeColor,
@@ -661,10 +557,7 @@ func (e *Exporter) renderObject(obj preview.PreparedObject, scale float32) {
 		if obj.BlobIdx >= 0 && e.pp != nil {
 			if svgData := e.pp.BlobStore.Get(obj.BlobIdx); len(svgData) > 0 {
 				// Emit SVG inline inside a positioned container div.
-				// The SVG is adjusted to fill the bounding box via width/height overrides.
 				e.sb.WriteString(fmt.Sprintf(`<div %s>`, styleAttr("")))
-				// Strip any existing width/height attributes from the root <svg> tag
-				// so that CSS controls the size. This is a simple prefix injection.
 				svgStr := string(svgData)
 				e.sb.WriteString(svgStr)
 				e.sb.WriteString(`</div>`)
@@ -677,6 +570,190 @@ func (e *Exporter) renderObject(obj preview.PreparedObject, scale float32) {
 	default:
 		// Unknown/unhandled type — render an empty placeholder.
 		e.sb.WriteString(fmt.Sprintf(`<div %s></div>`, styleAttr("")))
+	}
+}
+
+// renderTextObject renders a text object matching C# HTMLExportLayers output.
+// Outer div: class with font+alignment+color+background+border+size, inline style with position.
+// Inner div: class with display:block;border:0;width;padding;margin-top.
+func (e *Exporter) renderTextObject(obj preview.PreparedObject, scale float32) {
+	left := obj.Left * scale
+	top := obj.Top * scale
+	w := obj.Width * scale
+	h := obj.Height * scale
+
+	font := obj.Font
+	// Convert font size from pt to px (96dpi / 72pt = 1.3333...) to match C# output.
+	fontPx := font.Size * 96.0 / 72.0
+
+	// ── Build outer CSS class (matches C# GetStyle + GetStyleFromObject) ──
+	var outerCSS strings.Builder
+
+	// Font style (C# HTMLFontStyle: bold, italic/normal, underline+strikeout, family, size, line-height)
+	if font.Style&style.FontStyleBold != 0 {
+		outerCSS.WriteString("font-weight:bold;")
+	}
+	if font.Style&style.FontStyleItalic != 0 {
+		outerCSS.WriteString("font-style:italic;")
+	} else {
+		outerCSS.WriteString("font-style:normal;")
+	}
+	if font.Style&style.FontStyleUnderline != 0 && font.Style&style.FontStyleStrikeout != 0 {
+		outerCSS.WriteString("text-decoration:underline|line-through;")
+	} else if font.Style&style.FontStyleUnderline != 0 {
+		outerCSS.WriteString("text-decoration:underline;")
+	} else if font.Style&style.FontStyleStrikeout != 0 {
+		outerCSS.WriteString("text-decoration:line-through;")
+	}
+	// C# uses unquoted font-family and "line-height: " (space after colon).
+	outerCSS.WriteString(fmt.Sprintf("font-family:%s;font-size:%spx;", font.Name, pxVal(fontPx)))
+
+	// Line height: C# uses lineSpacing/emHeight ratio, default ~1.21.
+	// If LineHeight > 0 from the object, use Px(LineHeight) format.
+	if obj.LineHeight > 0 {
+		outerCSS.WriteString(fmt.Sprintf("line-height: %spx;", pxVal(obj.LineHeight)))
+	} else {
+		outerCSS.WriteString("line-height: 1.21;")
+	}
+
+	// text-align (C# GetStyle: uses RTL-aware alignment).
+	outerCSS.WriteString("text-align:")
+	switch obj.HorzAlign {
+	case 1:
+		outerCSS.WriteString("center")
+	case 2:
+		if obj.RTL {
+			outerCSS.WriteString("left")
+		} else {
+			outerCSS.WriteString("right")
+		}
+	case 3:
+		outerCSS.WriteString("justify")
+	default:
+		if obj.RTL {
+			outerCSS.WriteString("right")
+		} else {
+			outerCSS.WriteString("left")
+		}
+	}
+	outerCSS.WriteString(";")
+
+	// word-wrap and overflow (C# GetStyle).
+	if obj.WordWrap {
+		outerCSS.WriteString("word-wrap:break-word;")
+	}
+	if obj.Clip {
+		outerCSS.WriteString("overflow:hidden;")
+	}
+
+	// position:absolute, color, background-color, RTL (C# GetStyle).
+	outerCSS.WriteString("position:absolute;")
+	tc := obj.TextColor
+	outerCSS.WriteString(fmt.Sprintf("color:%s;", rgbColor(tc)))
+	fc := obj.FillColor
+	if fc.A > 0 {
+		outerCSS.WriteString(fmt.Sprintf("background-color:%s;", rgbColor(fc)))
+	} else {
+		outerCSS.WriteString("background-color:transparent;")
+	}
+	if obj.RTL {
+		outerCSS.WriteString("direction:rtl;")
+	}
+
+	// Border (C# HTMLBorder).
+	borderStr := borderCSS(&obj.Border, scale)
+	if borderStr != "" {
+		outerCSS.WriteString(borderStr)
+	} else {
+		outerCSS.WriteString("border:none;")
+	}
+
+	// Width and height (C# GetStyle appends width/height).
+	outerCSS.WriteString(fmt.Sprintf("width:%spx;height:%spx;", pxVal(w), pxVal(h)))
+
+	outerClass := e.css.Register(outerCSS.String())
+
+	// ── Build inner CSS class (matches C# GetSpanText) ──
+	var innerCSS strings.Builder
+
+	// Compute inner width: object width minus horizontal padding (C# pattern).
+	padH := (obj.PaddingLeft + obj.PaddingRight) * scale
+	innerW := w - padH
+
+	innerCSS.WriteString(fmt.Sprintf("display:block;border:0;width:%spx;", pxVal(innerW)))
+
+	// Paragraph offset / text-indent.
+	if obj.ParagraphOffset != 0 {
+		innerCSS.WriteString(fmt.Sprintf("text-indent:%spx;", pxVal(obj.ParagraphOffset*scale)))
+	}
+	// Padding (C# GetSpanText: only emits non-zero values).
+	if obj.PaddingLeft != 0 {
+		innerCSS.WriteString(fmt.Sprintf("padding-left:%spx;", pxVal(obj.PaddingLeft*scale)))
+	}
+	if obj.PaddingRight != 0 {
+		innerCSS.WriteString(fmt.Sprintf("padding-right:%spx;", pxVal(obj.PaddingRight*scale)))
+	}
+	if obj.PaddingTop != 0 {
+		innerCSS.WriteString(fmt.Sprintf("padding-top:%spx;", pxVal(obj.PaddingTop*scale)))
+	}
+
+	// Vertical alignment: C# uses margin-top for non-top alignment.
+	// For vert-center/bottom, C# computes top offset via text height measurement.
+	// We approximate using flex layout for center/bottom when margin-top is 0.
+	switch obj.VertAlign {
+	case 1: // center
+		// Approximate: compute margin-top = (height - textHeight) / 2.
+		// C# measures actual rendered text height; we estimate using font size.
+		lineH := float64(fontPx) * 1.21
+		textH := lineH // single line estimate
+		marginTop := (float64(h) - textH - float64(obj.PaddingBottom*scale) + float64(obj.PaddingTop*scale)) / 2
+		if marginTop > 0 {
+			innerCSS.WriteString(fmt.Sprintf("margin-top:%spx;", pxVal(float32(marginTop))))
+		}
+	case 2: // bottom
+		lineH := float64(fontPx) * 1.21
+		textH := lineH
+		marginTop := float64(h) - textH - float64(obj.PaddingBottom*scale)
+		if marginTop > 0 {
+			innerCSS.WriteString(fmt.Sprintf("margin-top:%spx;", pxVal(float32(marginTop))))
+		}
+	}
+
+	// No-wrap for non-wrapping text objects (C# GetSpanText).
+	if !obj.WordWrap {
+		innerCSS.WriteString("overflow: hidden; text-wrap: nowrap;")
+	}
+
+	innerClass := e.css.Register(innerCSS.String())
+
+	// ── Format text content ──
+	// C# HtmlString converts line breaks to <p> tags and double-spaces to &nbsp;&nbsp;.
+	innerText := formatTextContent(obj.Text, fontPx)
+
+	// ── Compute border width adjustments (C# Layer method) ──
+	var bLeft, bTop, bRight, bBottom float32
+	htmlBorderWidthValues(&obj.Border, scale, &bLeft, &bTop, &bRight, &bBottom)
+
+	// Outer div inline style: position (C# Layer method with border adjustments).
+	adjLeft := left - bLeft/2
+	adjTop := top - bTop/2
+	adjW := w - bRight/2 - bLeft/2
+	adjH := h - bBottom/2 - bTop/2
+
+	outerStyle := fmt.Sprintf("left:%spx;top:%spx;width:%spx;height:%spx;",
+		pxVal(adjLeft), pxVal(adjTop), pxVal(adjW), pxVal(adjH))
+
+	// Hyperlink wrapping.
+	if obj.HyperlinkKind == 1 && obj.HyperlinkValue != "" {
+		linkColor := rgbColor(tc)
+		e.sb.WriteString(fmt.Sprintf(`<a style="color:%s" href="%s"target="_blank">`, linkColor, export.HTMLString(obj.HyperlinkValue)))
+		e.sb.WriteString(fmt.Sprintf(`<div class="%s" style="cursor:pointer;%s">`, outerClass, outerStyle))
+		e.sb.WriteString(fmt.Sprintf(`<div class="%s">%s</div>`, innerClass, innerText))
+		e.sb.WriteString("</div>\n</a>")
+	} else {
+		e.sb.WriteString(fmt.Sprintf(`<div class="%s" style="%s">`, outerClass, outerStyle))
+		e.sb.WriteString(fmt.Sprintf(`<div class="%s">%s</div>`, innerClass, innerText))
+		e.sb.WriteString("</div>\n")
 	}
 }
 
@@ -696,32 +773,57 @@ func (e *Exporter) ExportPageEnd(pg *preview.PreparedPage) error {
 			e.renderWatermarkText(wm, w, h)
 		}
 	}
-	e.sb.WriteString("</div>\n") // close frpage{n}
+	e.sb.WriteString("</div>") // close frpage{n}
 	return nil
 }
 
 func (e *Exporter) Finish() error {
 	// Close frpage-container div.
-	e.sb.WriteString("</div>\n")
+	e.sb.WriteString("</div>")
 
-	// Emit CSS blocks before closing body.
+	// Build the final HTML document.
+	// C# order: DOCTYPE, head, body, print-CSS, content-CSS, frpage-container+content, close.
+	var out strings.Builder
+
+	out.WriteString("<!DOCTYPE HTML PUBLIC \"-//W3C//DTD HTML 4.01 Transitional//EN\">\n")
+	out.WriteString("<html><head>\n")
+	out.WriteString("<meta http-equiv=\"Content-Type\" content=\"text/html; charset=utf-8\">\n")
+	out.WriteString("<meta name=Generator content=\"FastReport http://www.fast-report.com\">\n")
+	out.WriteString(fmt.Sprintf("<title>%s</title>\n", export.HTMLString(e.Title)))
+	out.WriteString("</head>\n")
+	out.WriteString("<body bgcolor=\"#FFFFFF\" text=\"#000000\">\n")
+
+	// Emit CSS blocks before content (matching C# DoPage order: CSS then Page).
 	if e.EmbedCSS && e.css != nil {
 		// Print CSS block (for page breaks).
 		printCSS := e.buildPrintCSS()
 		if printCSS != "" {
-			e.sb.WriteString(printCSS)
+			out.WriteString(printCSS)
 		}
 		// Content CSS block (s0..sN classes).
 		if block := e.css.StyleBlock(); block != "" {
-			e.sb.WriteString(block)
+			out.WriteString(block)
 		}
 	}
-	e.sb.WriteString("</body>\n</html>\n")
-	_, err := io.WriteString(e.w, e.sb.String())
+
+	// frpage-container div with content.
+	out.WriteString("<div class=\"frpage-container\"\n>\n")
+	out.WriteString(e.sb.String())
+
+	out.WriteString("</body>\n</html>\n")
+
+	// Write final result.
+	_, err := io.WriteString(e.w, out.String())
+
+	// Update sb to contain the full output for HTML() method.
+	e.sb.Reset()
+	e.sb.WriteString(out.String())
+
 	return err
 }
 
 // buildPrintCSS generates the print media CSS block for page break rules.
+// C# emits one block per page with break-after rule.
 func (e *Exporter) buildPrintCSS() string {
 	if e.pageIdx == 0 {
 		return ""
@@ -731,8 +833,7 @@ func (e *Exporter) buildPrintCSS() string {
 	for i := 0; i < e.pageIdx; i++ {
 		sb.WriteString(fmt.Sprintf("div.frpage%d { break-after: always; page-break-inside: avoid; }\n", i))
 	}
-	sb.WriteString(" @page { size: portrait; margin: 0; }-->")
-	sb.WriteString("</style>\n")
+	sb.WriteString(" @page { size: portrait; margin: 0; }--></style>\n")
 	return sb.String()
 }
 
@@ -744,6 +845,18 @@ func (e *Exporter) HTML() string {
 
 // ── CSS helpers ─────────────────────────────────────────────────────────────────
 
+// pxVal formats a float as a CSS pixel value string, matching C# ExportUtils.FloatToString.
+// It drops trailing zeros: 718.20 → "718.2", 28.35 → "28.35", 0.00 → "0".
+func pxVal(v float32) string {
+	s := fmt.Sprintf("%.2f", v)
+	// Strip trailing zeros after decimal point.
+	if strings.Contains(s, ".") {
+		s = strings.TrimRight(s, "0")
+		s = strings.TrimRight(s, ".")
+	}
+	return s
+}
+
 // rgbColor returns "rgb(R, G, B)" for fully opaque colors and "rgba(R, G, B, A)" for semi-transparent ones.
 func rgbColor(c color.RGBA) string {
 	if c.A == 255 {
@@ -752,31 +865,67 @@ func rgbColor(c color.RGBA) string {
 	return fmt.Sprintf("rgba(%d, %d, %d, %.2f)", c.R, c.G, c.B, float32(c.A)/255.0)
 }
 
-// formatTextParagraphs converts plain text line breaks to HTML paragraph tags.
-// Each line break becomes <p style="margin-top:0px;margin-bottom:0px;"></p>.
-func formatTextParagraphs(htmlText string) string {
-	// Split on newlines (normalize \r\n first).
-	normalized := strings.ReplaceAll(htmlText, "\r\n", "\n")
+// formatTextContent converts plain text to HTML, matching C# ExportUtils.HtmlString.
+// Line breaks become <p> tags. Double spaces become &nbsp;&nbsp;.
+// The fontPx parameter provides the font size in CSS pixels for the p tag height.
+func formatTextContent(text string, fontPx float32) string {
+	// HTML-escape the text.
+	escaped := export.HTMLString(text)
+
+	// Convert line breaks to <p> paragraph separators (matching C# HtmlString).
+	normalized := strings.ReplaceAll(escaped, "\r\n", "\n")
 	lines := strings.Split(normalized, "\n")
+
 	if len(lines) == 1 {
-		// Single line: add trailing paragraph for C# compatibility.
-		return htmlText + `<p style="margin-top:0px;margin-bottom:0px;"></p>`
+		return escaped
 	}
+
 	var sb strings.Builder
 	for i, line := range lines {
 		sb.WriteString(line)
 		if i < len(lines)-1 {
-			sb.WriteString(`<p style="margin-top:0px;margin-bottom:0px;"></p>`)
-		} else if line != "" {
-			// Last non-empty line: trailing paragraph.
 			sb.WriteString(`<p style="margin-top:0px;margin-bottom:0px;"></p>`)
 		}
 	}
 	return sb.String()
 }
 
+// htmlBorderWidthValues computes the border widths for each side, matching C# HTMLBorderWidth.
+func htmlBorderWidthValues(b *style.Border, scale float32, left, top, right, bottom *float32) {
+	if b == nil || b.VisibleLines == style.BorderLinesNone {
+		return
+	}
+	type side struct {
+		flag style.BorderLines
+		idx  int
+		out  *float32
+	}
+	sides := []side{
+		{style.BorderLinesLeft, int(style.BorderLeft), left},
+		{style.BorderLinesTop, int(style.BorderTop), top},
+		{style.BorderLinesRight, int(style.BorderRight), right},
+		{style.BorderLinesBottom, int(style.BorderBottom), bottom},
+	}
+	for _, s := range sides {
+		if b.VisibleLines&s.flag == 0 {
+			continue
+		}
+		line := b.Lines[s.idx]
+		w := float32(1) * scale
+		if line != nil {
+			if line.Style == style.LineStyleDouble {
+				w = line.Width * 3 * scale
+			} else {
+				w = line.Width * scale
+			}
+		}
+		*s.out = w
+	}
+}
+
 // borderCSS converts a style.Border into CSS border/box-shadow declarations.
 // It handles per-side borders using border-top/right/bottom/left shorthand.
+// The format matches C# HTMLBorder output: separate width/color/style properties per side.
 func borderCSS(b *style.Border, scale float32) string {
 	if b == nil || b.VisibleLines == style.BorderLinesNone {
 		return ""
@@ -888,3 +1037,6 @@ func imageMIME(data []byte) string {
 	}
 	return "image/png" // default / PNG magic is 8 bytes, assume png
 }
+
+// Ensure math is used (for future use in vertical alignment calculations).
+var _ = math.Round

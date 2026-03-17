@@ -26,6 +26,7 @@ func TestRunDataBandRows_ZeroRows_WithChild(t *testing.T) {
 	child := band.NewChildBand()
 	child.SetHeight(15)
 	child.SetVisible(true)
+	child.PrintIfDatabandEmpty = true // C#: child only shown when this flag is true
 
 	db := band.NewDataBand()
 	db.SetHeight(20)
@@ -34,7 +35,7 @@ func TestRunDataBandRows_ZeroRows_WithChild(t *testing.T) {
 
 	beforeY := e.CurY()
 	e.RunDataBandRows(db, 0)
-	// Child band should be shown: CurY should advance by child height.
+	// Child band should be shown (PrintIfDatabandEmpty=true): CurY should advance by child height.
 	if e.CurY() != beforeY+15 {
 		t.Errorf("ZeroRows+child: CurY = %v, want %v", e.CurY(), beforeY+15)
 	}

@@ -291,6 +291,19 @@ type PreparedObject struct {
 	// field is interpreted by exporters.
 	// 0=Default (plain text), 1=HtmlTags, 2=HtmlParagraph, 3=Inline.
 	TextRenderType int
+
+	// ── Padding / layout fields ──────────────────────────────────────────────
+	// PaddingLeft, PaddingTop, PaddingRight, PaddingBottom are interior spacing
+	// in pixels, sourced from TextObject.Padding.
+	PaddingLeft, PaddingTop, PaddingRight, PaddingBottom float32
+	// ParagraphOffset is the first-line text indent in pixels.
+	ParagraphOffset float32
+	// LineHeight is the explicit line height in pixels (0 = use default).
+	LineHeight float32
+	// RTL indicates right-to-left text direction.
+	RTL bool
+	// Clip indicates whether the object should clip its content.
+	Clip bool
 }
 
 // ── PreparedWatermark ─────────────────────────────────────────────────────────

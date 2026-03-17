@@ -15,6 +15,85 @@ import (
 //     as the LAST data row. If the footer does not fit after the last row, move
 //     the last row (and any child bands) plus the footer to the next page.
 
+// NeedKeepFirstRow returns true if the first data row of the DataBand must be
+// kept together with its header (DataHeaderBand.KeepWithData=true).
+func (e *ReportEngine) NeedKeepFirstRow(dataBand *band.DataBand) bool {
+	return dataBand.Header() != nil && dataBand.Header().KeepWithData()
+}
+
+// NeedKeepFirstRowGroup returns true if the first data row of a group must be
+// kept with the group header (GroupHeaderBand.KeepWithData=true).
+func (e *ReportEngine) NeedKeepFirstRowGroup(groupBand *band.GroupHeaderBand) bool {
+	if groupBand == nil {
+		return false
+	}
+	if groupBand.KeepWithData() {
+		return true
+	}
+	db := groupBand.Data()
+	if db != nil && db.Header() != nil && db.Header().KeepWithData() {
+		return true
+	}
+	return false
+}
+
+// NeedKeepLastRow returns true if the last data row must be kept with footer
+// bands that have KeepWithData=true.
+func (e *ReportEngine) NeedKeepLastRow(dataBand *band.DataBand) bool {
+	footers := e.getAllFooters(dataBand)
+	return len(footers) > 0
+}
+
+// getAllFooters returns the list of footer bands that must be kept with the
+// last data row.
+func (e *ReportEngine) getAllFooters(dataBand *band.DataBand) []keepableFooter {
+	var footers []keepableFooter
+	if ftr := dataBand.Footer(); ftr != nil {
+		footers = append(footers, keepableFooter{
+			band:              &ftr.HeaderFooterBandBase.BandBase,
+			keepWithData:      ftr.KeepWithData(),
+			repeatOnEveryPage: ftr.RepeatOnEveryPage(),
+		})
+	}
+	// Remove footers at the end that don't have KeepWithData.
+	for i := len(footers) - 1; i >= 0; i-- {
+		if !footers[i].keepWithData {
+			footers = footers[:i]
+		} else {
+			break
+		}
+	}
+	return footers
+}
+
+type keepableFooter struct {
+	band              *band.BandBase
+	keepWithData      bool
+	repeatOnEveryPage bool
+}
+
+// GetFootersHeight returns the total height of footer bands that need to be
+// kept with the last data row.
+func (e *ReportEngine) GetFootersHeight(dataBand *band.DataBand) float32 {
+	footers := e.getAllFooters(dataBand)
+	var height float32
+	for _, f := range footers {
+		if !f.repeatOnEveryPage {
+			height += e.GetBandHeightWithChildren(f.band)
+		}
+	}
+	return height
+}
+
+// CheckKeepFooter checks if there is enough space for footer bands.
+func (e *ReportEngine) CheckKeepFooter(dataBand *band.DataBand) {
+	if e.FreeSpace() < e.GetFootersHeight(dataBand) {
+		e.startNewPageForCurrent()
+	} else {
+		e.EndKeep()
+	}
+}
+
 // checkKeepFooterWithData checks whether a DataFooterBand fits on the current
 // page together with the last rendered data row block. If it doesn't fit and
 // keepWithData is set, the last row block is cut from the page and moved to a

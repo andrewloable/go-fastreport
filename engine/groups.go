@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/andrewloable/go-fastreport/band"
+	"github.com/andrewloable/go-fastreport/data"
 )
 
 // groupTreeItem represents one node in the group tree built before rendering.
@@ -181,10 +182,18 @@ func (e *ReportEngine) showGroupTree(root *groupTreeItem) {
 
 	if len(root.items) == 0 {
 		// Leaf node: render the associated data band rows.
+		// Mirrors C#: RunDataBand(root.Band.GroupDataBand, rowCount, keepFirstRow, keepLastRow)
 		if root.band != nil && root.rowCount > 0 {
 			db := root.band.Data()
 			if db != nil {
-				e.RunDataBandRows(db, root.rowCount)
+				rowCount := root.rowCount
+				maxRows := db.MaxRows()
+				if maxRows > 0 && rowCount > maxRows {
+					rowCount = maxRows
+				}
+				keepFirstRow := e.NeedKeepFirstRowGroup(root.band)
+				keepLastRow := e.NeedKeepLastRow(db)
+				e.RunDataBandRowsKeep(db, rowCount, keepFirstRow, keepLastRow)
 			}
 		}
 	} else {
@@ -215,6 +224,7 @@ func (e *ReportEngine) showGroupTree(root *groupTreeItem) {
 }
 
 // showDataHeader renders the DataHeaderBand of a GroupHeaderBand.
+// Mirrors C# ShowDataHeader(GroupHeaderBand): shows header, registers reprints.
 func (e *ReportEngine) showDataHeader(header *band.GroupHeaderBand) {
 	header.SetRowNo(0)
 	db := header.Data()
@@ -223,59 +233,241 @@ func (e *ReportEngine) showDataHeader(header *band.GroupHeaderBand) {
 	}
 	if hdr := db.Header(); hdr != nil {
 		e.ShowFullBand(&hdr.HeaderFooterBandBase.BandBase)
+		if hdr.RepeatOnEveryPage() {
+			e.AddReprint(&hdr.HeaderFooterBandBase.BandBase)
+		}
+	}
+	if ftr := db.Footer(); ftr != nil {
+		if ftr.RepeatOnEveryPage() {
+			e.AddReprint(&ftr.HeaderFooterBandBase.BandBase)
+		}
 	}
 }
 
 // showDataFooter renders the DataFooterBand of a GroupHeaderBand.
+// Mirrors C# ShowDataFooter(GroupHeaderBand): removes reprints.
 func (e *ReportEngine) showDataFooter(header *band.GroupHeaderBand) {
 	db := header.Data()
 	if db == nil {
 		return
 	}
 	if ftr := db.Footer(); ftr != nil {
+		e.RemoveReprint(&ftr.HeaderFooterBandBase.BandBase)
+	}
+	if ftr := db.Footer(); ftr != nil {
 		e.ShowFullBand(&ftr.HeaderFooterBandBase.BandBase)
+	}
+	if hdr := db.Header(); hdr != nil {
+		e.RemoveReprint(&hdr.HeaderFooterBandBase.BandBase)
 	}
 }
 
 // showGroupHeader renders the group header band and increments row counters.
+// Mirrors C# ShowGroupHeader: handles KeepTogether, KeepWithData, RepeatOnEveryPage,
+// GroupFooter RepeatOnEveryPage, and fires GroupStarted event.
 func (e *ReportEngine) showGroupHeader(header *band.GroupHeaderBand) {
 	header.SetAbsRowNo(header.AbsRowNo() + 1)
 	header.SetRowNo(header.RowNo() + 1)
+
+	// C#: if (header.ResetPageNumber && (header.FirstRowStartsNewPage || header.RowNo > 1))
+	//         ResetLogicalPageNumber();
+	if header.ResetPageNumber() && (header.FirstRowStartsNewPage() || header.RowNo() > 1) {
+		e.ResetLogicalPageNumber()
+	}
+
+	// C#: if (header.KeepTogether) StartKeep(header);
+	if header.KeepTogether() {
+		e.startKeepBand(&header.HeaderFooterBandBase.BandBase)
+	}
+	// C#: if (header.KeepWithData) StartKeep(header.GroupDataBand);
+	if header.KeepWithData() {
+		if db := header.Data(); db != nil {
+			e.startKeepBand(&db.BandBase)
+		}
+	}
+
+	// C#: OnStateChanged(header, EngineState.GroupStarted);
+	e.OnStateChanged(header, EngineStateGroupStarted)
+
 	e.ShowFullBand(&header.HeaderFooterBandBase.BandBase)
+	if header.RepeatOnEveryPage() {
+		e.AddReprintGroupHeader(header)
+	}
+
+	// Register group footer for RepeatOnEveryPage.
+	if ftr := header.GroupFooter(); ftr != nil {
+		if ftr.RepeatOnEveryPage() {
+			e.AddReprintGroupFooter(ftr)
+		}
+	}
 }
 
 // showGroupFooter renders the group footer band.
+// Mirrors C# ShowGroupFooter: fires GroupFinished, handles reprint removal,
+// and ends KeepTogether/KeepWithData.
 func (e *ReportEngine) showGroupFooter(header *band.GroupHeaderBand) {
+	// C#: OnStateChanged(header, EngineState.GroupFinished);
+	e.OnStateChanged(header, EngineStateGroupFinished)
+
 	ftr := header.GroupFooter()
-	if ftr == nil {
-		return
+	if ftr != nil {
+		ftr.SetAbsRowNo(ftr.AbsRowNo() + 1)
+		ftr.SetRowNo(ftr.RowNo() + 1)
 	}
-	ftr.SetAbsRowNo(ftr.AbsRowNo() + 1)
-	ftr.SetRowNo(ftr.RowNo() + 1)
-	e.ShowFullBand(&ftr.HeaderFooterBandBase.BandBase)
+
+	// C#: RemoveReprint(footer); ShowBand(footer); RemoveReprint(header);
+	if ftr != nil {
+		e.RemoveReprint(&ftr.HeaderFooterBandBase.BandBase)
+	}
+	if ftr != nil {
+		e.ShowFullBand(&ftr.HeaderFooterBandBase.BandBase)
+	}
+	e.RemoveReprint(&header.HeaderFooterBandBase.BandBase)
+
+	// C#: OutlineUp(header);
+	e.OutlineUp()
+
+	// C#: if (header.KeepTogether) EndKeep();
+	if header.KeepTogether() {
+		e.EndKeep()
+	}
+	// C#: if (footer != null && footer.KeepWithData) EndKeep();
+	if ftr != nil && ftr.KeepWithData() {
+		e.EndKeep()
+	}
 }
 
 // ── Public entry point ────────────────────────────────────────────────────────
 
 // RunGroup is the top-level method called by the band runner when it encounters
-// a GroupHeaderBand. It builds the group tree then renders it.
+// a GroupHeaderBand. It mirrors C# RunGroup:
+//  1. Resolve DataSource
+//  2. Apply group sort
+//  3. ShowGroupTree(MakeGroupTree(groupBand))
+//
+// KeepTogether/KeepWithData are handled per-group-instance in showGroupHeader/showGroupFooter
+// (not at the RunGroup level), matching the C# behaviour.
 func (e *ReportEngine) RunGroup(groupBand *band.GroupHeaderBand) {
 	db := groupBand.Data()
+
+	// If the DataBand was added to Objects() during deserialization instead of
+	// being set directly, find it there.
+	if db == nil {
+		for i := 0; i < groupBand.Objects().Len(); i++ {
+			if candidate, ok := groupBand.Objects().Get(i).(*band.DataBand); ok {
+				db = candidate
+				groupBand.SetData(db)
+				break
+			}
+		}
+	}
 	if db == nil {
 		return
+	}
+
+	// Resolve DataSource from alias if not already bound.
+	if db.DataSourceRef() == nil {
+		if alias := db.DataSourceAlias(); alias != "" {
+			if dict := e.report.Dictionary(); dict != nil {
+				if resolved := dict.FindDataSourceByAlias(alias); resolved != nil {
+					if bandDS, ok := resolved.(band.DataSource); ok {
+						db.SetDataSource(bandDS)
+					}
+				}
+			}
+		}
 	}
 	if db.DataSourceRef() == nil {
 		return
 	}
 
-	if groupBand.KeepTogether() {
-		e.StartKeep()
+	// If the GroupFooterBand was added to Objects() instead of being set
+	// directly, find it there.
+	if groupBand.GroupFooter() == nil {
+		for i := 0; i < groupBand.Objects().Len(); i++ {
+			if ftr, ok := groupBand.Objects().Get(i).(*band.GroupFooterBand); ok {
+				groupBand.SetGroupFooter(ftr)
+				break
+			}
+		}
 	}
+
+	// Sort the data source by the group condition(s) before tree scan.
+	e.applyGroupSort(groupBand, db)
+
 	tree := e.makeGroupTree(groupBand)
-	e.showGroupTree(tree)
-	if groupBand.KeepTogether() {
-		e.EndKeep()
+	// Reset the data source to the beginning so showGroupTree can iterate
+	// rows in order (makeGroupTree consumed the DS cursor during pre-scan).
+	if db.DataSourceRef() != nil {
+		_ = db.DataSourceRef().First()
+		// Re-inject the first row into the expression evaluator so that
+		// showGroupHeader for the first group sees the correct data.
+		if e.report != nil {
+			if fullDS, ok := db.DataSourceRef().(data.DataSource); ok {
+				e.report.SetCalcContext(fullDS)
+			}
+		}
 	}
-	// Notify deferred objects waiting for GroupFinished.
-	e.OnStateChanged(groupBand, EngineStateGroupFinished)
+	e.showGroupTree(tree)
+}
+
+// applyGroupSort sorts the DataBand's data source using a combined key list:
+// group-header condition columns first (for correct grouping), then the
+// DataBand's own sort specs (for ordering within each group).
+func (e *ReportEngine) applyGroupSort(groupBand *band.GroupHeaderBand, db *band.DataBand) {
+	ds := db.DataSourceRef()
+	if ds == nil {
+		return
+	}
+	sortable, ok := ds.(data.Sortable)
+	if !ok {
+		return
+	}
+
+	var specs []data.SortSpec
+	g := groupBand
+	for g != nil {
+		if g.SortOrder() != band.SortOrderNone {
+			col := groupConditionColumn(g.Condition())
+			if col != "" {
+				specs = append(specs, data.SortSpec{
+					Column:     col,
+					Descending: g.SortOrder() == band.SortOrderDescending,
+				})
+			}
+		}
+		g = g.NestedGroup()
+	}
+
+	for _, s := range db.Sort() {
+		expr := s.Expression
+		if expr == "" {
+			expr = s.Column
+		}
+		col := groupConditionColumn(expr)
+		if col != "" {
+			specs = append(specs, data.SortSpec{
+				Column:     col,
+				Descending: s.Order == band.SortOrderDescending,
+			})
+		}
+	}
+
+	if len(specs) > 0 {
+		sortable.SortRows(specs)
+	}
+}
+
+// groupConditionColumn extracts the bare column name from a group condition
+// expression like "[Orders.CustomerID]" -> "CustomerID".
+func groupConditionColumn(cond string) string {
+	if len(cond) >= 2 && cond[0] == '[' && cond[len(cond)-1] == ']' {
+		cond = cond[1 : len(cond)-1]
+	}
+	for i := len(cond) - 1; i >= 0; i-- {
+		if cond[i] == '.' {
+			return cond[i+1:]
+		}
+	}
+	return cond
 }

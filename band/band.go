@@ -37,6 +37,7 @@ type BandBase struct {
 	// Internal engine flags.
 	FlagUseStartNewPage bool
 	FlagCheckFreeSpace  bool
+	FlagIsDataBand      bool
 
 	// Ruler guides in designer (pixel offsets from band left edge).
 	guides []float32

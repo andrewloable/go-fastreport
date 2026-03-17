@@ -361,6 +361,23 @@ func (e *ReportEngine) showFullBandOnce(b *band.BandBase) {
 		return
 	}
 
+	// Determine whether the child band should be shown after this band.
+	// Mirrors the C# ShowBand(band, getData) child-filtering logic:
+	//   showChild = child != null
+	//     && !(band is DataBand && child.CompleteToNRows > 0)
+	//     && !child.FillUnusedSpace
+	//     && !(band is DataBand && child.PrintIfDatabandEmpty)
+	child := b.Child()
+	showChild := child != nil &&
+		!child.FillUnusedSpace &&
+		!(b.FlagIsDataBand && child.CompleteToNRows > 0) &&
+		!(b.FlagIsDataBand && child.PrintIfDatabandEmpty)
+
+	// KeepChild: start a keep scope so parent + child stay on the same page.
+	if showChild && b.KeepChild() {
+		e.startKeepBand(b)
+	}
+
 	// Fire BeforePrint before any rendering takes place, mirroring the
 	// C# ReportEngine.ShowBand which calls band.OnBeforePrint first.
 	b.FireBeforePrint()
@@ -387,8 +404,45 @@ func (e *ReportEngine) showFullBandOnce(b *band.BandBase) {
 	}
 
 	// Check free space (skipped when rendering into a parent band via PrintOnParent).
-	if e.outputBand == nil && b.FlagCheckFreeSpace && e.freeSpace < height {
+	// Use effectiveFreeSpace to reserve footer area, matching C# behaviour.
+	if e.outputBand == nil && b.FlagCheckFreeSpace && e.effectiveFreeSpace() < height {
 		e.startNewPageForCurrent()
+	}
+
+	// FillUnusedSpace: if the child band has FillUnusedSpace, repeatedly show
+	// it to fill any remaining space before rendering this band. Mirrors C#
+	// AddToPreparedPages lines 422-441.
+	if child != nil && child.FillUnusedSpace && e.outputBand == nil {
+		bandHeight := height
+		if b.Repeated() {
+			bandHeight = 0
+		}
+		for e.effectiveFreeSpace()-bandHeight-e.CalcBandHeight(&child.BandBase) >= 0 {
+			saveCurY := e.curY
+			e.ShowFullBand(&child.BandBase)
+			// Nothing was printed — break to avoid an endless loop.
+			if e.curY == saveCurY {
+				break
+			}
+		}
+	}
+
+	// PrintOnBottom: snap band to the bottom of the page (above footer area).
+	// Mirrors C# AddToPreparedPages lines 452-465.
+	// For a ChildBand, only the band itself is subtracted; for other bands,
+	// the full height including child bands is subtracted.
+	if b.PrintOnBottom() {
+		e.curY = e.pageHeight - e.PageFooterHeight() - e.ColumnFooterHeight()
+		// showChild being false while child != nil indicates this is the child
+		// scenario (FillUnusedSpace or DataBand exclusion). But for PrintOnBottom,
+		// C# checks "band is ChildBand" — which means the band itself is a child.
+		// We approximate this: if the band has no child of its own, subtract only
+		// its height; otherwise subtract the full chain.
+		if b.Child() == nil {
+			e.curY -= height
+		} else {
+			e.curY -= e.GetBandHeightWithChildren(b)
+		}
 	}
 
 	if e.outputBand != nil {
@@ -436,14 +490,95 @@ func (e *ReportEngine) showFullBandOnce(b *band.BandBase) {
 	// mirroring the C# ReportEngine.ShowBand which calls band.OnAfterPrint last.
 	b.FireAfterPrint()
 
-	// Show child band if present.
-	if child := b.Child(); child != nil {
+	// Show child band. Skip if child is used to fill empty space (processed above)
+	// or excluded by the DataBand/ChildBand filtering conditions.
+	if showChild {
 		e.ShowFullBand(&child.BandBase)
+		if b.KeepChild() {
+			e.EndKeep()
+		}
 	}
 
 	if addedOutline {
 		e.OutlineUp()
 	}
+}
+
+// ── Band height helpers ──────────────────────────────────────────────────────
+
+// GetBandHeightWithChildren returns the total height of band plus all its
+// child bands, mirroring the C# ReportEngine.GetBandHeightWithChildren method.
+// It walks the chain: band -> band.Child -> child.Child -> ... and sums heights.
+// The walk stops if a child has FillUnusedSpace or CompleteToNRows != 0.
+func (e *ReportEngine) GetBandHeightWithChildren(b *band.BandBase) float32 {
+	if b == nil {
+		return 0
+	}
+	result := float32(0)
+	cur := b
+	for cur != nil {
+		if cur.Visible() {
+			if cur.CanGrow() || cur.CanShrink() {
+				result += e.CalcBandHeight(cur)
+			} else {
+				result += cur.Height()
+			}
+		}
+		child := cur.Child()
+		if child == nil {
+			break
+		}
+		if child.FillUnusedSpace || child.CompleteToNRows != 0 {
+			break
+		}
+		cur = &child.BandBase
+	}
+	return result
+}
+
+// PageFooterHeight returns the height of the page footer band including its
+// child bands, mirroring the C# PageFooterHeight property.
+func (e *ReportEngine) PageFooterHeight() float32 {
+	if e.currentPage == nil {
+		return 0
+	}
+	pf := e.currentPage.PageFooter()
+	if pf == nil {
+		return 0
+	}
+	return e.GetBandHeightWithChildren(&pf.BandBase)
+}
+
+// ColumnFooterHeight returns the height of the column footer band including
+// its child bands, mirroring the C# ColumnFooterHeight property.
+func (e *ReportEngine) ColumnFooterHeight() float32 {
+	if e.currentPage == nil {
+		return 0
+	}
+	cf := e.currentPage.ColumnFooter()
+	if cf == nil {
+		return 0
+	}
+	return e.GetBandHeightWithChildren(&cf.BandBase)
+}
+
+// getReprintFootersHeight returns the total height of all registered reprint
+// footer bands, mirroring the C# GetFootersHeight() method.
+func (e *ReportEngine) getReprintFootersHeight() float32 {
+	result := float32(0)
+	for _, entry := range e.reprintFooters {
+		saveRepeated := entry.b.Repeated()
+		entry.b.SetRepeated(true)
+		result += e.GetBandHeightWithChildren(entry.b)
+		entry.b.SetRepeated(saveRepeated)
+	}
+	for _, entry := range e.keepReprintFooters {
+		saveRepeated := entry.b.Repeated()
+		entry.b.SetRepeated(true)
+		result += e.GetBandHeightWithChildren(entry.b)
+		entry.b.SetRepeated(saveRepeated)
+	}
+	return result
 }
 
 // applyAnchorAdjustments adjusts the positions and sizes of PreparedObjects

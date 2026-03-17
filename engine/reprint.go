@@ -20,8 +20,14 @@ func (e *ReportEngine) initReprint() {
 // AddReprint registers a BandBase for reprinting on each new page.
 // DataHeader and GroupHeader bands are treated as "headers" (printed at the
 // top of the new page); everything else is a footer (printed before the page break).
+//
+// Mirrors C# AddReprint: saves current originX (curX) as ReprintOffset.
 func (e *ReportEngine) AddReprint(b *band.BandBase) {
-	entry := reprintEntry{b: b, originX: 0}
+	// Save current offset and use it later when reprinting a band.
+	// It is required when printing subreports (C# line: band.ReprintOffset = originX).
+	b.SetReprintOffset(e.curX)
+
+	entry := reprintEntry{b: b, originX: e.curX}
 	if e.keeping {
 		e.keepReprintFooters = append(e.keepReprintFooters, entry)
 		return
@@ -33,7 +39,10 @@ func (e *ReportEngine) AddReprint(b *band.BandBase) {
 // classifying DataHeaderBand and GroupHeaderBand as headers and footers otherwise.
 // This should be used instead of AddReprint when the concrete type is available.
 func (e *ReportEngine) addReprintBand(b *band.BandBase, isHeader bool) {
-	entry := reprintEntry{b: b, originX: 0}
+	// Save current offset for subreport reprinting (C# line: band.ReprintOffset = originX).
+	b.SetReprintOffset(e.curX)
+
+	entry := reprintEntry{b: b, originX: e.curX}
 	if e.keeping {
 		if isHeader {
 			e.keepReprintHeaders = append(e.keepReprintHeaders, entry)
@@ -107,18 +116,48 @@ func removeReprintEntry(list []reprintEntry, b *band.BandBase) []reprintEntry {
 }
 
 // ShowReprintHeaders renders the registered header bands at the top of the new page.
+// Mirrors C# ShowReprintHeaders: saves/restores originX, sets Repeated=true on
+// each band, restores originX from band.ReprintOffset, shows the band, then
+// resets Repeated=false.
 func (e *ReportEngine) ShowReprintHeaders() {
+	saveCurX := e.curX
+
 	for _, entry := range e.reprintHeaders {
+		entry.b.SetRepeated(true)
+		e.curX = entry.b.ReprintOffset()
 		e.ShowFullBand(entry.b)
+		entry.b.SetRepeated(false)
 	}
+
+	e.curX = saveCurX
 }
 
 // ShowReprintFooters renders the registered footer bands (in reverse order)
-// before a page break.
+// before a page break. Mirrors C# ShowReprintFooters() which calls
+// ShowReprintFooters(true).
 func (e *ReportEngine) ShowReprintFooters() {
+	e.showReprintFootersWithFlag(true)
+}
+
+// showReprintFootersWithFlag renders footer bands with the given repeated flag.
+// Mirrors C# ShowReprintFooters(bool repeated): for each footer band (in
+// reverse order), sets Repeated, disables FlagCheckFreeSpace, restores originX
+// from ReprintOffset, shows the band, then restores all flags.
+func (e *ReportEngine) showReprintFootersWithFlag(repeated bool) {
+	saveCurX := e.curX
+
+	// Show footers in reverse order (C# iterates from Count-1 to 0).
 	for i := len(e.reprintFooters) - 1; i >= 0; i-- {
-		e.ShowFullBand(e.reprintFooters[i].b)
+		b := e.reprintFooters[i].b
+		b.SetRepeated(repeated)
+		b.FlagCheckFreeSpace = false
+		e.curX = b.ReprintOffset()
+		e.ShowFullBand(b)
+		b.SetRepeated(false)
+		b.FlagCheckFreeSpace = true
 	}
+
+	e.curX = saveCurX
 }
 
 // startKeepReprint clears the keep-scoped reprint lists.

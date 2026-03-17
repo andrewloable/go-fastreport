@@ -79,6 +79,10 @@ type ReportPage struct {
 	// Page-level columns.
 	Columns PageColumns
 
+	// UnlimitedHeight, when true, prevents page breaks so the page grows
+	// to fit all content. Mirrors FastReport's ReportPage.UnlimitedHeight.
+	UnlimitedHeight bool
+
 	// Watermark is the optional page watermark (text or image).
 	Watermark *Watermark
 
@@ -342,6 +346,9 @@ func (p *ReportPage) Serialize(w report.Writer) error {
 	if p.StartOnOddPage {
 		w.WriteBool("StartOnOddPage", true)
 	}
+	if p.UnlimitedHeight {
+		w.WriteBool("UnlimitedHeight", true)
+	}
 	if p.OutlineExpression != "" {
 		w.WriteStr("OutlineExpression", p.OutlineExpression)
 	}
@@ -461,6 +468,7 @@ func (p *ReportPage) Deserialize(r report.Reader) error {
 	p.PrintOnPreviousPage = r.ReadBool("PrintOnPreviousPage", false)
 	p.ResetPageNumber = r.ReadBool("ResetPageNumber", false)
 	p.StartOnOddPage = r.ReadBool("StartOnOddPage", false)
+	p.UnlimitedHeight = r.ReadBool("UnlimitedHeight", false)
 	p.OutlineExpression = r.ReadStr("OutlineExpression", "")
 	p.CreatePageEvent = r.ReadStr("CreatePageEvent", "")
 	p.StartPageEvent = r.ReadStr("StartPageEvent", "")

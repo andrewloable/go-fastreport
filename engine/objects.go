@@ -673,6 +673,16 @@ func (e *ReportEngine) buildPreparedObject(obj report.Base) *preview.PreparedObj
 			po.Text = ""
 		}
 		po.TextRenderType = int(v.TextRenderType())
+		// Padding, paragraph offset, line height, RTL, Clip.
+		pad := v.Padding()
+		po.PaddingLeft = pad.Left
+		po.PaddingTop = pad.Top
+		po.PaddingRight = pad.Right
+		po.PaddingBottom = pad.Bottom
+		po.ParagraphOffset = v.ParagraphOffset()
+		po.LineHeight = v.LineHeight()
+		po.RTL = v.RightToLeft()
+		po.Clip = v.Clip()
 		// Apply highlight conditions — first matching condition wins.
 		if e.report != nil {
 			for _, cond := range v.Highlights() {

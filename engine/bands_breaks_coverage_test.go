@@ -319,7 +319,8 @@ func TestShowDataBandRow_StartNewPage(t *testing.T) {
 // ── SplitHardPageBreaks: multiple breaks ─────────────────────────────────────
 
 // TestSplitHardPageBreaks_MultipleBreaks exercises SplitHardPageBreaks with 2
-// hard page breaks, verifying 3 parts are returned.
+// hard page breaks. C# behaviour: when all objects have PageBreak=true with no
+// normal objects before them, the result is 2 parts (one per break object).
 func TestSplitHardPageBreaks_MultipleBreaks(t *testing.T) {
 	e := engine.New(reportpkg.NewReport())
 	b := band.NewBandBase()
@@ -337,8 +338,59 @@ func TestSplitHardPageBreaks_MultipleBreaks(t *testing.T) {
 	b.AddChild(rc2)
 
 	parts := e.SplitHardPageBreaks(b)
+	// C#: with only PageBreak objects, 2 parts are created:
+	// Part 0: objects at [40..90), height=50, StartNewPage=true
+	// Part 1: objects at [90..150), height=60, StartNewPage=true
+	if len(parts) != 2 {
+		t.Fatalf("2 breaks (only PageBreak objs): expected 2 parts, got %d", len(parts))
+	}
+	if parts[0].Height() != 50 {
+		t.Errorf("part[0] height = %v, want 50 (90-40)", parts[0].Height())
+	}
+	if parts[1].Height() != 60 {
+		t.Errorf("part[1] height = %v, want 60 (150-90)", parts[1].Height())
+	}
+	if !parts[0].StartNewPage() {
+		t.Error("part[0] should have StartNewPage=true")
+	}
+	if !parts[1].StartNewPage() {
+		t.Error("part[1] should have StartNewPage=true")
+	}
+}
+
+// TestSplitHardPageBreaks_MultipleBreaks_WithObjsBetween exercises 2 hard page
+// breaks with normal objects between them, producing 3 parts as expected.
+func TestSplitHardPageBreaks_MultipleBreaks_WithObjsBetween(t *testing.T) {
+	e := engine.New(reportpkg.NewReport())
+	b := band.NewBandBase()
+	b.SetHeight(150)
+	b.SetName("MultiBreakObjs")
+
+	// Normal object before first break.
+	obj0 := report.NewReportComponentBase()
+	obj0.SetTop(10)
+	obj0.SetHeight(10)
+	b.AddChild(obj0)
+
+	rc1 := report.NewReportComponentBase()
+	rc1.SetTop(40)
+	rc1.SetPageBreak(true)
+	b.AddChild(rc1)
+
+	// Normal object between breaks.
+	obj1 := report.NewReportComponentBase()
+	obj1.SetTop(60)
+	obj1.SetHeight(10)
+	b.AddChild(obj1)
+
+	rc2 := report.NewReportComponentBase()
+	rc2.SetTop(90)
+	rc2.SetPageBreak(true)
+	b.AddChild(rc2)
+
+	parts := e.SplitHardPageBreaks(b)
 	if len(parts) != 3 {
-		t.Fatalf("2 breaks: expected 3 parts, got %d", len(parts))
+		t.Fatalf("2 breaks with objs: expected 3 parts, got %d", len(parts))
 	}
 	if parts[0].Height() != 40 {
 		t.Errorf("part[0] height = %v, want 40", parts[0].Height())

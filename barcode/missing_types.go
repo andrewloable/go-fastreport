@@ -50,7 +50,13 @@ func (e *EAN8Barcode) DefaultValue() string { return "1234567" }
 func (e *EAN8Barcode) Encode(text string) error {
 	bc, err := boomean.Encode(text)
 	if err != nil {
-		return fmt.Errorf("ean8 encode: %w", err)
+		// C# recalculates checksum. Try with first 7 digits (let library compute check digit).
+		if len(text) == 8 {
+			bc, err = boomean.Encode(text[:7])
+		}
+		if err != nil {
+			return fmt.Errorf("ean8 encode: %w", err)
+		}
 	}
 	e.encodedText = text
 	e.encoded = bc

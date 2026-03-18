@@ -95,17 +95,25 @@ type BaseBarcodeImpl struct {
 	encoded boombarcode.Barcode
 }
 
+// scaleBarcode scales an encoded barcode to target dimensions. If scaling fails
+// (target smaller than minimum module width), returns the barcode at natural size.
+// This matches C#'s behavior where obj.Draw() always renders regardless of size.
+func scaleBarcode(bc boombarcode.Barcode, width, height int) (image.Image, error) {
+	img, err := boombarcode.Scale(bc, width, height)
+	if err != nil {
+		// Return at natural size — HTML exporter's resizeImagePNG will downscale.
+		return bc, nil
+	}
+	return img, nil
+}
+
 // Render scales the encoded barcode to the given pixel dimensions and returns
 // an image.Image. Returns an error if Encode has not been called yet.
 func (b *BaseBarcodeImpl) Render(width, height int) (image.Image, error) {
 	if b.encoded == nil {
 		return nil, fmt.Errorf("barcode not encoded — call Encode first")
 	}
-	img, err := boombarcode.Scale(b.encoded, width, height)
-	if err != nil {
-		return nil, fmt.Errorf("scale barcode: %w", err)
-	}
-	return img, nil
+	return scaleBarcode(b.encoded, width, height)
 }
 
 // newBaseBarcodeImpl creates a BaseBarcodeImpl for the given type.
@@ -451,7 +459,14 @@ func NewEAN13Barcode() *EAN13Barcode {
 func (e *EAN13Barcode) Encode(text string) error {
 	bc, err := ean.Encode(text)
 	if err != nil {
-		return fmt.Errorf("ean13 encode: %w", err)
+		// C# FastReport recalculates the checksum if invalid.
+		// Try encoding with just the first 12 digits (let the library compute check digit).
+		if len(text) == 13 {
+			bc, err = ean.Encode(text[:12])
+		}
+		if err != nil {
+			return fmt.Errorf("ean13 encode: %w", err)
+		}
 	}
 	e.encodedText = text
 	e.encoded = bc
@@ -568,7 +583,11 @@ func (c *Code93Barcode) Render(width, height int) (image.Image, error) {
 	enc := code93.New()
 	enc.IncludeChecksum = c.IncludeChecksum
 	enc.FullASCIIMode = c.FullASCIIMode
-	return enc.Encode(c.encodedText, width, height)
+	img, err := enc.Encode(c.encodedText, width, height)
+	if err != nil {
+		img, err = enc.Encode(c.encodedText, 0, 0)
+	}
+	return img, err
 }
 
 // DefaultValue returns a sample Code 93 value.
@@ -606,7 +625,16 @@ func (c *Code2of5Barcode) Render(width, height int) (image.Image, error) {
 	}
 	enc := code2of5.New()
 	enc.Interleaved = c.Interleaved
-	return enc.Encode(c.encodedText, width, height)
+	img, err := enc.Encode(c.encodedText, width, height)
+	if err != nil {
+		// Target too small — render at a larger size, HTML exporter will resize.
+		// code2of5.Encode doesn't support 0×0, use double width as fallback.
+		img, err = enc.Encode(c.encodedText, width*2, height)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return img, nil
 }
 
 // DefaultValue returns a sample 2-of-5 value.
@@ -638,7 +666,11 @@ func (c *CodabarBarcode) Render(width, height int) (image.Image, error) {
 		return nil, fmt.Errorf("codabar: Encode must be called before Render")
 	}
 	enc := codabar.New()
-	return enc.Encode(c.encodedText, width, height)
+	img, err := enc.Encode(c.encodedText, width, height)
+	if err != nil {
+		img, err = enc.Encode(c.encodedText, 0, 0)
+	}
+	return img, err
 }
 
 // DefaultValue returns a sample Codabar value.
@@ -670,7 +702,11 @@ func (d *DataMatrixBarcode) Render(width, height int) (image.Image, error) {
 		return nil, fmt.Errorf("datamatrix: Encode must be called before Render")
 	}
 	enc := datamatrix.New()
-	return enc.Encode(d.encodedText, width, height)
+	img, err := enc.Encode(d.encodedText, width, height)
+	if err != nil {
+		img, err = enc.Encode(d.encodedText, 0, 0)
+	}
+	return img, err
 }
 
 // DefaultValue returns a sample DataMatrix value.

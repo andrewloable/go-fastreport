@@ -66,6 +66,11 @@ type Exporter struct {
 	// pageBuf buffers each page's rendered objects. In ExportPageEnd, the per-page
 	// CSS is prepended before the page content, matching C#'s per-page emission.
 	pageBuf strings.Builder
+	// pageH is the declared page height for the current page (set in ExportPageBegin).
+	pageH float32
+	// maxBottom tracks the maximum Y+Height across all bands on the current page.
+	// Used for UnlimitedHeight pages where the page div must expand to fit content.
+	maxBottom float32
 }
 
 // NewExporter creates an Exporter with sensible defaults.
@@ -105,6 +110,8 @@ func (e *Exporter) ExportPageBegin(pg *preview.PreparedPage) error {
 	h := pg.Height * scale
 	pageW := w + 3.0*scale // C# adds +3 to page div width
 	e.zIdx = 0
+	e.pageH = h
+	e.maxBottom = 0
 	pageN := e.pageIdx + 1
 
 	// Record CSS count before this page's objects are rendered.
@@ -232,6 +239,12 @@ func (e *Exporter) ExportBand(b *preview.PreparedBand) error {
 	scale := e.Scale
 	if scale <= 0 {
 		scale = 1
+	}
+
+	// Track maximum content bottom for UnlimitedHeight page expansion.
+	bandBottom := (b.Top + b.Height) * scale
+	if bandBottom > e.maxBottom {
+		e.maxBottom = bandBottom
 	}
 
 	// Render band background div (C# LayerBack pattern).
@@ -856,6 +869,18 @@ func (e *Exporter) ExportPageEnd(pg *preview.PreparedPage) error {
 		}
 	}
 	e.sb.WriteString("</div>") // close frpage{n}
+
+	// For UnlimitedHeight pages, expand the page div height to fit all content.
+	// C# uses page.UnlimitedHeightValue for this.
+	if e.maxBottom > e.pageH {
+		oldH := pxVal(e.pageH)
+		newH := pxVal(e.maxBottom)
+		// Replace the height in the page div that was already written to sb.
+		pageStr := e.sb.String()
+		pageStr = strings.Replace(pageStr, "height:"+oldH+"px;", "height:"+newH+"px;", 1)
+		e.sb.Reset()
+		e.sb.WriteString(pageStr)
+	}
 
 	// Capture the page content and swap buffers back.
 	pageContent := e.sb.String()

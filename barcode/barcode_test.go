@@ -903,15 +903,18 @@ func TestCode39Barcode_DefaultValue(t *testing.T) {
 // BaseBarcodeImpl.Render — scale error (too small dimensions)
 // -----------------------------------------------------------------------
 
-func TestBaseBarcodeImpl_Render_ScaleError(t *testing.T) {
+func TestBaseBarcodeImpl_Render_ScaleFallback(t *testing.T) {
 	b := barcode.NewCode128Barcode()
 	if err := b.Encode("HELLO"); err != nil {
 		t.Fatalf("Encode: %v", err)
 	}
-	// Scale to 0x0 should trigger "can not scale barcode to an image smaller than N" error.
-	_, err := b.Render(0, 0)
-	if err == nil {
-		t.Error("expected error from Render with zero dimensions, got nil")
+	// Scale to 0x0 falls back to natural size (C# always renders regardless of size).
+	img, err := b.Render(0, 0)
+	if err != nil {
+		t.Fatalf("Render(0,0) should fall back to natural size, got error: %v", err)
+	}
+	if img == nil {
+		t.Error("Render(0,0) returned nil image")
 	}
 }
 

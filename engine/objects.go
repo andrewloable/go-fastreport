@@ -628,7 +628,7 @@ func (e *ReportEngine) buildPreparedObject(obj report.Base) *preview.PreparedObj
 	if hld, ok := obj.(hasHyperlink); ok {
 		if hl := hld.Hyperlink(); hl != nil {
 			switch hl.Kind {
-			case "URL":
+			case "URL", "": // C# default HyperlinkKind is URL
 				po.HyperlinkKind = 1
 				val := hl.Value
 				if val == "" && hl.Expression != "" && e.report != nil {

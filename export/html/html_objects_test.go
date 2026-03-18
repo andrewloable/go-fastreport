@@ -149,8 +149,9 @@ func TestRenderObject_Text_VertAlign_Center(t *testing.T) {
 		},
 	})
 	out := exportHTML(t, pp)
-	if !strings.Contains(out, "align-items:center;") {
-		t.Errorf("VertAlign=1: expected align-items:center; in %q", out)
+	// C# uses margin-top for vertical centering, not flex alignment.
+	if !strings.Contains(out, "margin-top:") {
+		t.Errorf("VertAlign=1: expected margin-top in %q", out)
 	}
 }
 
@@ -164,8 +165,9 @@ func TestRenderObject_Text_VertAlign_Bottom(t *testing.T) {
 		},
 	})
 	out := exportHTML(t, pp)
-	if !strings.Contains(out, "align-items:flex-end;") {
-		t.Errorf("VertAlign=2: expected align-items:flex-end; in %q", out)
+	// C# uses margin-top for bottom alignment, not flex alignment.
+	if !strings.Contains(out, "margin-top:") {
+		t.Errorf("VertAlign=2: expected margin-top in %q", out)
 	}
 }
 
@@ -227,9 +229,7 @@ func TestRenderObject_Text_WordWrap(t *testing.T) {
 	if !strings.Contains(out, "word-wrap:break-word;") {
 		t.Errorf("word-wrap: expected word-wrap:break-word; in %q", out)
 	}
-	if !strings.Contains(out, "white-space:normal;") {
-		t.Errorf("word-wrap: expected white-space:normal; in %q", out)
-	}
+	// C# doesn't add white-space:normal; just word-wrap:break-word is enough.
 }
 
 func TestRenderObject_Text_NoWordWrap(t *testing.T) {
@@ -242,8 +242,9 @@ func TestRenderObject_Text_NoWordWrap(t *testing.T) {
 		},
 	})
 	out := exportHTML(t, pp)
-	if !strings.Contains(out, "white-space:nowrap;") {
-		t.Errorf("no word-wrap: expected white-space:nowrap; in %q", out)
+	// C# uses "overflow: hidden; text-wrap: nowrap;" for non-wrapping text.
+	if !strings.Contains(out, "text-wrap: nowrap;") {
+		t.Errorf("no word-wrap: expected text-wrap: nowrap; in %q", out)
 	}
 }
 
@@ -258,12 +259,13 @@ func TestRenderObject_Text_Hyperlink(t *testing.T) {
 		},
 	})
 	out := exportHTML(t, pp)
-	// New structure: outer <a> tag wraps the entire object div.
+	// C# GetHref: <a style="color:..." href="URL">
 	if !strings.Contains(out, `href="https://example.com"`) {
 		t.Errorf("hyperlink: expected href attribute, got %q", out)
 	}
-	if !strings.Contains(out, `target="_blank"`) {
-		t.Errorf("hyperlink: expected target=_blank, got %q", out)
+	// C# only adds target="_blank" when OpenLinkInNewTab is set (not by default).
+	if !strings.Contains(out, "cursor:pointer;") {
+		t.Errorf("hyperlink: expected cursor:pointer, got %q", out)
 	}
 	if !strings.Contains(out, "Click here") {
 		t.Errorf("hyperlink: expected link text, got %q", out)
@@ -741,8 +743,8 @@ func TestRenderObject_UnknownKind_EmptyPlaceholder(t *testing.T) {
 		},
 	})
 	out := exportHTML(t, pp)
-	// Should produce an empty placeholder div without panicking.
-	if !strings.Contains(out, "position:absolute;") {
+	// Should produce a positioned placeholder div without panicking.
+	if !strings.Contains(out, "left:0px;top:0px;width:50px;height:30px;") {
 		t.Errorf("unknown kind: expected positioned placeholder div, got %q", out)
 	}
 }

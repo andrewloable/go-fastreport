@@ -72,11 +72,13 @@ type TextObjectBase struct {
 }
 
 // NewTextObjectBase creates a TextObjectBase with defaults.
+// C# default padding is (2, 0, 2, 0) — left=2, top=0, right=2, bottom=0.
 func NewTextObjectBase() *TextObjectBase {
 	t := &TextObjectBase{
 		BreakableComponent: *report.NewBreakableComponent(),
 		allowExpressions:   true,
 		brackets:           "[,]",
+		padding:            Padding{Left: 2, Top: 0, Right: 2, Bottom: 0},
 	}
 	return t
 }

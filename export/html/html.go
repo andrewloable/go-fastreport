@@ -4,9 +4,12 @@
 package html
 
 import (
+	"bytes"
 	"encoding/base64"
 	"fmt"
+	"image"
 	"image/color"
+	"image/png"
 	"io"
 	"math"
 	"strings"
@@ -15,6 +18,8 @@ import (
 	"github.com/andrewloable/go-fastreport/preview"
 	"github.com/andrewloable/go-fastreport/style"
 	"github.com/andrewloable/go-fastreport/utils"
+
+	xdraw "golang.org/x/image/draw"
 )
 
 // Exporter produces HTML output from a PreparedPages collection.
@@ -55,6 +60,12 @@ type Exporter struct {
 	css     *cssRegistry
 	// zIdx is the current z-index counter, incremented per object in Layers mode.
 	zIdx int
+	// cssCountBeforePage tracks the CSS class count before each page starts,
+	// so we can emit only new classes per page (matching C# per-page CSS emission).
+	cssCountBeforePage int
+	// pageBuf buffers each page's rendered objects. In ExportPageEnd, the per-page
+	// CSS is prepended before the page content, matching C#'s per-page emission.
+	pageBuf strings.Builder
 }
 
 // NewExporter creates an Exporter with sensible defaults.
@@ -95,6 +106,13 @@ func (e *Exporter) ExportPageBegin(pg *preview.PreparedPage) error {
 	pageW := w + 3.0*scale // C# adds +3 to page div width
 	e.zIdx = 0
 	pageN := e.pageIdx + 1
+
+	// Record CSS count before this page's objects are rendered.
+	e.cssCountBeforePage = e.css.Count()
+
+	// Swap to page buffer — all object rendering writes to pageBuf.
+	e.pageBuf.Reset()
+	e.sb, e.pageBuf = e.pageBuf, e.sb // pageBuf now holds prior output; sb is fresh for this page
 
 	e.sb.WriteString(fmt.Sprintf(
 		"<a name=\"PageN%d\" id=\"PageN%d\" style=\"padding:0;margin:0;font-size:1px;\"></a>",
@@ -216,6 +234,12 @@ func (e *Exporter) ExportBand(b *preview.PreparedBand) error {
 		scale = 1
 	}
 
+	// Render band background div (C# LayerBack pattern).
+	// C# renders each band as a positioned div with its fill color before child objects.
+	if b.Width > 0 && b.Height > 0 {
+		e.renderBandBackground(b, scale)
+	}
+
 	if e.Layers {
 		// In layers mode, render each object directly onto the page with
 		// absolute coordinates (band.Top + obj.Top) and ascending z-index.
@@ -235,6 +259,34 @@ func (e *Exporter) ExportBand(b *preview.PreparedBand) error {
 		e.renderObject(flat, scale)
 	}
 	return nil
+}
+
+// renderBandBackground renders the band itself as a background div, matching
+// C#'s ExportBandLayers → LayerBack(htmlPage, band, null) pattern.
+// The style is: text-align:center; position:absolute; color:white; background-color:...; border:none;
+func (e *Exporter) renderBandBackground(b *preview.PreparedBand, scale float32) {
+	left := b.Left * scale
+	w := b.Width * scale
+	h := b.Height * scale
+	top := b.Top * scale
+
+	// Build CSS class matching C# GetStyle(null, White, FillColor, ...) for non-text objects.
+	var css strings.Builder
+	css.WriteString("text-align:center;position:absolute;color:rgb(255, 255, 255);")
+	fc := b.FillColor
+	if fc.A == 0 {
+		css.WriteString("background-color:transparent;")
+	} else {
+		css.WriteString(fmt.Sprintf("background-color:%s;", rgbColor(fc)))
+	}
+	css.WriteString("border:none;")
+	css.WriteString(fmt.Sprintf("width:%spx;height:%spx;", pxVal(w), pxVal(h)))
+
+	className := e.css.Register(css.String())
+	e.sb.WriteString(fmt.Sprintf(
+		"<div class=\"%s\" style=\"left:%spx;top:%spx;width:%spx;height:%spx;\">&nbsp;</div>\n",
+		className, pxVal(left), pxVal(top), pxVal(w), pxVal(h),
+	))
 }
 
 // renderObjectLayered renders a single object in layers mode.
@@ -269,9 +321,11 @@ func (e *Exporter) renderObject(obj preview.PreparedObject, scale float32) {
 	h := obj.Height * scale
 
 	// positional is always unique per object — kept inline.
+	// C# Layer() only puts left/top/width/height in inline style.
+	// position:absolute and overflow go in the CSS class.
 	positional := fmt.Sprintf(
-		"position:absolute;left:%.2fpx;top:%.2fpx;width:%.2fpx;height:%.2fpx;overflow:hidden;",
-		left, top, w, h,
+		"left:%spx;top:%spx;width:%spx;height:%spx;",
+		pxVal(left), pxVal(top), pxVal(w), pxVal(h),
 	)
 
 	// sharedCSS collects properties that can be shared across elements.
@@ -315,20 +369,40 @@ func (e *Exporter) renderObject(obj preview.PreparedObject, scale float32) {
 	case preview.ObjectTypePicture:
 		if obj.BlobIdx >= 0 && e.pp != nil {
 			if data := e.pp.BlobStore.Get(obj.BlobIdx); len(data) > 0 {
-				// Register a CSS class for this image keyed by blob index so
-				// identical images reuse the same class (matching C# pattern).
-				classKey := fmt.Sprintf("img%d", obj.BlobIdx)
-				if !e.css.HasClass(classKey) {
-					mime := imageMIMEForCSS(data)
-					encoded := base64.StdEncoding.EncodeToString(data)
-					e.css.RegisterClass(classKey, fmt.Sprintf(
-						"background: url('data:%s;base64,%s') no-repeat !important;-webkit-print-color-adjust:exact;",
-						mime, encoded,
-					))
+				// C# LayerBack flow: GetStyle(obj) registers the picture's non-text
+				// style class FIRST, then LayerPicture registers the image data class.
+				// GetStyle for non-text: text-align:center;position:absolute;color:white;background-color:...;border:none;width;height
+				var picCSS strings.Builder
+				picCSS.WriteString("text-align:center;position:absolute;color:rgb(255, 255, 255);")
+				if obj.FillColor.A == 0 {
+					picCSS.WriteString("background-color:transparent;")
+				} else {
+					picCSS.WriteString(fmt.Sprintf("background-color:%s;", rgbColor(obj.FillColor)))
 				}
-				// Two overlapping divs: border div + image overlay div (C# pattern).
-				e.sb.WriteString(fmt.Sprintf(`<div %s>&nbsp;</div>`, styleAttr("border:none;")))
-				e.sb.WriteString(fmt.Sprintf(`<div class="%s" %s>&nbsp;</div>`, classKey, styleAttr("")))
+				picCSS.WriteString(fmt.Sprintf("border:none;width:%spx;height:%spx;", pxVal(w), pxVal(h)))
+				picClass := e.css.Register(picCSS.String())
+
+				// C# GetLayerPicture re-renders the image at display dimensions
+				// (Width*Zoom × Height*Zoom). We resize the image to match.
+				targetW := int(math.Round(float64(w)))
+				targetH := int(math.Round(float64(h)))
+				resized := resizeImagePNG(data, targetW, targetH)
+				mime := imageMIMEForCSS(resized)
+				encoded := base64.StdEncoding.EncodeToString(resized)
+				imgCSS := fmt.Sprintf(
+					"background: url('data:%s;base64,%s') no-repeat !important;-webkit-print-color-adjust:exact;",
+					mime, encoded,
+				)
+				imgClass := e.css.Register(imgCSS)
+
+				// Two overlapping divs: background/border div + image overlay div (C# pattern).
+				// C# Layer() uses AppendLine("</div>") which adds \n after each div.
+				e.sb.WriteString(fmt.Sprintf(
+					"<div class=\"%s\" style=\"left:%spx;top:%spx;width:%spx;height:%spx;border:none;\">&nbsp;</div>\n",
+					picClass, pxVal(left), pxVal(top), pxVal(w), pxVal(h)))
+				e.sb.WriteString(fmt.Sprintf(
+					"<div class=\"%s %s\" style=\"left:%spx;top:%spx;width:%spx;height:%spx;\">&nbsp;</div>\n",
+					picClass, imgClass, pxVal(left), pxVal(top), pxVal(w), pxVal(h)))
 				break
 			}
 		}
@@ -608,12 +682,12 @@ func (e *Exporter) renderTextObject(obj preview.PreparedObject, scale float32) {
 	// C# uses unquoted font-family and "line-height: " (space after colon).
 	outerCSS.WriteString(fmt.Sprintf("font-family:%s;font-size:%spx;", font.Name, pxVal(fontPx)))
 
-	// Line height: C# uses lineSpacing/emHeight ratio, default ~1.21.
-	// If LineHeight > 0 from the object, use Px(LineHeight) format.
+	// Line height: C# computes font.FontFamily.GetLineSpacing(style) / GetEmHeight(style),
+	// then rounds to 2 decimals. If the object has an explicit LineHeight > 0, use that.
 	if obj.LineHeight > 0 {
 		outerCSS.WriteString(fmt.Sprintf("line-height: %spx;", pxVal(obj.LineHeight)))
 	} else {
-		outerCSS.WriteString("line-height: 1.21;")
+		outerCSS.WriteString(fmt.Sprintf("line-height: %s;", fontLineHeightRatio(font.Name)))
 	}
 
 	// text-align (C# GetStyle: uses RTL-aware alignment).
@@ -671,9 +745,8 @@ func (e *Exporter) renderTextObject(obj preview.PreparedObject, scale float32) {
 	// Width and height (C# GetStyle appends width/height).
 	outerCSS.WriteString(fmt.Sprintf("width:%spx;height:%spx;", pxVal(w), pxVal(h)))
 
-	outerClass := e.css.Register(outerCSS.String())
-
-	// ── Build inner CSS class (matches C# GetSpanText) ──
+	// ── Build inner CSS class FIRST (matches C# flow: GetSpanText is called
+	// before LayerBack→GetStyle, so inner class is registered first) ──
 	var innerCSS strings.Builder
 
 	// Compute inner width: object width minus horizontal padding (C# pattern).
@@ -699,19 +772,19 @@ func (e *Exporter) renderTextObject(obj preview.PreparedObject, scale float32) {
 
 	// Vertical alignment: C# uses margin-top for non-top alignment.
 	// For vert-center/bottom, C# computes top offset via text height measurement.
-	// We approximate using flex layout for center/bottom when margin-top is 0.
+	// Use the MeasureString-calibrated ratio (from textmeasure.go), NOT the CSS
+	// line-height ratio, because C# computes margin from rendered text height.
+	lhRatio := fontMeasureRatioFloat(font.Name)
 	switch obj.VertAlign {
 	case 1: // center
-		// Approximate: compute margin-top = (height - textHeight) / 2.
-		// C# measures actual rendered text height; we estimate using font size.
-		lineH := float64(fontPx) * 1.21
+		lineH := float64(fontPx) * lhRatio
 		textH := lineH // single line estimate
 		marginTop := (float64(h) - textH - float64(obj.PaddingBottom*scale) + float64(obj.PaddingTop*scale)) / 2
 		if marginTop > 0 {
 			innerCSS.WriteString(fmt.Sprintf("margin-top:%spx;", pxVal(float32(marginTop))))
 		}
 	case 2: // bottom
-		lineH := float64(fontPx) * 1.21
+		lineH := float64(fontPx) * lhRatio
 		textH := lineH
 		marginTop := float64(h) - textH - float64(obj.PaddingBottom*scale)
 		if marginTop > 0 {
@@ -725,6 +798,10 @@ func (e *Exporter) renderTextObject(obj preview.PreparedObject, scale float32) {
 	}
 
 	innerClass := e.css.Register(innerCSS.String())
+
+	// Register outer class AFTER inner (C# flow: GetSpanText registers inner,
+	// then LayerBack→GetStyle registers outer).
+	outerClass := e.css.Register(outerCSS.String())
 
 	// ── Format text content ──
 	// C# HtmlString converts line breaks to <p> tags and double-spaces to &nbsp;&nbsp;.
@@ -743,10 +820,15 @@ func (e *Exporter) renderTextObject(obj preview.PreparedObject, scale float32) {
 	outerStyle := fmt.Sprintf("left:%spx;top:%spx;width:%spx;height:%spx;",
 		pxVal(adjLeft), pxVal(adjTop), pxVal(adjW), pxVal(adjH))
 
-	// Hyperlink wrapping.
+	// Hyperlink wrapping (C# GetHref + Layer pattern).
 	if obj.HyperlinkKind == 1 && obj.HyperlinkValue != "" {
+		// C# GetHref: <a style="color:{textColor}[;text-decoration:none]" href="{value}"[target="_blank"]>
 		linkColor := rgbColor(tc)
-		e.sb.WriteString(fmt.Sprintf(`<a style="color:%s" href="%s"target="_blank">`, linkColor, export.HTMLString(obj.HyperlinkValue)))
+		hrefStyle := fmt.Sprintf("color:%s", linkColor)
+		if font.Style&style.FontStyleUnderline == 0 {
+			hrefStyle += ";text-decoration:none"
+		}
+		e.sb.WriteString(fmt.Sprintf(`<a style="%s" href="%s">`, hrefStyle, obj.HyperlinkValue))
 		e.sb.WriteString(fmt.Sprintf(`<div class="%s" style="cursor:pointer;%s">`, outerClass, outerStyle))
 		e.sb.WriteString(fmt.Sprintf(`<div class="%s">%s</div>`, innerClass, innerText))
 		e.sb.WriteString("</div>\n</a>")
@@ -774,15 +856,36 @@ func (e *Exporter) ExportPageEnd(pg *preview.PreparedPage) error {
 		}
 	}
 	e.sb.WriteString("</div>") // close frpage{n}
+
+	// Capture the page content and swap buffers back.
+	pageContent := e.sb.String()
+	e.sb, e.pageBuf = e.pageBuf, e.sb // restore: sb = main output, pageBuf = page content
+
+	// C# per-page CSS emission: print CSS + new content CSS BEFORE the page content.
+	pageNum := e.pageIdx - 1 // 0-based (pageIdx was incremented in ExportPageBegin)
+
+	if e.EmbedCSS && e.css != nil {
+		// Print CSS (one block per page).
+		e.sb.WriteString(fmt.Sprintf("<style type=\"text/css\" media=\"print\"><!--\ndiv.frpage%d { break-after: always; page-break-inside: avoid; }\n @page { size: portrait; margin: 0; }--></style>\n", pageNum))
+		// New content CSS classes for this page.
+		if block := e.css.StyleBlockSince(e.cssCountBeforePage); block != "" {
+			e.sb.WriteString(block)
+		}
+	}
+	// C# opens frpage-container div AFTER the first page's CSS blocks.
+	if pageNum == 0 {
+		e.sb.WriteString("<div class=\"frpage-container\"\n>\n")
+	}
+	// Page content (anchor + page div + objects).
+	e.sb.WriteString(pageContent)
+
 	return nil
 }
 
 func (e *Exporter) Finish() error {
-	// Close frpage-container div.
-	e.sb.WriteString("</div>")
-
 	// Build the final HTML document.
-	// C# order: DOCTYPE, head, body, print-CSS, content-CSS, frpage-container+content, close.
+	// C# structure: head + body preamble, then per-page CSS + content (already in e.sb),
+	// then frpage-container wrapper around the per-page content, then close body/html.
 	var out strings.Builder
 
 	out.WriteString("<!DOCTYPE HTML PUBLIC \"-//W3C//DTD HTML 4.01 Transitional//EN\">\n")
@@ -790,27 +893,17 @@ func (e *Exporter) Finish() error {
 	out.WriteString("<meta http-equiv=\"Content-Type\" content=\"text/html; charset=utf-8\">\n")
 	out.WriteString("<meta name=Generator content=\"FastReport http://www.fast-report.com\">\n")
 	out.WriteString(fmt.Sprintf("<title>%s</title>\n", export.HTMLString(e.Title)))
-	out.WriteString("</head>\n")
-	out.WriteString("<body bgcolor=\"#FFFFFF\" text=\"#000000\">\n")
+	out.WriteString("</head>\r\n")
+	out.WriteString("<body bgcolor=\"#FFFFFF\" text=\"#000000\">\r\n")
 
-	// Emit CSS blocks before content (matching C# DoPage order: CSS then Page).
-	if e.EmbedCSS && e.css != nil {
-		// Print CSS block (for page breaks).
-		printCSS := e.buildPrintCSS()
-		if printCSS != "" {
-			out.WriteString(printCSS)
-		}
-		// Content CSS block (s0..sN classes).
-		if block := e.css.StyleBlock(); block != "" {
-			out.WriteString(block)
-		}
-	}
-
-	// frpage-container div with content.
-	out.WriteString("<div class=\"frpage-container\"\n>\n")
+	// Per-page CSS + content is already assembled in e.sb by ExportPageEnd.
+	// The frpage-container div wraps the per-page blocks.
+	// In C#, the frpage-container div is opened inside the first page's output
+	// and is NOT closed (C# doesn't close it).
 	out.WriteString(e.sb.String())
 
-	out.WriteString("</body>\n</html>\n")
+	// C# uses AppendLine(BODY_END) which adds \r\n after </body>.
+	out.WriteString("</body>\r\n</html>\n")
 
 	// Write final result.
 	_, err := io.WriteString(e.w, out.String())
@@ -822,20 +915,7 @@ func (e *Exporter) Finish() error {
 	return err
 }
 
-// buildPrintCSS generates the print media CSS block for page break rules.
-// C# emits one block per page with break-after rule.
-func (e *Exporter) buildPrintCSS() string {
-	if e.pageIdx == 0 {
-		return ""
-	}
-	var sb strings.Builder
-	sb.WriteString("<style type=\"text/css\" media=\"print\"><!--\n")
-	for i := 0; i < e.pageIdx; i++ {
-		sb.WriteString(fmt.Sprintf("div.frpage%d { break-after: always; page-break-inside: avoid; }\n", i))
-	}
-	sb.WriteString(" @page { size: portrait; margin: 0; }--></style>\n")
-	return sb.String()
-}
+// buildPrintCSS is no longer used — print CSS is emitted per page in ExportPageEnd.
 
 // HTML returns the complete HTML string that would be written.
 // Useful for testing. Call after Export has been called.
@@ -847,6 +927,89 @@ func (e *Exporter) HTML() string {
 
 // pxVal formats a float as a CSS pixel value string, matching C# ExportUtils.FloatToString.
 // It drops trailing zeros: 718.20 → "718.2", 28.35 → "28.35", 0.00 → "0".
+// fontLineHeightRatio returns the CSS line-height ratio for a given font family,
+// matching C#'s FontFamily.GetLineSpacing(style) / GetEmHeight(style) rounded to
+// 2 decimals. Values extracted from C# FastReport .NET HTML output.
+func fontLineHeightRatio(fontFamily string) string {
+	switch strings.ToLower(fontFamily) {
+	case "arial", "arial narrow", "times new roman", "times":
+		return "1.15"
+	case "tahoma", "microsoft sans serif":
+		return "1.21"
+	case "verdana":
+		return "1.22"
+	case "arial unicode ms":
+		return "1.34"
+	case "arial black":
+		return "1.41"
+	case "georgia":
+		return "1.14"
+	case "courier new", "courier":
+		return "1.13"
+	case "segoe ui":
+		return "1.33"
+	default:
+		return "1.21" // Tahoma is the most common default in FastReport
+	}
+}
+
+// fontLineHeightRatioFloat returns the line-height ratio as a float64 for
+// margin-top calculations. Uses the same values as fontLineHeightRatio.
+func fontLineHeightRatioFloat(fontFamily string) float64 {
+	switch strings.ToLower(fontFamily) {
+	case "arial", "arial narrow", "times new roman", "times":
+		return 1.15
+	case "tahoma", "microsoft sans serif":
+		return 1.21
+	case "verdana":
+		return 1.22
+	case "arial unicode ms":
+		return 1.34
+	case "arial black":
+		return 1.41
+	case "georgia":
+		return 1.14
+	case "courier new", "courier":
+		return 1.13
+	case "segoe ui":
+		return 1.33
+	default:
+		return 1.21
+	}
+}
+
+// fontMeasureRatioFloat returns the MeasureString-calibrated line height ratio.
+// This matches C#'s Graphics.MeasureString output for text height measurement
+// (used for margin-top calculations). Slightly different from the CSS line-height
+// ratio because MeasureString uses actual font ascent+descent.
+// fontMeasureRatioFloat returns the exact .NET font line-spacing ratio for
+// margin-top calculations. Uses full precision from font OS/2 table metrics:
+// (usWinAscent + usWinDescent + typoLineGap) / unitsPerEm.
+func fontMeasureRatioFloat(fontFamily string) float64 {
+	switch strings.ToLower(fontFamily) {
+	case "arial", "arial narrow":
+		return 2355.0 / 2048.0
+	case "times new roman", "times":
+		return 2355.0 / 2048.0
+	case "tahoma", "microsoft sans serif":
+		return 2472.0 / 2048.0
+	case "verdana":
+		return 2489.0 / 2048.0
+	case "arial unicode ms":
+		return 2743.0 / 2048.0
+	case "arial black":
+		return 2899.0 / 2048.0
+	case "georgia":
+		return 2327.0 / 2048.0
+	case "courier new", "courier":
+		return 2320.0 / 2048.0
+	case "segoe ui":
+		return 2724.0 / 2048.0
+	default:
+		return 2472.0 / 2048.0
+	}
+}
+
 func pxVal(v float32) string {
 	s := fmt.Sprintf("%.2f", v)
 	// Strip trailing zeros after decimal point.
@@ -868,26 +1031,76 @@ func rgbColor(c color.RGBA) string {
 // formatTextContent converts plain text to HTML, matching C# ExportUtils.HtmlString.
 // Line breaks become <p> tags. Double spaces become &nbsp;&nbsp;.
 // The fontPx parameter provides the font size in CSS pixels for the p tag height.
+// formatTextContent converts text to HTML matching C# ExportUtils.HtmlString exactly.
+//
+// C# logic for line breaks (crlf == CRLF.html):
+//   - Normalize \r\n and \r to \n
+//   - First \n at position 0: <p style="margin-top:{fontSize}margin-bottom:0px"></p>
+//   - First line break (lineBreakCount==0): <p style="margin-top:0px;margin-bottom:0px;"></p>
+//   - Subsequent breaks (lineBreakCount>0): <p style="margin-top:0px;height:{fontSize}margin-bottom:0px"></p>
+//   - Consecutive spaces → &nbsp;
+//   - Trailing space → &nbsp;
+//
+// fontSize is Px(Math.Round(font.Size * 96 / 72)) e.g. "15px;" for 11pt.
 func formatTextContent(text string, fontPx float32) string {
-	// HTML-escape the text.
-	escaped := export.HTMLString(text)
+	// C# uses Px(Math.Round(obj.Font.Size * 96 / 72)) — rounds fontPx to integer first.
+	fontSize := pxVal(float32(math.Round(float64(fontPx)))) + "px;"
 
-	// Convert line breaks to <p> paragraph separators (matching C# HtmlString).
-	normalized := strings.ReplaceAll(escaped, "\r\n", "\n")
-	lines := strings.Split(normalized, "\n")
+	// Replace \v with \n (C# text.Replace('\v', '\n')).
+	text = strings.ReplaceAll(text, "\v", "\n")
+	// Normalize \r\n to \n (C# crlf==html: replace \r\n with \n, then \r with \n).
+	text = strings.ReplaceAll(text, "\r\n", "\n")
+	text = strings.ReplaceAll(text, "\r", "\n")
 
-	if len(lines) == 1 {
-		return escaped
-	}
+	var result strings.Builder
+	lineBreakCount := 0
+	runes := []rune(text)
+	n := len(runes)
 
-	var sb strings.Builder
-	for i, line := range lines {
-		sb.WriteString(line)
-		if i < len(lines)-1 {
-			sb.WriteString(`<p style="margin-top:0px;margin-bottom:0px;"></p>`)
+	for i := 0; i < n; i++ {
+		ch := runes[i]
+
+		// Consecutive/trailing spaces → &nbsp; (C# logic).
+		if ch == ' ' && (n == 1 ||
+			(i < n-1 && runes[i+1] == ' ') ||
+			(i > 0 && runes[i-1] == ' ') ||
+			i == n-1) {
+			result.WriteString("&nbsp;")
+			continue
+		}
+
+		if ch == '\n' {
+			// C#: if first char is \n, prepend margin-top with fontSize.
+			if i == 0 {
+				result.WriteString(fmt.Sprintf(`<p style="margin-top:%smargin-bottom:0px"></p>`, fontSize))
+			}
+			if lineBreakCount == 0 {
+				result.WriteString(`<p style="margin-top:0px;margin-bottom:0px;"></p>`)
+			} else {
+				result.WriteString(fmt.Sprintf(`<p style="margin-top:0px;height:%smargin-bottom:0px"></p>`, fontSize))
+			}
+			lineBreakCount++
+			continue
+		}
+
+		// C# resets lineBreakCount on any non-break, non-space character.
+		lineBreakCount = 0
+
+		// HTML-escape special chars.
+		switch ch {
+		case '<':
+			result.WriteString("&lt;")
+		case '>':
+			result.WriteString("&gt;")
+		case '&':
+			result.WriteString("&amp;")
+		case '"':
+			result.WriteString("&quot;")
+		default:
+			result.WriteRune(ch)
 		}
 	}
-	return sb.String()
+	return result.String()
 }
 
 // htmlBorderWidthValues computes the border widths for each side, matching C# HTMLBorderWidth.
@@ -981,6 +1194,61 @@ func borderCSS(b *style.Border, scale float32) string {
 	}
 
 	return sb.String()
+}
+
+// resizeImagePNG resizes a PNG image to the target dimensions, matching C#'s
+// GetLayerPicture which re-renders images at Width*Zoom × Height*Zoom.
+// If the image is already the target size or decoding fails, returns the original data.
+// resizeImagePNG resizes a PNG image to the target dimensions, matching C#'s
+// GetLayerPicture which creates a Bitmap at Width*Zoom × Height*Zoom and
+// calls obj.Draw(). PictureObject default SizeMode is Zoom (preserve aspect
+// ratio, center within bounds, transparent background).
+func resizeImagePNG(data []byte, targetW, targetH int) []byte {
+	if targetW <= 0 || targetH <= 0 {
+		return data
+	}
+	// Check PNG magic.
+	if len(data) < 8 || data[0] != 0x89 || data[1] != 'P' || data[2] != 'N' || data[3] != 'G' {
+		return data // not PNG, return as-is
+	}
+
+	src, err := png.Decode(bytes.NewReader(data))
+	if err != nil {
+		return data
+	}
+	srcBounds := src.Bounds()
+	srcW := srcBounds.Dx()
+	srcH := srcBounds.Dy()
+	if srcW == targetW && srcH == targetH {
+		return data // already correct size
+	}
+
+	// Create target bitmap with transparent background (matching C# Bitmap + clear).
+	dst := image.NewRGBA(image.Rect(0, 0, targetW, targetH))
+
+	// C# PictureObject.SizeMode defaults to Zoom: scale to fit while preserving
+	// aspect ratio, then center within the target bounds.
+	scaleX := float64(targetW) / float64(srcW)
+	scaleY := float64(targetH) / float64(srcH)
+	scale := scaleX
+	if scaleY < scaleX {
+		scale = scaleY
+	}
+	drawW := int(math.Round(float64(srcW) * scale))
+	drawH := int(math.Round(float64(srcH) * scale))
+	offsetX := (targetW - drawW) / 2
+	offsetY := (targetH - drawH) / 2
+
+	// Draw scaled image centered in the target bitmap using bicubic interpolation
+	// (matching C#'s HighQualityBicubic / InterpolationMode).
+	drawRect := image.Rect(offsetX, offsetY, offsetX+drawW, offsetY+drawH)
+	xdraw.CatmullRom.Scale(dst, drawRect, src, srcBounds, xdraw.Over, nil)
+
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, dst); err != nil {
+		return data
+	}
+	return buf.Bytes()
 }
 
 // imageMIMEForCSS detects the MIME type from image magic bytes and returns the

@@ -164,10 +164,19 @@ func (o *Outline) LevelRoot() {
 type PreparedBand struct {
 	// Name is the source band's name.
 	Name string
+	// Left is the X position on the page in pixels (column offset).
+	Left float32
 	// Top is the Y position on the page in pixels.
 	Top float32
 	// Height is the rendered height in pixels.
 	Height float32
+	// Width is the band width in pixels.
+	Width float32
+	// FillColor is the band's background fill color.
+	// A=0 means transparent (C# outputs "background-color:transparent").
+	FillColor color.RGBA
+	// Border is the band's border definition.
+	Border style.Border
 	// Objects holds rendered object snapshots (text, images, etc.).
 	Objects []PreparedObject
 }

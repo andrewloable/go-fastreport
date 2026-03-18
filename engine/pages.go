@@ -8,6 +8,7 @@ import (
 	"github.com/andrewloable/go-fastreport/preview"
 	"github.com/andrewloable/go-fastreport/report"
 	"github.com/andrewloable/go-fastreport/reportpkg"
+	"github.com/andrewloable/go-fastreport/style"
 )
 
 // ── PreparedPages integration ─────────────────────────────────────────────────
@@ -280,8 +281,15 @@ func (e *ReportEngine) endColumn(pg *reportpkg.ReportPage) bool {
 		e.curColumn = 0
 	}
 
-	// Step 6: calculate curX.
-	e.curX = float32(e.curColumn) * (e.pageWidth / float32(cols))
+	// Step 6: calculate curX from Columns.Positions (C# pattern).
+	// C#: curX = page.Columns.Positions[curColumn] * Units.Millimeters
+	const mmPerPxCol = 3.78
+	if e.curColumn < len(pg.Columns.Positions) {
+		e.curX = pg.Columns.Positions[e.curColumn] * mmPerPxCol
+	} else {
+		// Fallback: divide page evenly.
+		e.curX = float32(e.curColumn) * (e.pageWidth / float32(cols))
+	}
 
 	// Step 7: if wrapped to column 0, signal caller to end page.
 	if e.curColumn == 0 {
@@ -372,15 +380,30 @@ func (e *ReportEngine) showBand(b report.Base) {
 	} else if e.preparedPages != nil {
 		pb := &preview.PreparedBand{
 			Name:   b.Name(),
+			Left:   e.curX,
 			Top:    e.curY,
 			Height: height,
 		}
+		// Populate band-level properties (width, fill, border) for background rendering.
+		populateBandProps(b, pb)
 		// Populate child objects from any band type that exposes Objects().
 		type hasObjects interface {
 			Objects() *report.ObjectCollection
 		}
 		if ho, ok := b.(hasObjects); ok {
 			e.populateBandObjects2(ho.Objects(), pb)
+		}
+		// Apply CanGrow/CanShrink adjustments to object positions and sizes.
+		// This mirrors the same logic in showFullBandOnce for data bands.
+		// Extract BandBase from any band type that embeds it.
+		if bb := extractBandBase(b); bb != nil {
+			layout := calcBandLayout(bb, bb.Height(), e.evalText)
+			if layout.shifts != nil {
+				applyBandObjectShifts(bb, pb, layout.shifts)
+			}
+			if layout.effectiveH != nil {
+				applyBandObjectHeights(bb, pb, layout.effectiveH)
+			}
 		}
 		// Apply page-level column X offset to all objects in this band.
 		if e.curX != 0 {
@@ -395,6 +418,67 @@ func (e *ReportEngine) showBand(b report.Base) {
 	if !isOverlay {
 		e.AdvanceY(height)
 	}
+}
+
+// populateBandProps fills in the PreparedBand's Width, FillColor, and Border
+// from the source band object. These are used by the HTML exporter to render
+// the band background div (C# LayerBack pattern).
+func populateBandProps(b report.Base, pb *preview.PreparedBand) {
+	type hasFill interface {
+		Fill() style.Fill
+	}
+	type hasWidth interface {
+		Width() float32
+	}
+	type hasBorder interface {
+		Border() style.Border
+	}
+	if w, ok := b.(hasWidth); ok {
+		pb.Width = w.Width()
+	}
+	if f, ok := b.(hasFill); ok {
+		if sf, ok2 := f.Fill().(*style.SolidFill); ok2 {
+			pb.FillColor = sf.Color
+		}
+	}
+	if br, ok := b.(hasBorder); ok {
+		pb.Border = br.Border()
+	}
+}
+
+// extractBandBase returns the *band.BandBase from any band type, or nil.
+func extractBandBase(b report.Base) *band.BandBase {
+	switch v := b.(type) {
+	case *band.BandBase:
+		return v
+	case *band.ReportTitleBand:
+		return &v.BandBase
+	case *band.ReportSummaryBand:
+		return &v.BandBase
+	case *band.PageHeaderBand:
+		return &v.BandBase
+	case *band.PageFooterBand:
+		return &v.BandBase
+	case *band.ColumnHeaderBand:
+		return &v.BandBase
+	case *band.ColumnFooterBand:
+		return &v.BandBase
+	case *band.DataHeaderBand:
+		return &v.BandBase
+	case *band.DataFooterBand:
+		return &v.BandBase
+	case *band.GroupHeaderBand:
+		return &v.BandBase
+	case *band.GroupFooterBand:
+		return &v.BandBase
+	case *band.OverlayBand:
+		return &v.BandBase
+	case *band.DataBand:
+		return &v.BandBase
+	case *band.ChildBand:
+		return &v.BandBase
+	}
+	return nil
 }
 
 // bandHeight returns the rendered height for a band in pixels.

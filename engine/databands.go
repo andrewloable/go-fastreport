@@ -212,16 +212,27 @@ func (e *ReportEngine) RunDataBandFull(db *band.DataBand) error {
 	}
 
 	// Apply sort specs to in-memory data sources before iterating.
+	// C# calls dataBand.InitDataSource() which applies sort from DataBand.Sort.
 	if sortSpecs := db.Sort(); len(sortSpecs) > 0 {
 		if sortable, ok := ds.(data.Sortable); ok {
-			specs := make([]data.SortSpec, len(sortSpecs))
-			for i, s := range sortSpecs {
-				specs[i] = data.SortSpec{
-					Column:     s.Column,
-					Descending: s.Order == band.SortOrderDescending,
+			var specs []data.SortSpec
+			for _, s := range sortSpecs {
+				expr := s.Expression
+				if expr == "" {
+					expr = s.Column
+				}
+				// Extract bare column name from "[DataSource.Column]" expression.
+				col := groupConditionColumn(expr)
+				if col != "" {
+					specs = append(specs, data.SortSpec{
+						Column:     col,
+						Descending: s.Order == band.SortOrderDescending,
+					})
 				}
 			}
-			sortable.SortRows(specs)
+			if len(specs) > 0 {
+				sortable.SortRows(specs)
+			}
 		}
 	}
 

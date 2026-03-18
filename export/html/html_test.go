@@ -232,12 +232,12 @@ func TestExporter_LayersMode_AbsolutePageCoords(t *testing.T) {
 	out := buf.String()
 
 	// Obj1 is at band.Top(0) + obj.Top(5) = 5px from page top.
-	if !strings.Contains(out, "top:5.00px") {
-		t.Errorf("Obj1 should be at top:5.00px (page-absolute), got: %s", out)
+	if !strings.Contains(out, "top:5px") {
+		t.Errorf("Obj1 should be at top:5px (page-absolute), got: %s", out)
 	}
 	// Obj2 is at band.Top(30) + obj.Top(5) = 35px from page top.
-	if !strings.Contains(out, "top:35.00px") {
-		t.Errorf("Obj2 should be at top:35.00px (page-absolute), got: %s", out)
+	if !strings.Contains(out, "top:35px") {
+		t.Errorf("Obj2 should be at top:35px (page-absolute), got: %s", out)
 	}
 }
 
@@ -293,9 +293,9 @@ func TestExporter_Scale(t *testing.T) {
 		t.Fatalf("Export: %v", err)
 	}
 
-	// At 0.5 scale, the 794px page becomes 794*0.5 + 3*0.5 = 397 + 1.5 = 398.50px.
-	if !strings.Contains(buf.String(), "398.50px") {
-		t.Error("scaled output should contain 398.50px page width")
+	// At 0.5 scale, the 794px page becomes 794*0.5 + 3*0.5 = 397 + 1.5 = 398.5px.
+	if !strings.Contains(buf.String(), "398.5px") {
+		t.Error("scaled output should contain 398.5px page width")
 	}
 }
 

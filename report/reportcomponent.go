@@ -109,7 +109,7 @@ func NewReportComponentBase() *ReportComponentBase {
 		border:        *style.NewBorder(),
 		exportable:    true,
 		printOn:       PrintOnAllPages,
-		fill:          &style.SolidFill{Color: color.RGBA{R: 255, G: 255, B: 255, A: 255}},
+		fill:          &style.SolidFill{Color: color.RGBA{R: 0, G: 0, B: 0, A: 0}}, // C# default: Color.Transparent
 	}
 	return rc
 }

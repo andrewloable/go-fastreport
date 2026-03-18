@@ -3,17 +3,36 @@
 package reportpkg
 
 import (
+	"strconv"
+	"strings"
+
 	"github.com/andrewloable/go-fastreport/band"
 	"github.com/andrewloable/go-fastreport/report"
 	"github.com/andrewloable/go-fastreport/style"
 )
 
+// parseFloatList parses a comma-separated list of floats (e.g. "0,90").
+func parseFloatList(s string) []float32 {
+	parts := strings.Split(s, ",")
+	result := make([]float32, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if v, err := strconv.ParseFloat(p, 32); err == nil {
+			result = append(result, float32(v))
+		}
+	}
+	return result
+}
+
 // PageColumns holds multi-column page-level layout settings.
 type PageColumns struct {
 	// Count is the number of columns (0 or 1 = single column).
 	Count int
-	// Width is the column width in pixels (0 = auto).
+	// Width is the column width in mm (0 = auto).
 	Width float32
+	// Positions holds the left-edge X offset of each column in mm.
+	// Parsed from "Columns.Positions" FRX attribute (comma-separated).
+	Positions []float32
 }
 
 // ReportPage represents a single page template in the report.
@@ -478,6 +497,9 @@ func (p *ReportPage) Deserialize(r report.Reader) error {
 	p.BackPageOddEven = r.ReadInt("BackPageOddEven", 0)
 	p.Columns.Count = r.ReadInt("Columns.Count", 0)
 	p.Columns.Width = r.ReadFloat("Columns.Width", 0)
+	if posStr := r.ReadStr("Columns.Positions", ""); posStr != "" {
+		p.Columns.Positions = parseFloatList(posStr)
+	}
 	if p.Watermark == nil {
 		p.Watermark = NewWatermark()
 	}

@@ -20,7 +20,7 @@ func MeasureText(text string, f style.Font, maxWidth float32) (width, height flo
 		return 0, lineH
 	}
 
-	lines := wrapLines(text, face, maxWidth)
+	lines := wrapLines(text, face, scaleMaxWidth(maxWidth, f))
 	var maxW float32
 	for _, line := range lines {
 		w := measureLine(line, face)
@@ -39,7 +39,21 @@ func MeasureLines(text string, f style.Font, maxWidth float32) int {
 		return 1
 	}
 	face := faceForStyle(f)
-	return len(wrapLines(text, face, maxWidth))
+	return len(wrapLines(text, face, scaleMaxWidth(maxWidth, f)))
+}
+
+// scaleMaxWidth adjusts maxWidth for the basicfont fallback.
+func scaleMaxWidth(maxWidth float32, f style.Font) float32 {
+	if maxWidth <= 0 {
+		return maxWidth
+	}
+	fontPx := f.Size * 96.0 / 72.0
+	if fontPx <= 0 {
+		return maxWidth
+	}
+	actualAvgWidth := fontPx * 0.48
+	basicAvgWidth := float32(7.0)
+	return maxWidth * (basicAvgWidth / actualAvgWidth)
 }
 
 // ── internal helpers ──────────────────────────────────────────────────────────
@@ -55,23 +69,47 @@ func faceForStyle(f style.Font) font.Face {
 	return DefaultFontManager.GetFace(desc)
 }
 
-// lineHeight estimates the line height in pixels for a given face and style.Font.
-// If the face provides metrics, use them; otherwise fall back to font.Size.
+// lineHeight computes the line height in pixels for a given font, matching
+// C#'s font.FontFamily.GetLineSpacing(style) / GetEmHeight(style) ratio.
+// This uses the font size in px (pt * 96/72) multiplied by the font-specific
+// line-spacing ratio, producing the same value as .NET's MeasureString.
 func lineHeight(face font.Face, f style.Font) float32 {
-	if face != nil {
-		m := face.Metrics()
-		h := m.Ascent + m.Descent
-		if h > 0 {
-			// Convert fixed.Int26_6 to float32 pixels.
-			return float32(h) / 64.0
-		}
+	// Convert point size to pixels: fontPx = pt * 96 / 72.
+	fontPx := f.Size * 96.0 / 72.0
+	if fontPx <= 0 {
+		fontPx = style.DefaultFont().Size * 96.0 / 72.0
 	}
-	// Fallback: approximate line height as 1.2× the point size.
-	sz := f.Size
-	if sz <= 0 {
-		sz = style.DefaultFont().Size
+	return fontPx * fontLineSpacingRatio(f.Name)
+}
+
+// fontLineSpacingRatio returns the exact .NET font line-spacing ratio.
+// Computed from: (usWinAscent + usWinDescent + typoLineGap) / unitsPerEm
+// These are the actual values from the font OS/2 and hhea tables, matching
+// .NET's FontFamily.GetLineSpacing(style) / GetEmHeight(style).
+// Using full precision ensures sub-pixel accuracy in shift computations.
+func fontLineSpacingRatio(fontFamily string) float32 {
+	switch strings.ToLower(fontFamily) {
+	case "arial", "arial narrow":
+		return 2355.0 / 2048.0 // 1.14990234375
+	case "times new roman", "times":
+		return 2355.0 / 2048.0 // 1.14990234375
+	case "tahoma", "microsoft sans serif":
+		return 2472.0 / 2048.0 // 1.20703125
+	case "verdana":
+		return 2489.0 / 2048.0 // 1.21533203125
+	case "arial unicode ms":
+		return 2743.0 / 2048.0 // 1.33935546875
+	case "arial black":
+		return 2899.0 / 2048.0 // 1.41552734375
+	case "georgia":
+		return 2327.0 / 2048.0 // 1.13623046875
+	case "courier new", "courier":
+		return 2320.0 / 2048.0 // 1.1328125
+	case "segoe ui":
+		return 2724.0 / 2048.0 // 1.33007812500
+	default:
+		return 2472.0 / 2048.0 // Tahoma default
 	}
-	return sz * 1.2
 }
 
 // measureLine returns the pixel width of a single line of text.

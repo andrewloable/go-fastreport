@@ -63,8 +63,8 @@ func TestExporter_ZeroScale_ExportPageBegin(t *testing.T) {
 		t.Error("ZeroScale: expected frpage0 div in output")
 	}
 	// Width must be page width + 3 (C# +3 offset): 594+3=597px.
-	if !strings.Contains(out, "597.00px") {
-		t.Errorf("ZeroScale: expected 597.00px page width, got:\n%s", out)
+	if !strings.Contains(out, "597px") {
+		t.Errorf("ZeroScale: expected 597px page width, got:\n%s", out)
 	}
 }
 
@@ -76,8 +76,8 @@ func TestExporter_NegativeScale_ExportPageBegin(t *testing.T) {
 
 	out := exportHTMLWith(t, exp, pp)
 	// Width must be page width + 3 (C# +3 offset): 594+3=597px.
-	if !strings.Contains(out, "597.00px") {
-		t.Errorf("NegativeScale: expected 597.00px, got:\n%s", out)
+	if !strings.Contains(out, "597px") {
+		t.Errorf("NegativeScale: expected 597px, got:\n%s", out)
 	}
 }
 
@@ -205,8 +205,8 @@ func TestExporter_ZeroScale_ExportBand(t *testing.T) {
 		t.Errorf("ZeroScale ExportBand: expected frpage0 div, got:\n%s", out)
 	}
 	// Width must use clamped scale=1: 594+3=597px.
-	if !strings.Contains(out, "597.00px") {
-		t.Errorf("ZeroScale ExportBand: expected 597.00px page width, got:\n%s", out)
+	if !strings.Contains(out, "597px") {
+		t.Errorf("ZeroScale ExportBand: expected 597px page width, got:\n%s", out)
 	}
 }
 

@@ -66,10 +66,11 @@ func (e *ReportEngine) CanPrint(obj *report.ReportComponentBase, pageIndex, tota
 // If the band has CanGrow or CanShrink set, child TextObjects are measured
 // and the height is adjusted to fit their content.
 func (e *ReportEngine) CalcBandHeight(b report.Base) float32 {
-	bb, ok := b.(*band.BandBase)
-	if !ok {
+	// Extract BandBase from any band type (ReportTitleBand, PageHeaderBand, etc.)
+	bb := extractBandBase(b)
+	if bb == nil {
 		type hasHeight interface{ Height() float32 }
-		if h, ok2 := b.(hasHeight); ok2 {
+		if h, ok := b.(hasHeight); ok {
 			return h.Height()
 		}
 		return 0
@@ -104,6 +105,9 @@ type bandLayout struct {
 	// to grow/shrink propagation from objects above it. Negative = shift up.
 	// shifts is nil when no grow/shrink objects are present.
 	shifts []float32
+	// effectiveH[i] is the effective height for each object after CanGrow/CanShrink.
+	// nil when no grow/shrink objects are present.
+	effectiveH []float32
 }
 
 // calcBandLayout measures all TextObject children of the band and
@@ -181,6 +185,9 @@ func calcBandLayout(bb *band.BandBase, baseHeight float32, evalFn func(string) s
 		// Normalize line endings for consistent line counting.
 		textToMeasure = strings.ReplaceAll(textToMeasure, "\r\n", "\n")
 		textToMeasure = strings.ReplaceAll(textToMeasure, "\r", "\n")
+		// Trim trailing newlines — C# MeasureString ignores trailing whitespace/newlines
+		// so "text\n" measures the same as "text".
+		textToMeasure = strings.TrimRight(textToMeasure, "\n")
 
 		var textH float32
 		switch txt.TextRenderType() {
@@ -191,9 +198,11 @@ func calcBandLayout(bb *band.BandBase, baseHeight float32, evalFn func(string) s
 			_, textH = utils.MeasureText(textToMeasure, txt.Font(), objWidth)
 		}
 		// Add top+bottom padding back into the measured height.
+		// C# CalcSize adds Padding.Vertical + 1 (a 1px tolerance).
 		if p := txt.Padding(); p.Top+p.Bottom > 0 {
 			textH += p.Top + p.Bottom
 		}
+		textH += 1 // C# adds 1px tolerance in CalcSize()
 
 		declaredH := txt.Height()
 		if canGrowObj && textH > declaredH {
@@ -259,9 +268,9 @@ func calcBandLayout(bb *band.BandBase, baseHeight float32, evalFn func(string) s
 	}
 
 	if maxBottom <= 0 {
-		return bandLayout{height: baseHeight, shifts: shifts}
+		return bandLayout{height: baseHeight, shifts: shifts, effectiveH: effectiveH}
 	}
-	return bandLayout{height: maxBottom, shifts: shifts}
+	return bandLayout{height: maxBottom, shifts: shifts, effectiveH: effectiveH}
 }
 
 // ── AddBandToPreparedPages ────────────────────────────────────────────────────
@@ -298,6 +307,7 @@ func (e *ReportEngine) AddBandToPreparedPages(b *band.BandBase) bool {
 
 	pb := &preview.PreparedBand{
 		Name:   b.Name(),
+		Left:   e.curX,
 		Top:    e.curY,
 		Height: height,
 	}
@@ -464,16 +474,24 @@ func (e *ReportEngine) showFullBandOnce(b *band.BandBase) {
 	} else if e.preparedPages != nil {
 		pb := &preview.PreparedBand{
 			Name:   b.Name(),
+			Left:   e.curX,
 			Top:    e.curY,
 			Height: height,
+			Width:  b.Width(),
 		}
+		// Populate fill/border for band background rendering.
+		populateBandProps(b, pb)
 		e.populateBandObjects(b, pb)
 		applyAnchorAdjustments(b, pb, 0, height-b.Height(), 0)
-		// Apply grow/shrink propagation shifts to PreparedObject Y positions.
-		// When a CanShrink/CanGrow object changes size, objects below it shift
-		// vertically. This mirrors FastReport's CalcHeight shift propagation.
-		if layout := calcBandLayout(b, b.Height(), e.evalText); layout.shifts != nil {
+		// Apply grow/shrink adjustments to PreparedObject positions and sizes.
+		// When a CanGrow/CanShrink object changes size, its PreparedObject height
+		// must match, and objects below it shift vertically.
+		layout := calcBandLayout(b, b.Height(), e.evalText)
+		if layout.shifts != nil {
 			applyBandObjectShifts(b, pb, layout.shifts)
+		}
+		if layout.effectiveH != nil {
+			applyBandObjectHeights(b, pb, layout.effectiveH)
 		}
 		// Apply page-level column X offset so data bands in multi-column mode
 		// are rendered in their respective column positions.
@@ -749,6 +767,47 @@ func applyBandObjectShifts(bb *band.BandBase, pb *preview.PreparedBand, shifts [
 
 		if shifts[i] != 0 {
 			pb.Objects[poIdx].Top += shifts[i]
+		}
+		poIdx++
+	}
+}
+
+// applyBandObjectHeights adjusts PreparedObject Height values to match the
+// effective heights computed by calcBandLayout (CanGrow/CanShrink expansion).
+//
+// effectiveH[i] is the computed height for source object i. When it differs
+// from the declared height, the PreparedObject is updated so the HTML exporter
+// renders the object at the correct size.
+func applyBandObjectHeights(bb *band.BandBase, pb *preview.PreparedBand, effectiveH []float32) {
+	if len(effectiveH) == 0 {
+		return
+	}
+	objs := bb.Objects()
+	if objs == nil || objs.Len() == 0 {
+		return
+	}
+
+	type hasVisible interface{ Visible() bool }
+	type hasGeom interface {
+		Top() float32
+		Height() float32
+	}
+
+	poIdx := 0
+	for i := 0; i < objs.Len() && i < len(effectiveH); i++ {
+		obj := objs.Get(i)
+		if poIdx >= len(pb.Objects) {
+			break
+		}
+		if v, ok := obj.(hasVisible); ok && !v.Visible() {
+			continue
+		}
+		if _, ok := obj.(hasGeom); !ok {
+			continue
+		}
+
+		if effectiveH[i] != pb.Objects[poIdx].Height {
+			pb.Objects[poIdx].Height = effectiveH[i]
 		}
 		poIdx++
 	}

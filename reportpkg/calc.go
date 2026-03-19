@@ -2,6 +2,7 @@ package reportpkg
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/andrewloable/go-fastreport/data"
@@ -44,12 +45,31 @@ func (r *Report) Calc(expression string) (any, error) {
 		return nil, nil
 	}
 
-	env := r.buildCalcEnv()
-	ev := expr.NewEvaluator(env)
-
-	// If the whole expression is a single [bracketed] token, unwrap it.
+	// If the whole expression is a single [bracketed] token, unwrap it first so
+	// we can check for special-character names before building the full env.
 	unwrapped := unwrapBrackets(expression)
 	wasSingleBracket := unwrapped != expression
+
+	// Special handling for names that contain '#' (FastReport macro variables
+	// like CopyName#, Page#, TotalPages#, Row#, AbsRow#).  The expr-lang library
+	// treats '#' as invalid syntax, so we must resolve these directly from the
+	// dictionary system variables rather than passing them to the evaluator.
+	// This applies both when called with the raw name (from CalcText token) and
+	// when called with a bracketed form like "[CopyName#]".
+	if strings.Contains(unwrapped, "#") {
+		if r.dictionary != nil {
+			for _, sv := range r.dictionary.SystemVariables() {
+				if strings.EqualFold(sv.Name, unwrapped) {
+					return sv.Value, nil
+				}
+			}
+		}
+		// Unknown #-name: return nil with an error so CalcText can preserve [name].
+		return nil, fmt.Errorf("unknown macro variable %q", unwrapped)
+	}
+
+	env := r.buildCalcEnv()
+	ev := expr.NewEvaluator(env)
 
 	// Replace [Token] patterns with safe identifier forms.
 	goExpr := translateExpression(unwrapped)
@@ -88,7 +108,9 @@ func (r *Report) CalcText(template string) (string, error) {
 			sb.WriteString(tok.Value)
 			continue
 		}
-		val, err := r.Calc(tok.Value)
+		// Pass the bracketed form so that Calc's unwrapBrackets + wasSingleBracket
+		// logic can sanitize names containing spaces (e.g. "Order Details.Orders.ShipName").
+		val, err := r.Calc("[" + tok.Value + "]")
 		if err != nil {
 			// On error, emit the raw bracket expression.
 			sb.WriteString("[")
@@ -110,14 +132,25 @@ func (r *Report) buildCalcEnv() expr.Env {
 		// Parameters.
 		for _, p := range r.dictionary.Parameters() {
 			env[p.Name] = p.Value
+			// Also store under sanitized key so names with hyphens/spaces resolve.
+			if key := sanitizeIdent(p.Name); key != p.Name {
+				env[key] = p.Value
+			}
 		}
 		// System variables.
 		for _, sv := range r.dictionary.SystemVariables() {
 			env[sv.Name] = sv.Value
+			if key := sanitizeIdent(sv.Name); key != sv.Name {
+				env[key] = sv.Value
+			}
 		}
 		// Totals (current accumulated value).
 		for _, t := range r.dictionary.Totals() {
 			env[t.Name] = t.Value
+			// Also store under sanitized key (e.g. "Sub-Total" → "Sub_Total").
+			if key := sanitizeIdent(t.Name); key != t.Name {
+				env[key] = t.Value
+			}
 		}
 	}
 
@@ -127,6 +160,7 @@ func (r *Report) buildCalcEnv() expr.Env {
 		if cds, ok := r.calcDS.(columnarDataSource); ok {
 			for _, col := range cds.Columns() {
 				val, _ := r.calcDS.GetValue(col.Name)
+				val = coerceCalcValue(val)
 				key := sanitizeIdent(r.calcDS.Alias() + "_" + col.Name)
 				env[key] = val
 				// Also expose the bare column name for convenience.
@@ -220,11 +254,14 @@ func isSimpleDottedIdent(s string) bool {
 	return true
 }
 
-// sanitizeIdent converts a token like "DataSource.Field" into a valid identifier
-// "DataSource_Field" by replacing dots and spaces.
+// sanitizeIdent converts a token like "DataSource.Field" into a valid Go
+// identifier by replacing dots, spaces, and hyphens with underscores.
+// e.g. "Order Details.Orders.ShipName" → "Order_Details_Orders_ShipName"
+//      "Sub-Total" → "Sub_Total"
 func sanitizeIdent(s string) string {
 	s = strings.ReplaceAll(s, ".", "_")
 	s = strings.ReplaceAll(s, " ", "_")
+	s = strings.ReplaceAll(s, "-", "_")
 	return s
 }
 
@@ -232,6 +269,23 @@ func sanitizeIdent(s string) string {
 // BaseDataSource satisfies this interface.
 type columnarDataSource interface {
 	Columns() []data.Column
+}
+
+// coerceCalcValue converts string values to their natural numeric type so
+// that arithmetic expressions like [UnitPrice] * [Quantity] evaluate correctly
+// when the underlying datasource stores all values as strings (e.g. XML).
+func coerceCalcValue(v any) any {
+	s, ok := v.(string)
+	if !ok {
+		return v
+	}
+	if i, err := strconv.ParseInt(s, 10, 64); err == nil {
+		return i
+	}
+	if f, err := strconv.ParseFloat(s, 64); err == nil {
+		return f
+	}
+	return s
 }
 
 // injectRelatedFields traverses all relations in the dictionary where currentDS
@@ -246,27 +300,55 @@ type columnarDataSource interface {
 func (r *Report) injectRelatedFields(env expr.Env, currentDS data.DataSource) {
 	dict := r.dictionary
 	currentAlias := currentDS.Alias()
+	currentName := currentDS.Name()
 
 	for _, rel := range dict.Relations() {
-		// We handle the case where currentDS is the child (detail) data source.
-		if rel.ChildDataSource == nil || rel.ParentDataSource == nil {
-			continue
-		}
-		if len(rel.ParentColumns) == 0 || len(rel.ChildColumns) == 0 {
+		// Determine the child and parent datasources for this relation.
+		// Relations loaded from FRX use only ChildSourceName/ParentSourceName;
+		// the resolved pointer fields (ChildDataSource/ParentDataSource) may be
+		// nil. We resolve both by falling back to dictionary lookup.
+
+		var childAlias, parentAlias string
+		var parentDS data.DataSource
+
+		if rel.ChildDataSource != nil && rel.ParentDataSource != nil {
+			childAlias = rel.ChildDataSource.Alias()
+			parentDS = rel.ParentDataSource
+			parentAlias = parentDS.Alias()
+		} else if rel.ChildSourceName != "" && rel.ParentSourceName != "" {
+			// FRX-loaded relations: resolve by name.
+			childAlias = rel.ChildSourceName
+			parentDS = dict.FindDataSourceByAlias(rel.ParentSourceName)
+			if parentDS == nil {
+				continue
+			}
+			parentAlias = rel.ParentSourceName
+		} else {
 			continue
 		}
 
-		childAlias := rel.ChildDataSource.Alias()
-		if !strings.EqualFold(childAlias, currentAlias) {
+		// Use column name lists — fall back to source names when not set.
+		parentCols := rel.ParentColumns
+		childCols := rel.ChildColumns
+		if len(parentCols) == 0 {
+			parentCols = rel.ParentColumnNames
+		}
+		if len(childCols) == 0 {
+			childCols = rel.ChildColumnNames
+		}
+		if len(parentCols) == 0 || len(childCols) == 0 {
+			continue
+		}
+
+		// We handle the case where currentDS is the child (detail) data source.
+		if !strings.EqualFold(childAlias, currentAlias) &&
+			!strings.EqualFold(childAlias, currentName) {
 			continue
 		}
 
 		// Read the child join-key values from the current row.
-		parentDS := rel.ParentDataSource
-		parentAlias := parentDS.Alias()
-
-		childVals := make([]string, len(rel.ChildColumns))
-		for i, col := range rel.ChildColumns {
+		childVals := make([]string, len(childCols))
+		for i, col := range childCols {
 			v, _ := currentDS.GetValue(col)
 			childVals[i] = fmt.Sprintf("%v", v)
 		}
@@ -278,7 +360,7 @@ func (r *Report) injectRelatedFields(env expr.Env, currentDS data.DataSource) {
 		found := false
 		for !parentDS.EOF() {
 			match := true
-			for i, col := range rel.ParentColumns {
+			for i, col := range parentCols {
 				v, _ := parentDS.GetValue(col)
 				if fmt.Sprintf("%v", v) != childVals[i] {
 					match = false
@@ -302,7 +384,105 @@ func (r *Report) injectRelatedFields(env expr.Env, currentDS data.DataSource) {
 		if pcds, ok := parentDS.(columnarDataSource); ok {
 			for _, col := range pcds.Columns() {
 				val, _ := parentDS.GetValue(col.Name)
+				val = coerceCalcValue(val)
 				key := sanitizeIdent(currentAlias + "_" + parentAlias + "_" + col.Name)
+				env[key] = val
+			}
+		}
+
+		// Recursively inject grand-parent fields by treating parentDS as the new
+		// current datasource and looking for its own parent relations.  This
+		// enables 3-hop expressions like [Order Details.Orders.Shippers.Phone].
+		if len(env) > 0 {
+			r.injectRelatedFieldsFrom(env, parentDS, parentAlias, currentAlias)
+		}
+	}
+}
+
+// injectRelatedFieldsFrom is a recursive helper used by injectRelatedFields to
+// traverse relation chains beyond one hop (e.g. grandparent fields).
+// It looks for relations where grandparentDS is the child and injects
+// grandparent-of-grandparent fields under the key
+// "childAncestorAlias_parentAlias_grandparentAlias_ColumnName".
+func (r *Report) injectRelatedFieldsFrom(env expr.Env, parentDS data.DataSource, parentAlias, origChildAlias string) {
+	dict := r.dictionary
+	parentName := parentDS.Name()
+
+	for _, rel := range dict.Relations() {
+		var childAlias2, grandParentAlias string
+		var grandParentDS data.DataSource
+
+		if rel.ChildDataSource != nil && rel.ParentDataSource != nil {
+			childAlias2 = rel.ChildDataSource.Alias()
+			grandParentDS = rel.ParentDataSource
+			grandParentAlias = grandParentDS.Alias()
+		} else if rel.ChildSourceName != "" && rel.ParentSourceName != "" {
+			childAlias2 = rel.ChildSourceName
+			grandParentDS = dict.FindDataSourceByAlias(rel.ParentSourceName)
+			if grandParentDS == nil {
+				continue
+			}
+			grandParentAlias = rel.ParentSourceName
+		} else {
+			continue
+		}
+
+		if !strings.EqualFold(childAlias2, parentAlias) &&
+			!strings.EqualFold(childAlias2, parentName) {
+			continue
+		}
+
+		parentCols := rel.ParentColumns
+		childCols := rel.ChildColumns
+		if len(parentCols) == 0 {
+			parentCols = rel.ParentColumnNames
+		}
+		if len(childCols) == 0 {
+			childCols = rel.ChildColumnNames
+		}
+		if len(parentCols) == 0 || len(childCols) == 0 {
+			continue
+		}
+
+		// Read join-key values from parentDS (now acting as the child in this hop).
+		childVals := make([]string, len(childCols))
+		for i, col := range childCols {
+			v, _ := parentDS.GetValue(col)
+			childVals[i] = fmt.Sprintf("%v", v)
+		}
+
+		if err := grandParentDS.First(); err != nil {
+			continue
+		}
+		found := false
+		for !grandParentDS.EOF() {
+			match := true
+			for i, col := range parentCols {
+				v, _ := grandParentDS.GetValue(col)
+				if fmt.Sprintf("%v", v) != childVals[i] {
+					match = false
+					break
+				}
+			}
+			if match {
+				found = true
+				break
+			}
+			if err := grandParentDS.Next(); err != nil {
+				break
+			}
+		}
+
+		if !found {
+			continue
+		}
+
+		// Inject as "origChild_parent_grandparent_ColumnName".
+		if gcds, ok := grandParentDS.(columnarDataSource); ok {
+			for _, col := range gcds.Columns() {
+				val, _ := grandParentDS.GetValue(col.Name)
+				val = coerceCalcValue(val)
+				key := sanitizeIdent(origChildAlias + "_" + parentAlias + "_" + grandParentAlias + "_" + col.Name)
 				env[key] = val
 			}
 		}

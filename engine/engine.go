@@ -491,6 +491,9 @@ func (e *ReportEngine) prepareToSecondPass() error {
 }
 
 // runReportPages iterates through the report's ReportPages and generates output.
+// Pages with Visible=false are skipped — they are used for drill-down / detail
+// pages that are only shown when triggered interactively (e.g. via Hyperlink
+// with Kind=DetailPage). This matches C# FastReport behaviour.
 func (e *ReportEngine) runReportPages() error {
 	for _, pg := range e.report.Pages() {
 		if e.aborted {
@@ -498,6 +501,10 @@ func (e *ReportEngine) runReportPages() error {
 		}
 		if e.pagesLimit > 0 && e.totalPages >= e.pagesLimit {
 			break
+		}
+		// Skip invisible pages (drill-down/detail pages).
+		if !pg.Visible() {
+			continue
 		}
 		// Honour context cancellation between pages.
 		if e.ctx != nil {

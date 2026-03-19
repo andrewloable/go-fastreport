@@ -288,6 +288,49 @@ func TestRenderObject_Text_Hyperlink_NoAnchorWhenKindZero(t *testing.T) {
 	}
 }
 
+func TestRenderObject_Text_Hyperlink_Bookmark(t *testing.T) {
+	// Kind=3 (Bookmark): C# SinglePage mode → <a href="#bookmarkName">
+	pp := buildPage([]preview.PreparedObject{
+		{
+			Kind:           preview.ObjectTypeText,
+			Left:           0, Top: 0, Width: 100, Height: 20,
+			Text:           "Go to section",
+			HyperlinkKind:  3,
+			HyperlinkValue: "SectionA",
+		},
+	})
+	out := exportHTML(t, pp)
+	if !strings.Contains(out, `href="#SectionA"`) {
+		t.Errorf("Bookmark hyperlink: expected href=\"#SectionA\", got %q", out)
+	}
+	if !strings.Contains(out, "cursor:pointer;") {
+		t.Errorf("Bookmark hyperlink: expected cursor:pointer, got %q", out)
+	}
+	if !strings.Contains(out, "Go to section") {
+		t.Errorf("Bookmark hyperlink: expected link text, got %q", out)
+	}
+}
+
+func TestRenderObject_Text_Hyperlink_PageNumber(t *testing.T) {
+	// Kind=2 (PageNumber): C# SinglePage mode → <a href="#PageN{n}">
+	pp := buildPage([]preview.PreparedObject{
+		{
+			Kind:           preview.ObjectTypeText,
+			Left:           0, Top: 0, Width: 100, Height: 20,
+			Text:           "Go to page 5",
+			HyperlinkKind:  2,
+			HyperlinkValue: "5",
+		},
+	})
+	out := exportHTML(t, pp)
+	if !strings.Contains(out, `href="#PageN5"`) {
+		t.Errorf("PageNumber hyperlink: expected href=\"#PageN5\", got %q", out)
+	}
+	if !strings.Contains(out, "cursor:pointer;") {
+		t.Errorf("PageNumber hyperlink: expected cursor:pointer, got %q", out)
+	}
+}
+
 // ── ObjectTypeHtml ─────────────────────────────────────────────────────────────
 
 func TestRenderObject_Html_PassThrough(t *testing.T) {

@@ -95,11 +95,16 @@ func (b *BusinessObjectDataSource) Init() error {
 }
 
 // First positions at the first row.
+// Returns ErrEOF when the data source has no rows (consistent with other
+// data source implementations so that RunDataBandFull can detect empty sources).
 func (b *BusinessObjectDataSource) First() error {
 	if !b.inited {
 		return ErrNotInitialized
 	}
 	b.rowIdx = 0
+	if len(b.rows) == 0 {
+		return ErrEOF
+	}
 	return nil
 }
 

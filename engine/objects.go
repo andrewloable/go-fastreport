@@ -780,14 +780,15 @@ func (e *ReportEngine) buildPreparedObject(obj report.Base) *preview.PreparedObj
 		}
 
 	case *object.ZipCodeObject:
-		// Render as text showing the evaluated zip code value.
+		// Render as a barcode placeholder (no text content).
+		// ZipCodeObject generates a graphical barcode; we cannot yet render it
+		// as an image, so we output a blank rectangle to preserve layout.
+		// The barcode text value is intentionally not shown as text content
+		// so that the HTML output matches the C# reference (which renders the
+		// barcode as a picture element).
 		po.Kind = preview.ObjectTypeText
-		po.TextColor = color.RGBA{A: 255}
-		text := v.Expression()
-		if text == "" {
-			text = v.Text()
-		}
-		po.Text = e.evalText(text)
+		po.TextColor = color.RGBA{} // transparent — suppress visible text
+		po.Text = ""
 
 	case *object.CheckBoxObject:
 		po.Kind = preview.ObjectTypeCheckBox
@@ -1044,13 +1045,13 @@ func (e *ReportEngine) evalTextWithFormat(text string, f format.Format) string {
 	if e.report == nil || text == "" {
 		return text
 	}
-	// When a format is set and the text is exactly one bracket expression,
-	// evaluate the raw value and apply the format before converting to string.
+	// When a format is set and the text is exactly one bracket expression
+	// (including compound forms like [[Field1] * [Field2]]), evaluate the
+	// raw value and apply the format before converting to string.
 	if f != nil {
 		trimmed := strings.TrimSpace(text)
-		if strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]") && strings.Count(trimmed, "[") == 1 {
-			expr := trimmed[1 : len(trimmed)-1]
-			if val, err := e.report.Calc(expr); err == nil {
+		if isSingleBracketExpr(trimmed) {
+			if val, err := e.report.Calc(trimmed); err == nil {
 				return f.FormatValue(val)
 			}
 		}
@@ -1060,6 +1061,32 @@ func (e *ReportEngine) evalTextWithFormat(text string, f format.Format) string {
 		return text
 	}
 	return result
+}
+
+// isSingleBracketExpr reports whether s is enclosed in a single balanced
+// outermost [...] pair (possibly with nested brackets inside), for example:
+//
+//	"[FieldName]"                                    → true
+//	"[[Field1] * [Field2]]"                          → true
+//	"[Field1] + [Field2]"                            → false (two separate expressions)
+//	"Hello [Name]!"                                  → false (literal prefix)
+func isSingleBracketExpr(s string) bool {
+	if len(s) < 2 || s[0] != '[' || s[len(s)-1] != ']' {
+		return false
+	}
+	depth := 0
+	for i, ch := range s {
+		if ch == '[' {
+			depth++
+		} else if ch == ']' {
+			depth--
+			if depth == 0 && i < len(s)-1 {
+				// Closing bracket before the end → multiple expressions.
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // renderBarcode renders a BarcodeBase to an image.Image using the Render method

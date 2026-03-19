@@ -61,8 +61,16 @@ func TestBorderCSS_TopOnly(t *testing.T) {
 	if !strings.Contains(got, "border-top:") {
 		t.Errorf("top only: expected border-top, got %q", got)
 	}
-	if strings.Contains(got, "border-bottom:") || strings.Contains(got, "border-left:") || strings.Contains(got, "border-right:") {
-		t.Errorf("top only: unexpected other sides in %q", got)
+	// C# HTMLBorder: non-visible sides get explicit "none" declarations to prevent
+	// border inheritance in browsers.
+	if !strings.Contains(got, "border-bottom:none;") {
+		t.Errorf("top only: expected border-bottom:none; for non-visible side, got %q", got)
+	}
+	if !strings.Contains(got, "border-left:none;") {
+		t.Errorf("top only: expected border-left:none; for non-visible side, got %q", got)
+	}
+	if !strings.Contains(got, "border-right:none;") {
+		t.Errorf("top only: expected border-right:none; for non-visible side, got %q", got)
 	}
 }
 
@@ -82,8 +90,15 @@ func TestBorderCSS_LeftOnly(t *testing.T) {
 	if !strings.Contains(got, "border-left:") {
 		t.Errorf("left only: expected border-left, got %q", got)
 	}
-	if strings.Contains(got, "border-right:") || strings.Contains(got, "border-top:") || strings.Contains(got, "border-bottom:") {
-		t.Errorf("left only: unexpected other sides in %q", got)
+	// C# HTMLBorder: non-visible sides get explicit "none" declarations.
+	if !strings.Contains(got, "border-right:none;") {
+		t.Errorf("left only: expected border-right:none; for non-visible side, got %q", got)
+	}
+	if !strings.Contains(got, "border-top:none;") {
+		t.Errorf("left only: expected border-top:none; for non-visible side, got %q", got)
+	}
+	if !strings.Contains(got, "border-bottom:none;") {
+		t.Errorf("left only: expected border-bottom:none; for non-visible side, got %q", got)
 	}
 }
 
@@ -378,5 +393,49 @@ func TestImageMIME_TooShort_DefaultsPNG(t *testing.T) {
 	data := []byte{0xFF, 0xD8}
 	if got := imageMIME(data); got != "image/png" {
 		t.Errorf("short data: got %q, want image/png", got)
+	}
+}
+
+// ── hyperlinkHref ──────────────────────────────────────────────────────────────
+
+func TestHyperlinkHref_URL(t *testing.T) {
+	// Kind=1 (URL): direct href to external URL.
+	got := hyperlinkHref(1, "https://example.com")
+	if got != "https://example.com" {
+		t.Errorf("URL kind: expected 'https://example.com', got %q", got)
+	}
+}
+
+func TestHyperlinkHref_PageNumber(t *testing.T) {
+	// Kind=2 (PageNumber): link to #PageN{n} within the document.
+	got := hyperlinkHref(2, "3")
+	if got != "#PageN3" {
+		t.Errorf("PageNumber kind: expected '#PageN3', got %q", got)
+	}
+}
+
+func TestHyperlinkHref_Bookmark(t *testing.T) {
+	// Kind=3 (Bookmark): link to #{bookmark} within the document.
+	got := hyperlinkHref(3, "MySection")
+	if got != "#MySection" {
+		t.Errorf("Bookmark kind: expected '#MySection', got %q", got)
+	}
+}
+
+func TestHyperlinkHref_None(t *testing.T) {
+	// Kind=0 (None): no href should be emitted.
+	got := hyperlinkHref(0, "something")
+	if got != "" {
+		t.Errorf("None kind: expected empty string, got %q", got)
+	}
+}
+
+func TestHyperlinkHref_EmptyValue(t *testing.T) {
+	// Any kind with empty value: no href emitted.
+	for _, kind := range []int{1, 2, 3} {
+		got := hyperlinkHref(kind, "")
+		if got != "" {
+			t.Errorf("kind=%d empty value: expected empty string, got %q", kind, got)
+		}
 	}
 }

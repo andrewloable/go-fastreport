@@ -540,6 +540,93 @@ func (s *Supplement5Barcode) Encode(text string) error {
 // The encoding accepts the alphanumeric postal code with hyphens.
 type JapanPost4StateBarcode struct{ BaseBarcodeImpl }
 
+// ── Types referenced by dedicated implementation files ────────────────────────
+
+// Code39ExtendedBarcode implements Code 39 in full-ASCII mode.
+type Code39ExtendedBarcode struct{ BaseBarcodeImpl }
+
+// NewCode39ExtendedBarcode creates a Code39ExtendedBarcode.
+func NewCode39ExtendedBarcode() *Code39ExtendedBarcode {
+	return &Code39ExtendedBarcode{BaseBarcodeImpl: newBaseBarcodeImpl(BarcodeTypeCode39Extended)}
+}
+
+// DefaultValue returns a sample Code 39 Extended value.
+func (c *Code39ExtendedBarcode) DefaultValue() string { return "abc-1234" }
+
+// Encode stores text for Code 39 Extended rendering.
+func (c *Code39ExtendedBarcode) Encode(text string) error {
+	c.encodedText = text
+	return nil
+}
+
+// UPCE0Barcode implements UPC-E number system 0.
+type UPCE0Barcode struct{ BaseBarcodeImpl }
+
+// NewUPCE0Barcode creates a UPCE0Barcode.
+func NewUPCE0Barcode() *UPCE0Barcode {
+	return &UPCE0Barcode{BaseBarcodeImpl: newBaseBarcodeImpl(BarcodeTypeUPCE)}
+}
+
+// DefaultValue returns a sample UPC-E0 value.
+func (u *UPCE0Barcode) DefaultValue() string { return "01234565" }
+
+// Encode stores text for UPC-E0 rendering.
+func (u *UPCE0Barcode) Encode(text string) error {
+	u.encodedText = text
+	return nil
+}
+
+// UPCE1Barcode implements UPC-E number system 1.
+type UPCE1Barcode struct{ BaseBarcodeImpl }
+
+// NewUPCE1Barcode creates a UPCE1Barcode.
+func NewUPCE1Barcode() *UPCE1Barcode {
+	return &UPCE1Barcode{BaseBarcodeImpl: newBaseBarcodeImpl(BarcodeTypeUPCE)}
+}
+
+// DefaultValue returns a sample UPC-E1 value.
+func (u *UPCE1Barcode) DefaultValue() string { return "11234565" }
+
+// Encode stores text for UPC-E1 rendering.
+func (u *UPCE1Barcode) Encode(text string) error {
+	u.encodedText = text
+	return nil
+}
+
+// GS1_128Barcode implements GS1-128 (formerly EAN-128).
+type GS1_128Barcode struct{ BaseBarcodeImpl }
+
+// NewGS1_128Barcode creates a GS1_128Barcode.
+func NewGS1_128Barcode() *GS1_128Barcode {
+	return &GS1_128Barcode{BaseBarcodeImpl: newBaseBarcodeImpl(BarcodeTypeGS1_128)}
+}
+
+// DefaultValue returns a sample GS1-128 value.
+func (g *GS1_128Barcode) DefaultValue() string { return "(01)12345678901231" }
+
+// Encode stores text for GS1-128 rendering via GetPattern.
+func (g *GS1_128Barcode) Encode(text string) error {
+	g.encodedText = text
+	return nil
+}
+
+// GS1DatamatrixBarcode implements GS1 DataMatrix.
+type GS1DatamatrixBarcode struct{ BaseBarcodeImpl }
+
+// NewGS1DatamatrixBarcode creates a GS1DatamatrixBarcode.
+func NewGS1DatamatrixBarcode() *GS1DatamatrixBarcode {
+	return &GS1DatamatrixBarcode{BaseBarcodeImpl: newBaseBarcodeImpl(BarcodeTypeDataMatrix)}
+}
+
+// DefaultValue returns a sample GS1 DataMatrix value.
+func (g *GS1DatamatrixBarcode) DefaultValue() string { return "(01)12345678901231" }
+
+// Encode stores text for GS1 DataMatrix rendering via GetMatrix.
+func (g *GS1DatamatrixBarcode) Encode(text string) error {
+	g.encodedText = text
+	return nil
+}
+
 // NewJapanPost4StateBarcode creates a JapanPost4StateBarcode.
 func NewJapanPost4StateBarcode() *JapanPost4StateBarcode {
 	return &JapanPost4StateBarcode{BaseBarcodeImpl: newBaseBarcodeImpl(BarcodeTypeJapanPost4State)}

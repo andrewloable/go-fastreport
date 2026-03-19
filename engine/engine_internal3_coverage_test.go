@@ -13,10 +13,10 @@ import (
 	"github.com/andrewloable/go-fastreport/reportpkg"
 )
 
-// ── startKeepBand: b != nil, AbsRowNo==1, !StartNewPage → early return ────────
+// ── startKeepBand: b != nil, AbsRowNo==1, !FirstRowStartsNewPage → early return ─
 
 // TestStartKeepBand_NonNilBand_FirstRow exercises the guard:
-//   `if b != nil && b.AbsRowNo() == 1 && !b.StartNewPage() { return }`
+//   `if b != nil && b.AbsRowNo() == 1 && !b.FirstRowStartsNewPage() { return }`
 // startKeepBand is only called via StartKeep (which passes nil), so this
 // branch is unreachable through the public API.  We call it directly.
 func TestStartKeepBand_NonNilBand_FirstRow(t *testing.T) {
@@ -29,8 +29,8 @@ func TestStartKeepBand_NonNilBand_FirstRow(t *testing.T) {
 	}
 
 	db := band.NewDataBand()
-	db.SetAbsRowNo(1)          // first absolute row
-	db.SetStartNewPage(false)  // !StartNewPage → guard fires
+	db.SetAbsRowNo(1)                  // first absolute row
+	db.SetFirstRowStartsNewPage(false) // !FirstRowStartsNewPage → guard fires
 
 	// Keeping must be false before the call.
 	if e.keeping {
@@ -38,11 +38,11 @@ func TestStartKeepBand_NonNilBand_FirstRow(t *testing.T) {
 	}
 
 	// Call the unexported function directly.
-	// Because AbsRowNo()==1 and !StartNewPage(), keeping should remain false.
+	// Because AbsRowNo()==1 and !FirstRowStartsNewPage(), keeping should remain false.
 	e.startKeepBand(&db.BandBase)
 
 	if e.keeping {
-		t.Error("startKeepBand with AbsRowNo==1 and !StartNewPage should NOT set keeping=true")
+		t.Error("startKeepBand with AbsRowNo==1 and !FirstRowStartsNewPage should NOT set keeping=true")
 	}
 }
 

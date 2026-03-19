@@ -41,6 +41,11 @@ type PageColumns struct {
 type ReportPage struct {
 	report.BaseObject
 
+	// visible controls whether this page template is processed during report run.
+	// A page with Visible=false is skipped entirely (used for drill-down/detail pages
+	// that are only shown when triggered interactively). Default is true.
+	visible bool
+
 	// Paper dimensions in millimetres.
 	PaperWidth  float32 // default 210 (A4)
 	PaperHeight float32 // default 297 (A4)
@@ -116,6 +121,7 @@ func (*ReportPage) TypeName() string { return "ReportPage" }
 func NewReportPage() *ReportPage {
 	p := &ReportPage{
 		BaseObject:   *report.NewBaseObject(),
+		visible:      true,
 		PaperWidth:   210,
 		PaperHeight:  297,
 		LeftMargin:   10,
@@ -127,6 +133,13 @@ func NewReportPage() *ReportPage {
 	p.Watermark = NewWatermark()
 	return p
 }
+
+// Visible returns whether this page template is included in report output.
+// Pages with Visible=false are skipped by the engine (e.g. drill-down detail pages).
+func (p *ReportPage) Visible() bool { return p.visible }
+
+// SetVisible controls whether this page template is included in report output.
+func (p *ReportPage) SetVisible(v bool) { p.visible = v }
 
 // --- Band accessors ---
 
@@ -329,6 +342,9 @@ func (p *ReportPage) Serialize(w report.Writer) error {
 	if err := p.BaseObject.Serialize(w); err != nil {
 		return err
 	}
+	if !p.visible {
+		w.WriteBool("Visible", false)
+	}
 	if p.PaperWidth != 210 {
 		w.WriteFloat("PaperWidth", p.PaperWidth)
 	}
@@ -475,6 +491,7 @@ func (p *ReportPage) Deserialize(r report.Reader) error {
 	if err := p.BaseObject.Deserialize(r); err != nil {
 		return err
 	}
+	p.visible = r.ReadBool("Visible", true)
 	p.PaperWidth = r.ReadFloat("PaperWidth", 210)
 	p.PaperHeight = r.ReadFloat("PaperHeight", 297)
 	p.Landscape = r.ReadBool("Landscape", false)

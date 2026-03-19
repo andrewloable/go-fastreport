@@ -2,6 +2,7 @@ package engine
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/andrewloable/go-fastreport/band"
 	"github.com/andrewloable/go-fastreport/data"
@@ -154,9 +155,18 @@ func (e *ReportEngine) RunDataBandRowsKeep(db *band.DataBand, rows int, keepFirs
 
 	// CompleteToNRows: fill missing child rows (C# child.CompleteToNRows > rowCount).
 	if child := db.Child(); child != nil && child.CompleteToNRows > rows {
+		// Clear the calc context so completion rows don't inherit the last data row's values.
+		if e.report != nil {
+			e.report.SetCalcContext(nil)
+		}
 		for i := 0; i < child.CompleteToNRows-rows; i++ {
-			child.SetRowNo(rows + i + 1)
-			child.SetAbsRowNo(rows + i + 1)
+			completionRowNo := rows + i + 1
+			child.SetRowNo(completionRowNo)
+			child.SetAbsRowNo(completionRowNo)
+			// Keep the engine row counter and system variables in sync so that
+			// [Row#] expressions inside the completion rows resolve correctly.
+			e.rowNo = completionRowNo
+			e.syncRowVariables()
 			e.ShowFullBand(&child.BandBase)
 		}
 	}
@@ -206,9 +216,14 @@ func (e *ReportEngine) RunDataBandFull(db *band.DataBand) error {
 		}
 	}
 	if ds == nil {
-		// No data source — render the band once as a static (no-iteration) band.
-		e.ShowFullBand(&db.BandBase)
-		return nil
+		// No explicit DataSource. Mirror C# behaviour: the engine creates a
+		// VirtualDataSource with RowCount=1 and iterates once. If the band's
+		// filter references a known datasource we initialise that datasource and
+		// inject it as the calc context so that relation expressions in the band
+		// body (e.g. [Order Details.Orders.ShipName]) resolve correctly. We also
+		// run any nested sub-bands (e.g. a detail DataBand), which the old
+		// ShowFullBand-only path silently skipped.
+		return e.runDataBandNoDS(db)
 	}
 
 	// Apply sort specs to in-memory data sources before iterating.
@@ -411,9 +426,18 @@ func (e *ReportEngine) RunDataBandFull(db *band.DataBand) error {
 
 	// CompleteToNRows: fill missing child rows (C# child.CompleteToNRows > rowCount).
 	if child := db.Child(); child != nil && child.CompleteToNRows > rowCount {
+		// Clear the calc context so completion rows don't inherit the last data row's values.
+		if e.report != nil {
+			e.report.SetCalcContext(nil)
+		}
 		for i := 0; i < child.CompleteToNRows-rowCount; i++ {
-			child.SetRowNo(rowCount + i + 1)
-			child.SetAbsRowNo(rowCount + i + 1)
+			completionRowNo := rowCount + i + 1
+			child.SetRowNo(completionRowNo)
+			child.SetAbsRowNo(completionRowNo)
+			// Keep the engine row counter and system variables in sync so that
+			// [Row#] expressions inside the completion rows resolve correctly.
+			e.rowNo = completionRowNo
+			e.syncRowVariables()
 			e.ShowFullBand(&child.BandBase)
 		}
 	}
@@ -648,6 +672,106 @@ func (e *ReportEngine) runDataBandHierarchical(db *band.DataBand, ds band.DataSo
 		if ftr := db.Footer(); ftr != nil {
 			e.ShowFullBand(&ftr.HeaderFooterBandBase.BandBase)
 		}
+	}
+	return nil
+}
+
+// runDataBandNoDS handles a DataBand with no DataSource. It mirrors the C#
+// VirtualDataSource(RowCount=1) behaviour: the band renders once, using a
+// datasource inferred from the filter expression as the calc context so that
+// relation expressions in the band body resolve.  Nested sub-bands (e.g. a
+// detail DataBand) are run after the band body, which the old ShowFullBand
+// path silently skipped.
+func (e *ReportEngine) runDataBandNoDS(db *band.DataBand) error {
+	// Try to find a datasource referenced in the filter expression and use it
+	// as the calc context for the single virtual row.
+	filterDS := e.inferFilterDataSource(db)
+	if filterDS != nil {
+		if err := filterDS.First(); err == nil && e.report != nil {
+			e.report.SetCalcContext(filterDS)
+		}
+	}
+
+	// Evaluate the filter against the current calc context.  On failure (false
+	// result) the virtual row is suppressed — match C# VirtualDS filter logic.
+	if filterExpr := db.Filter(); filterExpr != "" && e.report != nil {
+		val, err := e.report.Calc(filterExpr)
+		if err == nil {
+			if b, ok := val.(bool); ok && !b {
+				// Filter failed — skip the band entirely (0 virtual rows).
+				if e.report != nil {
+					e.report.SetCalcContext(nil)
+				}
+				return nil
+			}
+		}
+	}
+
+	// Render the band body once (VirtualDS row 1).
+	db.SetRowNo(1)
+	db.SetIsFirstRow(true)
+	db.SetIsLastRow(true)
+	e.ShowFullBand(&db.BandBase)
+
+	// Run nested sub-bands (e.g. the detail DataBand).
+	subBands := dataBandSubBands(db)
+	if len(subBands) > 0 {
+		if err := e.runBands(subBands); err != nil {
+			if e.report != nil {
+				e.report.SetCalcContext(nil)
+			}
+			return err
+		}
+	}
+
+	if e.report != nil {
+		e.report.SetCalcContext(nil)
+	}
+	return nil
+}
+
+// inferFilterDataSource parses the band's filter expression to find the first
+// "[DataSourceAlias.Column]" reference, then looks up and returns the
+// corresponding data.DataSource from the report dictionary.
+// Returns nil if no matching datasource is found.
+func (e *ReportEngine) inferFilterDataSource(db *band.DataBand) data.DataSource {
+	filter := db.Filter()
+	if filter == "" || e.report == nil {
+		return nil
+	}
+	dict := e.report.Dictionary()
+	if dict == nil {
+		return nil
+	}
+
+	// Extract the first bracketed expression from the filter, e.g.
+	// "[Order Details.OrderID] == 10278" → "Order Details.OrderID".
+	start := strings.Index(filter, "[")
+	if start == -1 {
+		return nil
+	}
+	end := strings.Index(filter[start:], "]")
+	if end == -1 {
+		return nil
+	}
+	name := filter[start+1 : start+end]
+
+	// The datasource alias is the part before the first dot.
+	dotIdx := strings.Index(name, ".")
+	var alias string
+	if dotIdx > 0 {
+		alias = name[:dotIdx]
+	} else {
+		alias = name
+	}
+
+	// Look up the datasource by alias.
+	resolved := dict.FindDataSourceByAlias(alias)
+	if resolved == nil {
+		return nil
+	}
+	if ds, ok := resolved.(data.DataSource); ok {
+		return ds
 	}
 	return nil
 }

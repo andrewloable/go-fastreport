@@ -834,14 +834,17 @@ func (e *Exporter) renderTextObject(obj preview.PreparedObject, scale float32) {
 		pxVal(adjLeft), pxVal(adjTop), pxVal(adjW), pxVal(adjH))
 
 	// Hyperlink wrapping (C# GetHref + Layer pattern).
-	if obj.HyperlinkKind == 1 && obj.HyperlinkValue != "" {
+	// Go HyperlinkKind: 0=None, 1=URL, 2=PageNumber, 3=Bookmark.
+	// C# SinglePage mode: Bookmark → #bookmark, PageNumber → #PageN{n}.
+	href := hyperlinkHref(obj.HyperlinkKind, obj.HyperlinkValue)
+	if href != "" {
 		// C# GetHref: <a style="color:{textColor}[;text-decoration:none]" href="{value}"[target="_blank"]>
 		linkColor := rgbColor(tc)
 		hrefStyle := fmt.Sprintf("color:%s", linkColor)
 		if font.Style&style.FontStyleUnderline == 0 {
 			hrefStyle += ";text-decoration:none"
 		}
-		e.sb.WriteString(fmt.Sprintf(`<a style="%s" href="%s">`, hrefStyle, obj.HyperlinkValue))
+		e.sb.WriteString(fmt.Sprintf(`<a style="%s" href="%s">`, hrefStyle, href))
 		e.sb.WriteString(fmt.Sprintf(`<div class="%s" style="cursor:pointer;%s">`, outerClass, outerStyle))
 		e.sb.WriteString(fmt.Sprintf(`<div class="%s">%s</div>`, innerClass, innerText))
 		e.sb.WriteString("</div>\n</a>")
@@ -949,6 +952,28 @@ func (e *Exporter) HTML() string {
 }
 
 // ── CSS helpers ─────────────────────────────────────────────────────────────────
+
+// hyperlinkHref returns the href attribute value for a hyperlink, matching C# GetHref
+// in SinglePage mode (the Go exporter always produces a single HTML document).
+//
+// Go HyperlinkKind values: 0=None, 1=URL, 2=PageNumber, 3=Bookmark.
+// Returns "" when no href should be emitted.
+func hyperlinkHref(kind int, value string) string {
+	if value == "" {
+		return ""
+	}
+	switch kind {
+	case 1: // URL — direct href to external URL
+		return value
+	case 2: // PageNumber — link to page anchor within the same document
+		// C# SinglePage: <a href="#PageN{value}">
+		return "#PageN" + value
+	case 3: // Bookmark — link to named anchor within the same document
+		// C# SinglePage: <a href="#{value}">
+		return "#" + value
+	}
+	return ""
+}
 
 // pxVal formats a float as a CSS pixel value string, matching C# ExportUtils.FloatToString.
 // It drops trailing zeros: 718.20 → "718.2", 28.35 → "28.35", 0.00 → "0".
@@ -1184,6 +1209,9 @@ func borderCSS(b *style.Border, scale float32) string {
 
 	for _, s := range sides {
 		if b.VisibleLines&s.flag == 0 {
+			// C# HTMLBorder: emit explicit none for invisible sides so they are
+			// not affected by inherited or default browser border styles.
+			sb.WriteString(s.prop + ":none;")
 			continue
 		}
 		var line *style.BorderLine

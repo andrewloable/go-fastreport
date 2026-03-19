@@ -333,6 +333,11 @@ func deserializeChildren(rdr *serial.Reader, parent report.Base) {
 		Objects() *report.ObjectCollection
 	}
 	container, isContainer := parent.(hasObjects)
+	// Prefer AddChild (from report.Parent) when available. AddChild is aware of
+	// special children like ChildBand (sets b.child) vs regular objects
+	// (appended to b.objects).  Direct Objects().Add() would bypass this
+	// routing and always append to the objects slice.
+	parentAdder, hasAddChild := parent.(report.Parent)
 
 	for {
 		childType, ok := rdr.NextChild()
@@ -357,7 +362,9 @@ func deserializeChildren(rdr *serial.Reader, parent report.Base) {
 		deserializeChildren(rdr, child)
 		_ = rdr.FinishChild()
 
-		if isContainer {
+		if hasAddChild {
+			parentAdder.AddChild(child)
+		} else if isContainer {
 			container.Objects().Add(child)
 		}
 	}
@@ -406,6 +413,15 @@ func deserializeDictionary(rdr *serial.Reader, dict *data.Dictionary, baseDir st
 			// Top-level TableDataSource without a connection — load as a standalone source.
 			ts := deserializeTableDataSource(rdr, nil)
 			dict.AddDataSource(ts)
+		case "BusinessObjectDataSource":
+			// BusinessObjectDataSource elements declare data shapes for Go business
+			// objects. Register each one as an uninitialised BusinessObjectDataSource
+			// so the engine can resolve the alias at run time. Actual data must be
+			// bound via report.Dictionary().RegisterData (or equivalent) before running.
+			sources := deserializeBusinessObjectDataSource(rdr)
+			for _, ds := range sources {
+				dict.AddDataSource(ds)
+			}
 		default:
 			// Unknown children are skipped.
 			_ = rdr.SkipElement()
@@ -725,6 +741,50 @@ func deserializeTableDataSource(rdr *serial.Reader, conn *data.DataConnectionBas
 	ts.SetTableName(tableName)
 	ts.SetSelectCommand(selectCmd)
 	return ts
+}
+
+// deserializeBusinessObjectDataSource reads a <BusinessObjectDataSource> element
+// and recursively collects all nested <BusinessObjectDataSource> elements.
+// Each data source is created with nil data — the caller must bind actual Go
+// data via report.Dictionary().RegisterData before running the report.
+// Returns a flat list of all data sources (parent first, then nested children).
+func deserializeBusinessObjectDataSource(rdr *serial.Reader) []data.DataSource {
+	name := rdr.ReadStr("Name", "")
+	alias := rdr.ReadStr("Alias", name)
+
+	// Create a BusinessObjectDataSource stub with no data.
+	// Init() is NOT called here — it will be called by the engine (or the user
+	// can call RegisterData which replaces the entry with a populated source).
+	ds := data.NewBusinessObjectDataSource(name, nil)
+	ds.SetAlias(alias)
+	_ = ds.Init() // Initialise with nil data so RowCount() == 0 and First() returns ErrEOF.
+
+	sources := []data.DataSource{ds}
+
+	// Read child elements: Column entries (metadata only, ignored at runtime since
+	// Go reflection is used to derive columns) and nested BusinessObjectDataSources.
+	for {
+		ct, ok := rdr.NextChild()
+		if !ok {
+			break
+		}
+		if ct == "BusinessObjectDataSource" {
+			nested := deserializeBusinessObjectDataSource(rdr)
+			sources = append(sources, nested...)
+			_ = rdr.FinishChild()
+			continue
+		}
+		// Column, or any other unknown child — drain and skip.
+		for {
+			_, ok2 := rdr.NextChild()
+			if !ok2 {
+				break
+			}
+			_ = rdr.FinishChild()
+		}
+		_ = rdr.FinishChild()
+	}
+	return sources
 }
 
 // deserializeParameter reads a single <Parameter> element (and nested children).

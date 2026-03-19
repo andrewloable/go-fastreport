@@ -33,6 +33,9 @@ func (e *ReportEngine) syncSystemVariables() {
 	d.SetSystemVariable("Time", e.date.Format("15:04:05"))
 	d.SetSystemVariable("Row", e.rowNo)
 	d.SetSystemVariable("AbsRow", e.absRowNo)
+	// Also keep the '#'-suffixed names in sync (used by [Row#] / [AbsRow#] expressions).
+	d.SetSystemVariable("Row#", e.rowNo)
+	d.SetSystemVariable("AbsRow#", e.absRowNo)
 	// Expose the full time.Time for callers that need it.
 	d.SetSystemVariable("Now", e.date)
 }
@@ -49,6 +52,9 @@ func (e *ReportEngine) syncRowVariables() {
 	}
 	d.SetSystemVariable("Row", e.rowNo)
 	d.SetSystemVariable("AbsRow", e.absRowNo)
+	// Also keep the '#'-suffixed names in sync (used by [Row#] / [AbsRow#] expressions).
+	d.SetSystemVariable("Row#", e.rowNo)
+	d.SetSystemVariable("AbsRow#", e.absRowNo)
 }
 
 // syncPageVariables updates page-related system variables when a new page starts.
@@ -97,6 +103,15 @@ func (e *ReportEngine) ensureSystemVariables() {
 		"MachineName": "",
 		"ReportName": e.report.Name(),
 		"ReportAlias": e.report.Name(),
+		// Macro variables: these are print-time placeholders whose values are
+		// the bracket form shown in the preview. They mirror the C# behaviour:
+		// CopyNameMacroVariable.Value == "[COPYNAME#]", etc.
+		"Page#":       "[PAGE#]",
+		"TotalPages#": "[TOTALPAGES#]",
+		"CopyName#":   "[COPYNAME#]",
+		// Row# and AbsRow# are runtime row counters, not macros. Initialise to 1.
+		"Row#":    1,
+		"AbsRow#": 1,
 		// Report.ReportInfo.* fields (dot → underscore for expression eval).
 		"Report_ReportInfo_Description":    info.Description,
 		"Report_ReportInfo_Author":         info.Author,

@@ -36,6 +36,7 @@ const (
 	BarcodeTypeCode128B             BarcodeType = "Code128B"
 	BarcodeTypeCode128C             BarcodeType = "Code128C"
 	BarcodeTypeCode39               BarcodeType = "Code39"
+	BarcodeTypeCode39Extended       BarcodeType = "Code39Extended"
 	BarcodeTypeCode93               BarcodeType = "Code93"
 	BarcodeTypeCode93Extended       BarcodeType = "Code93Extended"
 	BarcodeTypeCode2of5             BarcodeType = "2of5"

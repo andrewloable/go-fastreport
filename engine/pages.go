@@ -558,6 +558,11 @@ func (e *ReportEngine) runBands(bands []report.Base) error {
 		}
 		switch v := b.(type) {
 		case *band.DataBand:
+			// Skip invisible DataBands (e.g. drill-down groups where the data band
+			// is hidden by default and shown only on interactive click).
+			if !v.Visible() {
+				continue
+			}
 			if err := e.RunDataBandFull(v); err != nil {
 				return err
 			}

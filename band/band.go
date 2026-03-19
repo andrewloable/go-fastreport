@@ -38,6 +38,8 @@ type BandBase struct {
 	FlagUseStartNewPage bool
 	FlagCheckFreeSpace  bool
 	FlagIsDataBand      bool
+	FlagIsGroupHeader   bool
+	FlagMustBreak       bool
 
 	// Ruler guides in designer (pixel offsets from band left edge).
 	guides []float32
@@ -55,13 +57,24 @@ type BandBase struct {
 }
 
 // NewBandBase creates a BandBase with defaults:
-// firstRowStartsNewPage=true, repeatBandNTimes=1.
+// firstRowStartsNewPage=true, repeatBandNTimes=1, FlagCheckFreeSpace=true,
+// FlagUseStartNewPage=true.
+//
+// FlagCheckFreeSpace=true and FlagUseStartNewPage=true match the C# BandBase
+// constructor defaults so that non-service bands (GroupHeader, GroupFooter,
+// DataHeader, DataFooter, ReportTitle, ReportSummary, ChildBand, DataBand)
+// all trigger page breaks when content overflows a page or when StartNewPage
+// is set. Service bands (PageHeader, PageFooter, Overlay, ColumnHeader,
+// ColumnFooter) reset FlagCheckFreeSpace to false in their own constructors
+// because those bands are rendered unconditionally.
 func NewBandBase() *BandBase {
 	b := &BandBase{
 		BreakableComponent:    *report.NewBreakableComponent(),
 		firstRowStartsNewPage: true,
 		repeatBandNTimes:      1,
 		objects:               report.NewObjectCollection(),
+		FlagCheckFreeSpace:    true,
+		FlagUseStartNewPage:   true,
 	}
 	return b
 }

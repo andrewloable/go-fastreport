@@ -56,7 +56,18 @@
       "Bash(wc:*)",
       "Bash(go tool:*)",
       "Bash(bd stats:*)",
-      "Bash(go vet:*)"
+      "Bash(go vet:*)",
+      "Bash(go clean:*)",
+      "Bash(head -10 grep -n \"^type\\\\|Code39Extended\\\\|GS1Datamatrix\\\\|GS1_128\\\\|UPCE0\\\\|UPCE1\" /Volumes/mandark-1Tb/projects/loabletech/go-fastreport/barcode/missing_types.go)",
+      "Bash(head -20 grep -n \"^type\\\\|GS1Datamatrix\\\\|GS1_128\\\\|UPCE0\\\\|UPCE1\" /Volumes/mandark-1Tb/projects/loabletech/go-fastreport/barcode/barcode.go)",
+      "Bash(head -10 grep -n \"GS1_128\\\\|GS1Datamatrix\" /Volumes/mandark-1Tb/projects/loabletech/go-fastreport/barcode/gs1.go)",
+      "Bash(sort -t% -k1 -n)",
+      "Bash(xargs basename:*)",
+      "Bash(bd search:*)",
+      "Bash(git -C /Volumes/mandark-1Tb/projects/loabletech/go-fastreport/.claude/worktrees/agent-a1a1915a status --short)",
+      "Bash(git -C /Volumes/mandark-1Tb/projects/loabletech/go-fastreport/.claude/worktrees/agent-a950b33d status --short)",
+      "Bash(git -C /Volumes/mandark-1Tb/projects/loabletech/go-fastreport/.claude/worktrees/agent-a1a1915a log --oneline -3)",
+      "Bash(git -C /Volumes/mandark-1Tb/projects/loabletech/go-fastreport/.claude/worktrees/agent-a1a1915a diff --stat)"
     ]
   }
 }

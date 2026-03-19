@@ -545,12 +545,49 @@ func postnetEncode(digits string) []bool {
 
 // ── SwissQRBarcode ────────────────────────────────────────────────────────────
 
+// SwissQRParameters holds all structured fields for a Swiss QR Code payment slip.
+// Fields follow the Swiss Payment Standards SPC v2.0 specification.
+type SwissQRParameters struct {
+	// IBAN is the creditor's IBAN (CH or LI prefix).
+	IBAN string
+	// Currency is either "CHF" or "EUR".
+	Currency string
+	// CreditorName is the name of the creditor (payee).
+	CreditorName string
+	// CreditorStreet is the creditor's street address.
+	CreditorStreet string
+	// CreditorCity is the creditor's city.
+	CreditorCity string
+	// CreditorPostalCode is the creditor's postal/zip code.
+	CreditorPostalCode string
+	// CreditorCountry is the two-letter ISO 3166-1 country code for the creditor.
+	CreditorCountry string
+	// Amount is the payment amount as a string (empty = not specified).
+	Amount string
+	// Reference is the payment reference number.
+	Reference string
+	// ReferenceType specifies the reference type: "QRR", "SCOR", or "NON".
+	ReferenceType string
+	// UnstructuredMessage is a free-text payment message (max 140 chars).
+	UnstructuredMessage string
+	// TrailerEPD is always "EPD" per the specification.
+	TrailerEPD string
+	// AlternativeProcedure1 is an optional alternative processing command line 1.
+	AlternativeProcedure1 string
+	// AlternativeProcedure2 is an optional alternative processing command line 2.
+	AlternativeProcedure2 string
+}
+
 // SwissQRBarcode encodes a Swiss QR Code payment slip as a QR code.
 // The payload is structured per the Swiss Payment Standards specification.
 type SwissQRBarcode struct {
 	BaseBarcodeImpl
 
-	// Payment fields (subset of Swiss QR specification).
+	// Params holds the structured payment fields.
+	Params SwissQRParameters
+
+	// Legacy flat fields — kept for backward compatibility; Params takes precedence
+	// when Params.IBAN is non-empty.
 	IBAN          string
 	Amount        string
 	Currency      string // CHF or EUR
@@ -561,12 +598,17 @@ type SwissQRBarcode struct {
 	Message       string
 }
 
-// NewSwissQRBarcode creates a SwissQRBarcode.
+// NewSwissQRBarcode creates a SwissQRBarcode with default values.
 func NewSwissQRBarcode() *SwissQRBarcode {
 	return &SwissQRBarcode{
 		BaseBarcodeImpl: newBaseBarcodeImpl(BarcodeTypeSwissQR),
-		Currency:        "CHF",
-		RefType:         "NON",
+		Params: SwissQRParameters{
+			Currency:      "CHF",
+			ReferenceType: "NON",
+			TrailerEPD:    "EPD",
+		},
+		Currency: "CHF",
+		RefType:  "NON",
 	}
 }
 
@@ -575,10 +617,62 @@ func (b *SwissQRBarcode) DefaultValue() string {
 	return "SPC\r\n0200\r\n1\r\nCH5604835012345678009\r\nS\r\nMaxMuster\r\nMusterstrasse\r\n1\r\n8000\r\nZürich\r\nCH\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n10.00\r\nCHF\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\nNON\r\n\r\n\r\nEPD"
 }
 
+// FormatPayload builds the Swiss QR Code payload string from Params following
+// the Swiss Payment Standards SPC v2.0 format. When Params.IBAN is non-empty
+// the structured Params fields are used; otherwise the legacy flat fields
+// (IBAN, Currency, CreditorName, etc.) are used as a fallback.
+func (b *SwissQRBarcode) FormatPayload() string {
+	// Use structured Params when populated.
+	if b.Params.IBAN != "" {
+		currency := b.Params.Currency
+		if currency == "" {
+			currency = "CHF"
+		}
+		refType := b.Params.ReferenceType
+		if refType == "" {
+			refType = "NON"
+		}
+		trailer := b.Params.TrailerEPD
+		if trailer == "" {
+			trailer = "EPD"
+		}
+		creditorCountry := b.Params.CreditorCountry
+		if creditorCountry == "" {
+			creditorCountry = "CH"
+		}
+		return strings.Join([]string{
+			"SPC",
+			"0200",
+			"1",
+			b.Params.IBAN,
+			"K",
+			b.Params.CreditorName,
+			b.Params.CreditorStreet,
+			b.Params.CreditorCity,
+			b.Params.CreditorPostalCode,
+			"",
+			creditorCountry,
+			// Debtor: 6 empty lines.
+			"", "", "", "", "", "",
+			b.Params.Amount,
+			currency,
+			refType,
+			b.Params.Reference,
+			b.Params.UnstructuredMessage,
+			trailer,
+			b.Params.AlternativeProcedure1,
+			b.Params.AlternativeProcedure2,
+		}, "\n")
+	}
+	// Fall back to legacy flat fields.
+	return b.buildPayload()
+}
+
 // Encode encodes the Swiss QR payload string as a QR code.
+// When text is empty, FormatPayload is called to build the payload.
 func (b *SwissQRBarcode) Encode(text string) error {
 	if text == "" {
-		text = b.buildPayload()
+		text = b.FormatPayload()
 	}
 	bc, err := qr.Encode(text, qr.M, qr.Auto)
 	if err != nil {
@@ -599,7 +693,8 @@ func (b *SwissQRBarcode) Render(width, height int) (image.Image, error) {
 	return boombarcode.Scale(b.encoded, width, height)
 }
 
-// buildPayload assembles the structured Swiss QR payload from individual fields.
+// buildPayload assembles the structured Swiss QR payload from the legacy flat fields.
+// This is the fallback used when Params.IBAN is empty.
 func (b *SwissQRBarcode) buildPayload() string {
 	currency := b.Currency
 	if currency == "" {

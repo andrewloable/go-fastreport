@@ -22,7 +22,18 @@ func linearPatternCalcBounds(pp patternGetter) (float32, float32) {
 	if err != nil || pattern == "" {
 		return 0, 0
 	}
-	modules := MakeModules(pp.GetWideBarRatio())
+	// Use the type's default WideBarRatio, but allow FRX deserialization to override.
+	// C# LinearBarcodeBase: WideBarRatio is a settable property; FRX stores it as
+	// Barcode.WideBarRatio="2.25" etc. In Go we check for a WBROverride from
+	// BarcodeObject.Deserialize().
+	wbr := pp.GetWideBarRatio()
+	type wbrOverrider interface{ WBROverride() float32 }
+	if ov, ok := pp.(wbrOverrider); ok {
+		if v := ov.WBROverride(); v != 0 {
+			wbr = v
+		}
+	}
+	modules := MakeModules(wbr)
 	return GetPatternWidth(pattern, modules) * 1.25, 0
 }
 
@@ -159,51 +170,84 @@ func (e *EAN8Barcode) CalcBounds() (float32, float32) {
 // ── EAN13Barcode — CalcBounds ────────────────────────────────────────────────
 
 // CalcBounds returns the natural width of the encoded EAN-13 symbol.
+// C# BarcodeEAN13 constructor sets extra1=8 (quiet zone on left).
+// C# LinearBarcodeBase.CalcBounds(): drawArea.Width = barWidth + extra1 + extra2.
+// EAN-13: extra1=8, extra2=0 → barWidth+8 modules × 1.25.
 func (e *EAN13Barcode) CalcBounds() (float32, float32) {
 	if e.encodedText == "" {
 		return 0, 0
 	}
-	return linearPatternCalcBounds(e)
+	w, h := linearPatternCalcBounds(e)
+	if w == 0 {
+		return 0, 0
+	}
+	// Add extra1=8 modules quiet zone (C# BarcodeEAN13 constructor: extra1=8).
+	return w + 8*1.25, h
 }
 
 // ── UPCABarcode — CalcBounds ─────────────────────────────────────────────────
 
 // CalcBounds returns the natural width of the encoded UPC-A symbol.
+// C# BarcodeUPC_A extends BarcodeUPC_E0 which sets extra1=8, extra2=8.
+// UPC-A: extra1=8, extra2=8 → barWidth+16 modules × 1.25.
 func (u *UPCABarcode) CalcBounds() (float32, float32) {
 	if u.encodedText == "" {
 		return 0, 0
 	}
-	return linearPatternCalcBounds(u)
+	w, h := linearPatternCalcBounds(u)
+	if w == 0 {
+		return 0, 0
+	}
+	// Add extra1=8 + extra2=8 = 16 modules quiet zones (C# BarcodeUPC_E0: extra1=8, extra2=8).
+	return w + 16*1.25, h
 }
 
 // ── UPCEBarcode — CalcBounds ─────────────────────────────────────────────────
 
 // CalcBounds returns the natural width of the encoded UPC-E symbol.
+// C# BarcodeUPC_E0 sets extra1=8, extra2=8 → barWidth+16 modules × 1.25.
 func (u *UPCEBarcode) CalcBounds() (float32, float32) {
 	if u.encodedText == "" {
 		return 0, 0
 	}
-	return linearPatternCalcBounds(u)
+	w, h := linearPatternCalcBounds(u)
+	if w == 0 {
+		return 0, 0
+	}
+	// Add extra1=8 + extra2=8 = 16 modules quiet zones (C# BarcodeUPC_E0: extra1=8, extra2=8).
+	return w + 16*1.25, h
 }
 
 // ── UPCE0Barcode — CalcBounds ────────────────────────────────────────────────
 
 // CalcBounds returns the natural width of the encoded UPC-E0 symbol.
+// C# BarcodeUPC_E0 sets extra1=8, extra2=8 → barWidth+16 modules × 1.25.
 func (u *UPCE0Barcode) CalcBounds() (float32, float32) {
 	if u.encodedText == "" {
 		return 0, 0
 	}
-	return linearPatternCalcBounds(u)
+	w, h := linearPatternCalcBounds(u)
+	if w == 0 {
+		return 0, 0
+	}
+	// Add extra1=8 + extra2=8 = 16 modules quiet zones (C# BarcodeUPC_E0: extra1=8, extra2=8).
+	return w + 16*1.25, h
 }
 
 // ── UPCE1Barcode — CalcBounds ────────────────────────────────────────────────
 
 // CalcBounds returns the natural width of the encoded UPC-E1 symbol.
+// Inherits extra1=8, extra2=8 from BarcodeUPC_E0.
 func (u *UPCE1Barcode) CalcBounds() (float32, float32) {
 	if u.encodedText == "" {
 		return 0, 0
 	}
-	return linearPatternCalcBounds(u)
+	w, h := linearPatternCalcBounds(u)
+	if w == 0 {
+		return 0, 0
+	}
+	// Add extra1=8 + extra2=8 = 16 modules quiet zones (C# BarcodeUPC_E0: extra1=8, extra2=8).
+	return w + 16*1.25, h
 }
 
 // ── MSIBarcode — CalcBounds ──────────────────────────────────────────────────

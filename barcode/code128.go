@@ -428,7 +428,8 @@ func (b *Code128Barcode) GetPattern() (string, error) {
 	return code128GetPattern(msg)
 }
 
-func (b *Code128Barcode) GetWideBarRatio() float32 { return 1 }
+// GetWideBarRatio returns 2 per C# LinearBarcodeBase.cs:636 (WideBarRatio = 2).
+func (b *Code128Barcode) GetWideBarRatio() float32 { return 2 }
 
 // ── Code128ABarcode ──────────────────────────────────────────────────────────
 
@@ -437,7 +438,8 @@ func (b *Code128ABarcode) GetPattern() (string, error) {
 	return code128GetPattern(msg)
 }
 
-func (b *Code128ABarcode) GetWideBarRatio() float32 { return 1 }
+// GetWideBarRatio returns 2 per C# LinearBarcodeBase.cs:636.
+func (b *Code128ABarcode) GetWideBarRatio() float32 { return 2 }
 
 // ── Code128BBarcode ──────────────────────────────────────────────────────────
 
@@ -446,7 +448,8 @@ func (b *Code128BBarcode) GetPattern() (string, error) {
 	return code128GetPattern(msg)
 }
 
-func (b *Code128BBarcode) GetWideBarRatio() float32 { return 1 }
+// GetWideBarRatio returns 2 per C# LinearBarcodeBase.cs:636.
+func (b *Code128BBarcode) GetWideBarRatio() float32 { return 2 }
 
 // ── Code128CBarcode ──────────────────────────────────────────────────────────
 
@@ -455,4 +458,5 @@ func (b *Code128CBarcode) GetPattern() (string, error) {
 	return code128GetPattern(msg)
 }
 
-func (b *Code128CBarcode) GetWideBarRatio() float32 { return 1 }
+// GetWideBarRatio returns 2 per C# LinearBarcodeBase.cs:636.
+func (b *Code128CBarcode) GetWideBarRatio() float32 { return 2 }

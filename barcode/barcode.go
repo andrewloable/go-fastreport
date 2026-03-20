@@ -86,7 +86,18 @@ type BaseBarcodeImpl struct {
 	encodedText string
 	// barcodeType is the symbology.
 	barcodeType BarcodeType
+	// wideBarRatioOverride is set by FRX deserialization when Barcode.WideBarRatio
+	// is present in the FRX file. A zero value means "use the type's default".
+	// C# LinearBarcodeBase: barcode.WideBarRatio = Reader.ReadFloat("Barcode.WideBarRatio", 2)
+	wideBarRatioOverride float32
 }
+
+// SetWideBarRatio overrides the WideBarRatio for this barcode instance.
+// Called during FRX deserialization when Barcode.WideBarRatio is present.
+func (b *BaseBarcodeImpl) SetWideBarRatio(v float32) { b.wideBarRatioOverride = v }
+
+// WBROverride returns the FRX-deserialized WideBarRatio override (0 if not set).
+func (b *BaseBarcodeImpl) WBROverride() float32 { return b.wideBarRatioOverride }
 
 // Render returns an error indicating the barcode type must provide its own Render.
 // Concrete types override this by implementing Render via pattern or matrix rendering.
@@ -152,8 +163,8 @@ func (c *Code128Barcode) Render(width, height int) (image.Image, error) {
 	return DrawLinearBarcode(pattern, c.encodedText, width, height, true, c.GetWideBarRatio()), nil
 }
 
-// DefaultValue returns a sample Code128 value.
-func (c *Code128Barcode) DefaultValue() string { return "CODE128" }
+// DefaultValue returns "12345678" matching C# BarcodeBase.GetDefaultValue() (no override in Barcode128.cs).
+func (c *Code128Barcode) DefaultValue() string { return "12345678" }
 
 // Code39Barcode implements Code39 (3-of-9) symbology.
 type Code39Barcode struct {
@@ -493,6 +504,15 @@ func (b *BarcodeObject) Deserialize(r report.Reader) error {
 				qrbc.ErrorCorrection = ec
 			}
 		}
+		// FRX stores the WideBarRatio override as Barcode.WideBarRatio="2.25".
+		// C# LinearBarcodeBase: barcode.WideBarRatio = Reader.ReadFloat("Barcode.WideBarRatio", 2)
+		// Go: we use 0 as the "not-set" sentinel and only override when explicitly present.
+		if wbr := r.ReadFloat("Barcode.WideBarRatio", 0); wbr != 0 {
+			type wbrSetter interface{ SetWideBarRatio(float32) }
+			if setter, ok := b.Barcode.(wbrSetter); ok {
+				setter.SetWideBarRatio(wbr)
+			}
+		}
 	}
 	b.angle = r.ReadInt("Angle", 0)
 	b.autoSize = r.ReadBool("AutoSize", true)
@@ -675,8 +695,8 @@ func (c *Code93Barcode) Render(width, height int) (image.Image, error) {
 	return DrawLinearBarcode(pattern, c.encodedText, width, height, true, c.GetWideBarRatio()), nil
 }
 
-// DefaultValue returns a sample Code 93 value.
-func (c *Code93Barcode) DefaultValue() string { return "CODE93" }
+// DefaultValue returns "12345678" matching C# BarcodeBase.GetDefaultValue() (no override in Barcode93.cs).
+func (c *Code93Barcode) DefaultValue() string { return "12345678" }
 
 // -----------------------------------------------------------------------
 // Code2of5Barcode — 2-of-5 / ITF linear symbology

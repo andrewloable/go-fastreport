@@ -75,7 +75,8 @@
       "Bash(sort -t: -k2 -n)",
       "Bash(head -20 grep -n \"CalcBounds\\\\|PixelSize\\\\|pixelSize\" /Volumes/mandark-1Tb/projects/loabletech/go-fastreport/original-dotnet/FastReport.Base/Barcode/BarcodeQR.cs)",
       "Bash(head -10 grep -n \"CalcBounds\\\\|PixelSize\\\\|pixelSize\" /Volumes/mandark-1Tb/projects/loabletech/go-fastreport/original-dotnet/FastReport.Base/Barcode/BarcodeDatamatrix.cs)",
-      "Bash(head -10 grep -rn \"func New.*HTML\\\\|func New.*Export\" /Volumes/mandark-1Tb/projects/loabletech/go-fastreport/export/html/*.go)"
+      "Bash(head -10 grep -rn \"func New.*HTML\\\\|func New.*Export\" /Volumes/mandark-1Tb/projects/loabletech/go-fastreport/export/html/*.go)",
+      "Bash(bd blocked:*)"
     ]
   }
 }

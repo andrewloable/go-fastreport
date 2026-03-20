@@ -150,7 +150,8 @@ func (b *Code2of5MatrixBarcode) GetPattern() (string, error) {
 	return sb.String(), nil
 }
 
-func (b *Code2of5MatrixBarcode) GetWideBarRatio() float32 { return 2 }
+// GetWideBarRatio returns 2.25 per C# Barcode2of5.cs:487 (WideBarRatio=2.25F for Matrix 2/5).
+func (b *Code2of5MatrixBarcode) GetWideBarRatio() float32 { return 2.25 }
 
 // ── ITF-14 ───────────────────────────────────────────────────────────────────
 
@@ -188,7 +189,8 @@ func (b *ITF14Barcode) GetPattern() (string, error) {
 	return sb.String(), nil
 }
 
-func (b *ITF14Barcode) GetWideBarRatio() float32 { return 2 }
+// GetWideBarRatio returns 2.25 per C# Barcode2of5.cs:566 (WideBarRatio=2.25F for ITF-14).
+func (b *ITF14Barcode) GetWideBarRatio() float32 { return 2.25 }
 
 // ── Deutsche Identcode ───────────────────────────────────────────────────────
 

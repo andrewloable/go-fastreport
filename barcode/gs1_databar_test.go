@@ -146,3 +146,49 @@ func TestGS1DataBarLimited_Encode_SetsCanonicalText(t *testing.T) {
 		t.Error("EncodedText is empty after Encode")
 	}
 }
+
+// TestGS1DataBarLimited_UpdateAutoSize_1234567890123 asserts final width=185px
+// matching C# Barcode.frx HTML output (Barcode53, Text="1234567890123").
+func TestGS1DataBarLimited_UpdateAutoSize_1234567890123(t *testing.T) {
+	obj := barcode.NewBarcodeObject()
+	obj.Barcode = barcode.NewGS1DataBarLimitedBarcode()
+	if err := obj.Barcode.Encode("1234567890123"); err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	obj.UpdateAutoSize()
+	const wantW = 185.0
+	got := obj.Width()
+	if math.Abs(float64(got-wantW)) > 1.0 {
+		t.Errorf("GS1DataBarLimited UpdateAutoSize width = %.2f, want %.2f (C# Barcode.frx Barcode53)", got, wantW)
+	}
+}
+
+// TestGS1DataBarLimited_Encode_SetsCanonical asserts EncodedText includes "(01)" prefix.
+func TestGS1DataBarLimited_Encode_CanonicalText(t *testing.T) {
+	b := barcode.NewGS1DataBarLimitedBarcode()
+	if err := b.Encode("1234567890123"); err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	want := "(01)12345678901231"
+	if got := b.EncodedText(); got != want {
+		t.Errorf("EncodedText = %q, want %q", got, want)
+	}
+}
+
+// ── GS1 DataBar Stacked Omnidirectional ──────────────────────────────────────
+
+// TestGS1DataBarStackedOmni_UpdateAutoSize_1234567890123 asserts final width=135px
+// matching C# Barcode.frx HTML output (Barcode54, Text="1234567890123").
+func TestGS1DataBarStackedOmni_UpdateAutoSize_1234567890123(t *testing.T) {
+	obj := barcode.NewBarcodeObject()
+	obj.Barcode = barcode.NewGS1DataBarStackedOmniBarcode()
+	if err := obj.Barcode.Encode("1234567890123"); err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	obj.UpdateAutoSize()
+	const wantW = 135.0
+	got := obj.Width()
+	if math.Abs(float64(got-wantW)) > 1.0 {
+		t.Errorf("GS1DataBarStackedOmni UpdateAutoSize width = %.2f, want %.2f (C# Barcode.frx Barcode54)", got, wantW)
+	}
+}

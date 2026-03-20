@@ -124,7 +124,8 @@ func code39GetPattern(text string, calcChecksum bool) string {
 }
 
 func (b *Code39Barcode) GetPattern() (string, error) {
-	return code39GetPattern(b.encodedText, false), nil
+	// C# LinearBarcodeBase.cs:637: calcCheckSum = true (default).
+	return code39GetPattern(b.encodedText, true), nil
 }
 
 func (b *Code39Barcode) GetWideBarRatio() float32 { return 2 }
@@ -136,7 +137,8 @@ func (b *Code39ExtendedBarcode) GetPattern() (string, error) {
 			expanded.WriteString(code39x[c])
 		}
 	}
-	return code39GetPattern(expanded.String(), false), nil
+	// C# LinearBarcodeBase.cs:637: calcCheckSum = true (default).
+	return code39GetPattern(expanded.String(), true), nil
 }
 
 func (b *Code39ExtendedBarcode) GetWideBarRatio() float32 { return 2 }

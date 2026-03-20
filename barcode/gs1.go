@@ -219,4 +219,5 @@ func (b *GS1_128Barcode) GetPattern() (string, error) {
 	return code128GetPattern(msg)
 }
 
-func (b *GS1_128Barcode) GetWideBarRatio() float32 { return 1 }
+// GetWideBarRatio returns 2 per C# LinearBarcodeBase.cs:636 (WideBarRatio = 2).
+func (b *GS1_128Barcode) GetWideBarRatio() float32 { return 2 }

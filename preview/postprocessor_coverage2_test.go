@@ -1,39 +1,37 @@
 package preview
 
-// postprocessor_coverage2_test.go — documents the structurally-unreachable
-// branch in processDuplicates (postprocessor.go:99-101) and adds supplementary
-// behavioural tests to maximise reachable coverage.
+// postprocessor_coverage2_test.go — supplementary behavioural tests for
+// processDuplicates to maximise reachable coverage.
 //
-// Dead-code analysis:
-//
-//   postprocessor.go:99  `if len(entries) == 0 { continue }`
-//
-//   The `groups` map is populated only via:
-//
-//     groups[obj.Name] = append(groups[obj.Name], entry)
-//
-//   Since `append` always produces a slice of length ≥ 1, every value in
-//   `groups` has len ≥ 1 by construction.  Therefore the `len(entries) == 0`
-//   guard is dead code: it can never be true when iterating over the map.
-//
-//   The `continue` statement on line 100 is therefore unreachable.
+// Note: the formerly-present `if len(entries) == 0 { continue }` guard was
+// removed from processDuplicates because it was structurally unreachable:
+// the `groups` map is populated only via append, which always produces a
+// slice of length ≥ 1.
 
 import "testing"
 
-// TestProcessDuplicates_LenEntriesZero_IsDeadCode is a documentation test
-// confirming that the `if len(entries) == 0 { continue }` guard in
-// processDuplicates (postprocessor.go:99-101) is structurally unreachable.
-//
-// The `groups` map is filled exclusively through:
-//
-//	groups[name] = append(groups[name], entry)
-//
-// The append call always produces a slice of length ≥ 1, so every map entry
-// obtained via `for _, entries := range groups` has len(entries) ≥ 1.
-// The dead guard was added defensively; it cannot fire in practice.
-func TestProcessDuplicates_LenEntriesZero_IsDeadCode(t *testing.T) {
-	t.Log("processDuplicates:99 `if len(entries) == 0 { continue }` is dead code " +
-		"— groups map entries are always non-empty (built via append)")
+// TestProcessDuplicates_GroupsAlwaysNonEmpty documents that the groups map in
+// processDuplicates is always populated with slices of length ≥ 1, because the
+// only write path is `groups[name] = append(groups[name], entry)`.
+// This test exercises the outer range loop with a qualifying object to confirm
+// processGroup is always called with a non-empty slice.
+func TestProcessDuplicates_GroupsAlwaysNonEmpty(t *testing.T) {
+	pp := New()
+	pp.AddPage(595, 842, 1)
+	_ = pp.AddBand(&PreparedBand{
+		Name:   "b",
+		Top:    0,
+		Height: 20,
+		Objects: []PreparedObject{
+			{Name: "only", Kind: ObjectTypeText, Top: 0, Height: 20, Text: "v",
+				Duplicates: DuplicatesClear},
+		},
+	})
+	proc := &Postprocessor{pp: pp}
+	proc.processDuplicates() // must not panic; single entry → no change
+	if txt := pp.GetPage(0).Bands[0].Objects[0].Text; txt != "v" {
+		t.Errorf("singleton group text = %q, want v", txt)
+	}
 }
 
 // TestProcessDuplicates_MixedKindAndNameObjects exercises processDuplicates

@@ -45,9 +45,18 @@ func (e *ReportEngine) NeedKeepLastRow(dataBand *band.DataBand) bool {
 }
 
 // getAllFooters returns the list of footer bands that must be kept with the
-// last data row.
+// last data row. This mirrors FastReport's ReportEngine.GetAllFooters:
+//
+//  1. Start with the DataBand's own DataFooterBand (if any).
+//  2. Walk the engine's groupStack (pushed by showGroupTree): for each ancestor
+//     GroupHeaderBand that is on its last row, add its GroupFooterBand (if any).
+//     Stop when an ancestor is not on its last row (matching the C# guard:
+//     `if (band != dataBand && !band.IsLastRow) break`).
+//  3. Strip trailing footers that have no KeepWithData flag.
 func (e *ReportEngine) getAllFooters(dataBand *band.DataBand) []keepableFooter {
 	var footers []keepableFooter
+
+	// Add DataFooterBand for the data band itself.
 	if ftr := dataBand.Footer(); ftr != nil {
 		footers = append(footers, keepableFooter{
 			band:              &ftr.HeaderFooterBandBase.BandBase,
@@ -55,6 +64,24 @@ func (e *ReportEngine) getAllFooters(dataBand *band.DataBand) []keepableFooter {
 			repeatOnEveryPage: ftr.RepeatOnEveryPage(),
 		})
 	}
+
+	// Walk the groupStack (innermost first) and collect GroupFooterBands from
+	// ancestor GroupHeaderBands. Stop when a group is not on its last row.
+	for _, gh := range e.groupStack {
+		// C# guard: stop if this ancestor group is not on its last row.
+		// (We only need the group footer if this group instance is finishing.)
+		if !gh.IsLastRow() {
+			break
+		}
+		if gftr := gh.GroupFooter(); gftr != nil {
+			footers = append(footers, keepableFooter{
+				band:              &gftr.HeaderFooterBandBase.BandBase,
+				keepWithData:      gftr.KeepWithData(),
+				repeatOnEveryPage: gftr.RepeatOnEveryPage(),
+			})
+		}
+	}
+
 	// Remove footers at the end that don't have KeepWithData.
 	for i := len(footers) - 1; i >= 0; i-- {
 		if !footers[i].keepWithData {

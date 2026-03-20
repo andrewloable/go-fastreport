@@ -71,6 +71,12 @@ func RTFToHTML(rtf string) string {
 			if i < n && rtf[i] == '\\' && i+1 < n && rtf[i+1] == '*' {
 				skipDepth = groupDepth
 				i += 2
+			} else if i < n && rtf[i] == '\\' {
+				// Skip plain header destination groups such as
+				// {\fonttbl ...}, {\colortbl ...}, {\stylesheet ...}, etc.
+				if isRTFHeaderDestination(peekControlWordName(rtf, i)) {
+					skipDepth = groupDepth
+				}
 			}
 		case '}':
 			if skipDepth == groupDepth {
@@ -295,10 +301,16 @@ func StripRTF(rtf string) string {
 		case '{':
 			groupDepth++
 			i++
-			// Check for destination group: {\* ...}
+			// Check for destination group: {\* ...} (starred destination)
 			if i < n && rtf[i] == '\\' && i+1 < n && rtf[i+1] == '*' {
 				skipDepth = groupDepth
 				i += 2 // consume \*
+			} else if i < n && rtf[i] == '\\' {
+				// Check for plain (non-starred) header destination groups such as
+				// {\fonttbl ...}, {\colortbl ...}, {\stylesheet ...}, etc.
+				if isRTFHeaderDestination(peekControlWordName(rtf, i)) {
+					skipDepth = groupDepth
+				}
 			}
 
 		case '}':
@@ -470,6 +482,43 @@ func skipControlWord(rtf string, i int) int {
 		i++
 	}
 	return i
+}
+
+// isRTFHeaderDestination returns true for RTF destination group keywords whose
+// entire content should be skipped (not emitted as visible text).  These groups
+// carry metadata such as font tables, colour tables, style sheets, etc.
+func isRTFHeaderDestination(name string) bool {
+	switch name {
+	case "fonttbl", "colortbl", "stylesheet", "info",
+		"header", "footer", "headerl", "headerr", "headerf",
+		"footerl", "footerr", "footerf",
+		"pict", "object", "fldinst",
+		"private", "revtbl",
+		"listtable", "listoverridetable", "rsidtbl",
+		"generator", "pgdsctbl", "ftnsep", "ftnsepc",
+		"aftnsep", "aftnsepc", "latentstyles":
+		return true
+	}
+	return false
+}
+
+// peekControlWordName returns the control-word name that immediately follows
+// position i in rtf (i must point at the backslash) without advancing i.
+// Returns "" if there is no control word at i.
+func peekControlWordName(rtf string, i int) string {
+	n := len(rtf)
+	if i >= n || rtf[i] != '\\' {
+		return ""
+	}
+	i++ // skip backslash
+	if i >= n || !isAlpha(rtf[i]) {
+		return ""
+	}
+	start := i
+	for i < n && isAlpha(rtf[i]) {
+		i++
+	}
+	return rtf[start:i]
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────

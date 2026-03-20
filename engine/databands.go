@@ -770,10 +770,7 @@ func (e *ReportEngine) inferFilterDataSource(db *band.DataBand) data.DataSource 
 	if resolved == nil {
 		return nil
 	}
-	if ds, ok := resolved.(data.DataSource); ok {
-		return ds
-	}
-	return nil
+	return resolved
 }
 
 // dataBandSubBands returns the sub-bands nested inside a DataBand's object collection.

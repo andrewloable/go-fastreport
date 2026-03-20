@@ -23,9 +23,10 @@ import (
 // serial_registrations.go whose closures were not invoked by earlier tests.
 func TestSerialRegistrations_UncoveredFactories(t *testing.T) {
 	names := []string{
-		// Report-level containers (serial_registrations.go lines 19-20)
+		// Report-level containers (serial_registrations.go lines 19-22)
 		"Report",
 		"ReportPage",
+		"DialogPage",
 		// Object types not yet exercised by existing tests
 		"ContainerObject",
 		"HtmlObject",

@@ -67,7 +67,9 @@
       "Bash(git -C /Volumes/mandark-1Tb/projects/loabletech/go-fastreport/.claude/worktrees/agent-a1a1915a status --short)",
       "Bash(git -C /Volumes/mandark-1Tb/projects/loabletech/go-fastreport/.claude/worktrees/agent-a950b33d status --short)",
       "Bash(git -C /Volumes/mandark-1Tb/projects/loabletech/go-fastreport/.claude/worktrees/agent-a1a1915a log --oneline -3)",
-      "Bash(git -C /Volumes/mandark-1Tb/projects/loabletech/go-fastreport/.claude/worktrees/agent-a1a1915a diff --stat)"
+      "Bash(git -C /Volumes/mandark-1Tb/projects/loabletech/go-fastreport/.claude/worktrees/agent-a1a1915a diff --stat)",
+      "Bash(git worktree:*)",
+      "Bash(git branch:*)"
     ]
   }
 }

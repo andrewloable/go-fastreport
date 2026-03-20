@@ -9,6 +9,7 @@ import (
 	"math"
 	"time"
 
+	"github.com/andrewloable/go-fastreport/band"
 	"github.com/andrewloable/go-fastreport/data"
 	"github.com/andrewloable/go-fastreport/preview"
 	"github.com/andrewloable/go-fastreport/reportpkg"
@@ -154,6 +155,12 @@ type ReportEngine struct {
 	outputBand        *preview.PreparedBand
 	outputBandOffsetX float32
 	outputBandOffsetY float32
+
+	// groupStack tracks the ancestor GroupHeaderBands of the DataBand currently
+	// being iterated. The innermost (direct parent) group is at index 0, and
+	// outer groups are appended as showGroupTree recurses. getAllFooters uses
+	// this to include GroupFooterBands in the keep-with-data height calculation.
+	groupStack []*band.GroupHeaderBand
 }
 
 // New creates a ReportEngine for the given report.

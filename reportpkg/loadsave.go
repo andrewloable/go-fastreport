@@ -391,6 +391,13 @@ func deserializeDictionary(rdr *serial.Reader, dict *data.Dictionary, baseDir st
 		case "Total":
 			t := deserializeTotal(rdr)
 			dict.AddTotal(t)
+			// Also register as an AggregateTotal so the engine accumulates per-row.
+			at := &data.AggregateTotal{
+				Name:       t.Name,
+				TotalType:  t.TotalType,
+				Expression: t.Expression,
+			}
+			dict.AddAggregateTotal(at)
 		case "JsonDataConnection":
 			conn, sources := deserializeJsonConnection(rdr)
 			dict.AddConnection(conn)

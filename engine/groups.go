@@ -175,7 +175,20 @@ func checkGroupItem(header *band.GroupHeaderBand, curItem *groupTreeItem, rowIdx
 //  1. ShowGroupHeader (unless root)
 //  2. If leaf → RunDataBandRows for its rows; else ShowDataHeader + nested items + ShowDataFooter
 //  3. ShowGroupFooter (unless root)
+//
+// groupStack is maintained so that getAllFooters can walk ancestor
+// GroupHeaderBands when computing keep-with-data footer heights.
 func (e *ReportEngine) showGroupTree(root *groupTreeItem) {
+	// Push this group header onto the ancestor stack (innermost at front).
+	// getAllFooters walks e.groupStack to find GroupFooterBands that must be
+	// kept with the last data row, mirroring C# EnumHeaders + GetAllFooters.
+	if root.band != nil {
+		e.groupStack = append([]*band.GroupHeaderBand{root.band}, e.groupStack...)
+		defer func() {
+			e.groupStack = e.groupStack[1:]
+		}()
+	}
+
 	if root.band != nil {
 		e.showGroupHeader(root.band)
 	}

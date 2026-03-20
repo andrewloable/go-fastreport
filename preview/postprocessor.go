@@ -95,10 +95,9 @@ func (p *Postprocessor) processDuplicates() {
 	}
 
 	// For each name group, find runs of duplicates and apply the mode.
+	// Every value in groups has len >= 1 by construction (built via append),
+	// so no empty-slice guard is needed here.
 	for _, entries := range groups {
-		if len(entries) == 0 {
-			continue
-		}
 		p.processGroup(entries)
 	}
 }

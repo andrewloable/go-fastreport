@@ -396,6 +396,135 @@ func TestWriteRune(t *testing.T) {
 	}
 }
 
+// ── Header destination group skipping ─────────────────────────────────────────
+
+func TestStripRTF_FonttblSkipped(t *testing.T) {
+	// Font names inside \fonttbl must not appear in the plain-text output.
+	rtf := `{\rtf1{\fonttbl{\f0 Arial;}}Hello}`
+	result := StripRTF(rtf)
+	if strings.Contains(result, "Arial") {
+		t.Errorf("StripRTF fonttbl: font name 'Arial' leaked into output: %q", result)
+	}
+	if !strings.Contains(result, "Hello") {
+		t.Errorf("StripRTF fonttbl: expected 'Hello' in output, got: %q", result)
+	}
+}
+
+func TestStripRTF_ColortblSkipped(t *testing.T) {
+	// \colortbl entries (semicolons and colour control words) must not leak.
+	rtf := `{\rtf1{\colortbl ;\red255\green0\blue0;}Hello}`
+	result := StripRTF(rtf)
+	// "red", "green", "blue" come from control words and are consumed, but the
+	// semicolons are literal text characters that would formerly leak through.
+	if strings.Contains(result, ";") {
+		t.Errorf("StripRTF colortbl: semicolons leaked into output: %q", result)
+	}
+	if !strings.Contains(result, "Hello") {
+		t.Errorf("StripRTF colortbl: expected 'Hello' in output, got: %q", result)
+	}
+}
+
+func TestStripRTF_StylesheetSkipped(t *testing.T) {
+	// Style names inside \stylesheet must not appear in output.
+	rtf := `{\rtf1{\stylesheet{\s0 Normal;}}Hello}`
+	result := StripRTF(rtf)
+	if strings.Contains(result, "Normal") {
+		t.Errorf("StripRTF stylesheet: style name 'Normal' leaked into output: %q", result)
+	}
+	if !strings.Contains(result, "Hello") {
+		t.Errorf("StripRTF stylesheet: expected 'Hello' in output, got: %q", result)
+	}
+}
+
+func TestStripRTF_StarredDestinationStillSkipped(t *testing.T) {
+	// Pre-existing behaviour: {\*\keyword ...} must remain skipped.
+	rtf := `{\rtf1 visible{\*\somekw hidden}text}`
+	result := StripRTF(rtf)
+	if strings.Contains(result, "hidden") {
+		t.Errorf("StripRTF starred dest: 'hidden' should not appear, got: %q", result)
+	}
+	if !strings.Contains(result, "visible") || !strings.Contains(result, "text") {
+		t.Errorf("StripRTF starred dest: expected visible text, got: %q", result)
+	}
+}
+
+func TestRTFToHTML_FonttblSkipped(t *testing.T) {
+	// Font names inside \fonttbl must not appear in the HTML output.
+	rtf := `{\rtf1{\fonttbl{\f0 Arial;}}Hello}`
+	result := RTFToHTML(rtf)
+	if strings.Contains(result, "Arial") {
+		t.Errorf("RTFToHTML fonttbl: font name 'Arial' leaked into output: %q", result)
+	}
+	if !strings.Contains(result, "Hello") {
+		t.Errorf("RTFToHTML fonttbl: expected 'Hello' in output, got: %q", result)
+	}
+}
+
+func TestRTFToHTML_ColortblSkipped(t *testing.T) {
+	// Colour table semicolons must not appear in HTML output.
+	rtf := `{\rtf1{\colortbl ;\red255\green0\blue0;}Hello}`
+	result := RTFToHTML(rtf)
+	if strings.Contains(result, ";") {
+		t.Errorf("RTFToHTML colortbl: semicolons leaked into output: %q", result)
+	}
+	if !strings.Contains(result, "Hello") {
+		t.Errorf("RTFToHTML colortbl: expected 'Hello' in output, got: %q", result)
+	}
+}
+
+func TestRTFToHTML_StylesheetSkipped(t *testing.T) {
+	// Style names inside \stylesheet must not appear in HTML output.
+	rtf := `{\rtf1{\stylesheet{\s0 Normal;}}Hello}`
+	result := RTFToHTML(rtf)
+	if strings.Contains(result, "Normal") {
+		t.Errorf("RTFToHTML stylesheet: style name 'Normal' leaked into output: %q", result)
+	}
+	if !strings.Contains(result, "Hello") {
+		t.Errorf("RTFToHTML stylesheet: expected 'Hello' in output, got: %q", result)
+	}
+}
+
+func TestIsRTFHeaderDestination(t *testing.T) {
+	yes := []string{
+		"fonttbl", "colortbl", "stylesheet", "info",
+		"header", "footer", "pict", "object", "fldinst",
+		"private", "revtbl", "listtable", "listoverridetable",
+		"rsidtbl", "generator", "latentstyles",
+	}
+	for _, name := range yes {
+		if !isRTFHeaderDestination(name) {
+			t.Errorf("isRTFHeaderDestination(%q) = false, want true", name)
+		}
+	}
+	no := []string{"b", "i", "ul", "par", "fs", "rtf", "ansi", "unknown"}
+	for _, name := range no {
+		if isRTFHeaderDestination(name) {
+			t.Errorf("isRTFHeaderDestination(%q) = true, want false", name)
+		}
+	}
+}
+
+func TestPeekControlWordName(t *testing.T) {
+	cases := []struct {
+		rtf  string
+		i    int
+		want string
+	}{
+		{`\fonttbl rest`, 0, "fonttbl"},
+		{`\par `, 0, "par"},
+		{`\b`, 0, "b"},
+		{`\' hex`, 0, ""},  // control symbol, not a word
+		{`text`, 0, ""},    // no backslash
+		{`\`, 0, ""},       // backslash only
+	}
+	for _, tc := range cases {
+		got := peekControlWordName(tc.rtf, tc.i)
+		if got != tc.want {
+			t.Errorf("peekControlWordName(%q, %d) = %q, want %q", tc.rtf, tc.i, got, tc.want)
+		}
+	}
+}
+
 // ── parseSignedInt ────────────────────────────────────────────────────────────
 
 func TestParseSignedInt(t *testing.T) {

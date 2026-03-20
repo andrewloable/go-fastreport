@@ -1,0 +1,409 @@
+// calcbounds.go provides CalcBounds() implementations for concrete barcode types.
+// Ported from C# BarcodeBase.CalcBounds() and LinearBarcodeBase.CalcBounds().
+package barcode
+
+// patternGetter is a local interface matching the actual GetPattern signature
+// used by all linear barcode concrete types (returns string + error).
+type patternGetter interface {
+	GetPattern() (string, error)
+	GetWideBarRatio() float32
+}
+
+// ── Linear barcode CalcBounds ────────────────────────────────────────────────
+// C# LinearBarcodeBase.CalcBounds() (LinearBarcodeBase.cs:424-466):
+//
+//	float barWidth = GetWidth(Code);
+//	drawArea.Width = barWidth + extra1 + extra2;
+//	return new SizeF(drawArea.Width * 1.25f, 0);
+//
+// In Go we derive the width from GetPatternWidth * 1.25.
+func linearPatternCalcBounds(pp patternGetter) (float32, float32) {
+	pattern, err := pp.GetPattern()
+	if err != nil || pattern == "" {
+		return 0, 0
+	}
+	modules := MakeModules(pp.GetWideBarRatio())
+	return GetPatternWidth(pattern, modules) * 1.25, 0
+}
+
+// ── Code128Barcode — CalcBounds ───────────────────────────────────────────────
+
+// CalcBounds returns the natural width of the encoded Code128 symbol.
+func (c *Code128Barcode) CalcBounds() (float32, float32) {
+	if c.encodedText == "" {
+		return 0, 0
+	}
+	return linearPatternCalcBounds(c)
+}
+
+// ── Code128ABarcode — CalcBounds ─────────────────────────────────────────────
+
+// CalcBounds returns the natural width of the encoded Code128A symbol.
+func (c *Code128ABarcode) CalcBounds() (float32, float32) {
+	if c.encodedText == "" {
+		return 0, 0
+	}
+	return linearPatternCalcBounds(c)
+}
+
+// ── Code128BBarcode — CalcBounds ─────────────────────────────────────────────
+
+// CalcBounds returns the natural width of the encoded Code128B symbol.
+func (c *Code128BBarcode) CalcBounds() (float32, float32) {
+	if c.encodedText == "" {
+		return 0, 0
+	}
+	return linearPatternCalcBounds(c)
+}
+
+// ── Code128CBarcode — CalcBounds ─────────────────────────────────────────────
+
+// CalcBounds returns the natural width of the encoded Code128C symbol.
+func (c *Code128CBarcode) CalcBounds() (float32, float32) {
+	if c.encodedText == "" {
+		return 0, 0
+	}
+	return linearPatternCalcBounds(c)
+}
+
+// ── Code39Barcode — CalcBounds ───────────────────────────────────────────────
+
+// CalcBounds returns the natural width of the encoded Code39 symbol.
+func (c *Code39Barcode) CalcBounds() (float32, float32) {
+	if c.encodedText == "" {
+		return 0, 0
+	}
+	return linearPatternCalcBounds(c)
+}
+
+// ── Code39ExtendedBarcode — CalcBounds ───────────────────────────────────────
+
+// CalcBounds returns the natural width of the encoded Code39Extended symbol.
+func (c *Code39ExtendedBarcode) CalcBounds() (float32, float32) {
+	if c.encodedText == "" {
+		return 0, 0
+	}
+	return linearPatternCalcBounds(c)
+}
+
+// ── Code93Barcode — CalcBounds ───────────────────────────────────────────────
+
+// CalcBounds returns the natural width of the encoded Code93 symbol.
+func (c *Code93Barcode) CalcBounds() (float32, float32) {
+	if c.encodedText == "" {
+		return 0, 0
+	}
+	return linearPatternCalcBounds(c)
+}
+
+// ── Code93ExtendedBarcode — CalcBounds ───────────────────────────────────────
+
+// CalcBounds returns the natural width of the encoded Code93Extended symbol.
+func (c *Code93ExtendedBarcode) CalcBounds() (float32, float32) {
+	if c.encodedText == "" {
+		return 0, 0
+	}
+	return linearPatternCalcBounds(c)
+}
+
+// ── Code2of5Barcode — CalcBounds ─────────────────────────────────────────────
+
+// CalcBounds returns the natural width of the encoded 2-of-5 symbol.
+func (c *Code2of5Barcode) CalcBounds() (float32, float32) {
+	if c.encodedText == "" {
+		return 0, 0
+	}
+	return linearPatternCalcBounds(c)
+}
+
+// ── Code2of5IndustrialBarcode — CalcBounds ───────────────────────────────────
+
+// CalcBounds returns the natural width of the encoded Standard 2-of-5 symbol.
+func (c *Code2of5IndustrialBarcode) CalcBounds() (float32, float32) {
+	if c.encodedText == "" {
+		return 0, 0
+	}
+	return linearPatternCalcBounds(c)
+}
+
+// ── Code2of5MatrixBarcode — CalcBounds ───────────────────────────────────────
+
+// CalcBounds returns the natural width of the encoded Matrix 2-of-5 symbol.
+func (c *Code2of5MatrixBarcode) CalcBounds() (float32, float32) {
+	if c.encodedText == "" {
+		return 0, 0
+	}
+	return linearPatternCalcBounds(c)
+}
+
+// ── CodabarBarcode — CalcBounds ──────────────────────────────────────────────
+
+// CalcBounds returns the natural width of the encoded Codabar symbol.
+func (c *CodabarBarcode) CalcBounds() (float32, float32) {
+	if c.encodedText == "" {
+		return 0, 0
+	}
+	return linearPatternCalcBounds(c)
+}
+
+// ── EAN8Barcode — CalcBounds ─────────────────────────────────────────────────
+
+// CalcBounds returns the natural width of the encoded EAN-8 symbol.
+func (e *EAN8Barcode) CalcBounds() (float32, float32) {
+	if e.encodedText == "" {
+		return 0, 0
+	}
+	return linearPatternCalcBounds(e)
+}
+
+// ── EAN13Barcode — CalcBounds ────────────────────────────────────────────────
+
+// CalcBounds returns the natural width of the encoded EAN-13 symbol.
+func (e *EAN13Barcode) CalcBounds() (float32, float32) {
+	if e.encodedText == "" {
+		return 0, 0
+	}
+	return linearPatternCalcBounds(e)
+}
+
+// ── UPCABarcode — CalcBounds ─────────────────────────────────────────────────
+
+// CalcBounds returns the natural width of the encoded UPC-A symbol.
+func (u *UPCABarcode) CalcBounds() (float32, float32) {
+	if u.encodedText == "" {
+		return 0, 0
+	}
+	return linearPatternCalcBounds(u)
+}
+
+// ── UPCEBarcode — CalcBounds ─────────────────────────────────────────────────
+
+// CalcBounds returns the natural width of the encoded UPC-E symbol.
+func (u *UPCEBarcode) CalcBounds() (float32, float32) {
+	if u.encodedText == "" {
+		return 0, 0
+	}
+	return linearPatternCalcBounds(u)
+}
+
+// ── UPCE0Barcode — CalcBounds ────────────────────────────────────────────────
+
+// CalcBounds returns the natural width of the encoded UPC-E0 symbol.
+func (u *UPCE0Barcode) CalcBounds() (float32, float32) {
+	if u.encodedText == "" {
+		return 0, 0
+	}
+	return linearPatternCalcBounds(u)
+}
+
+// ── UPCE1Barcode — CalcBounds ────────────────────────────────────────────────
+
+// CalcBounds returns the natural width of the encoded UPC-E1 symbol.
+func (u *UPCE1Barcode) CalcBounds() (float32, float32) {
+	if u.encodedText == "" {
+		return 0, 0
+	}
+	return linearPatternCalcBounds(u)
+}
+
+// ── MSIBarcode — CalcBounds ──────────────────────────────────────────────────
+
+// CalcBounds returns the natural width of the encoded MSI symbol.
+func (m *MSIBarcode) CalcBounds() (float32, float32) {
+	if m.encodedText == "" {
+		return 0, 0
+	}
+	return linearPatternCalcBounds(m)
+}
+
+// ── GS1Barcode — CalcBounds ──────────────────────────────────────────────────
+
+// CalcBounds returns the natural width of the encoded GS1-128 symbol.
+func (g *GS1Barcode) CalcBounds() (float32, float32) {
+	if g.encodedText == "" {
+		return 0, 0
+	}
+	return linearPatternCalcBounds(g)
+}
+
+// ── GS1_128Barcode — CalcBounds ──────────────────────────────────────────────
+
+// CalcBounds returns the natural width of the encoded GS1-128 symbol.
+func (g *GS1_128Barcode) CalcBounds() (float32, float32) {
+	if g.encodedText == "" {
+		return 0, 0
+	}
+	return linearPatternCalcBounds(g)
+}
+
+// ── ITF14Barcode — CalcBounds ────────────────────────────────────────────────
+
+// CalcBounds returns the natural width of the encoded ITF-14 symbol.
+func (i *ITF14Barcode) CalcBounds() (float32, float32) {
+	if i.encodedText == "" {
+		return 0, 0
+	}
+	return linearPatternCalcBounds(i)
+}
+
+// ── DeutscheIdentcodeBarcode — CalcBounds ────────────────────────────────────
+
+// CalcBounds returns the natural width of the encoded Deutsche Identcode symbol.
+func (d *DeutscheIdentcodeBarcode) CalcBounds() (float32, float32) {
+	if d.encodedText == "" {
+		return 0, 0
+	}
+	return linearPatternCalcBounds(d)
+}
+
+// ── DeutscheLeitcodeBarcode — CalcBounds ─────────────────────────────────────
+
+// CalcBounds returns the natural width of the encoded Deutsche Leitcode symbol.
+func (d *DeutscheLeitcodeBarcode) CalcBounds() (float32, float32) {
+	if d.encodedText == "" {
+		return 0, 0
+	}
+	return linearPatternCalcBounds(d)
+}
+
+// ── Supplement2Barcode — CalcBounds ──────────────────────────────────────────
+
+// CalcBounds returns the natural width of the encoded Supplement 2 symbol.
+func (s *Supplement2Barcode) CalcBounds() (float32, float32) {
+	if s.encodedText == "" {
+		return 0, 0
+	}
+	return linearPatternCalcBounds(s)
+}
+
+// ── Supplement5Barcode — CalcBounds ──────────────────────────────────────────
+
+// CalcBounds returns the natural width of the encoded Supplement 5 symbol.
+func (s *Supplement5Barcode) CalcBounds() (float32, float32) {
+	if s.encodedText == "" {
+		return 0, 0
+	}
+	return linearPatternCalcBounds(s)
+}
+
+// ── QRBarcode — CalcBounds ───────────────────────────────────────────────────
+// C# BarcodeQR.CalcBounds() (BarcodeQR.cs:296-300): matrix.Width * PixelSize, matrix.Height * PixelSize
+// PixelSize = 4 for QR.
+
+// CalcBounds returns the natural (width, height) of the encoded QR Code symbol.
+func (q *QRBarcode) CalcBounds() (float32, float32) {
+	if q.encodedText == "" {
+		return 0, 0
+	}
+	_, rows, cols := q.GetMatrix()
+	const pixelSize = 4
+	return float32(cols) * pixelSize, float32(rows) * pixelSize
+}
+
+// ── DataMatrixBarcode — CalcBounds ───────────────────────────────────────────
+// C# BarcodeDatamatrix.CalcBounds() (BarcodeDatamatrix.cs:1096-1100): width * PixelSize, height * PixelSize
+// Default PixelSize = 3 for DataMatrix.
+
+// CalcBounds returns the natural (width, height) of the encoded DataMatrix symbol.
+func (d *DataMatrixBarcode) CalcBounds() (float32, float32) {
+	if d.encodedText == "" {
+		return 0, 0
+	}
+	_, rows, cols := d.GetMatrix()
+	const pixelSize = 3
+	return float32(cols) * pixelSize, float32(rows) * pixelSize
+}
+
+// ── AztecBarcode — CalcBounds ────────────────────────────────────────────────
+// C# BarcodeAztec.CalcBounds() (BarcodeAztec.cs:45-49): matrix.Width * PIXEL_SIZE, matrix.Height * PIXEL_SIZE
+// PIXEL_SIZE = 4.
+
+// CalcBounds returns the natural (width, height) of the encoded Aztec symbol.
+func (a *AztecBarcode) CalcBounds() (float32, float32) {
+	if a.encodedText == "" {
+		return 0, 0
+	}
+	_, rows, cols := a.GetMatrix()
+	const pixelSize = 4
+	return float32(cols) * pixelSize, float32(rows) * pixelSize
+}
+
+// ── PDF417Barcode — CalcBounds ───────────────────────────────────────────────
+// C# BarcodePDF417.CalcBounds() (BarcodePDF417.cs:1515-1519): bitColumns * PixelSize.Width, codeRows * PixelSize.Height
+// Default PixelSize = {1, 2} for PDF417.
+
+// CalcBounds returns the natural (width, height) of the encoded PDF417 symbol.
+func (p *PDF417Barcode) CalcBounds() (float32, float32) {
+	if p.encodedText == "" {
+		return 0, 0
+	}
+	_, rows, cols := p.GetMatrix()
+	const pixelW, pixelH = 1, 2
+	return float32(cols) * pixelW, float32(rows) * pixelH
+}
+
+// ── GS1DatamatrixBarcode — CalcBounds ────────────────────────────────────────
+// GS1 DataMatrix uses the same pixel size as DataMatrix (3).
+
+// CalcBounds returns the natural (width, height) of the encoded GS1 DataMatrix symbol.
+func (g *GS1DatamatrixBarcode) CalcBounds() (float32, float32) {
+	if g.encodedText == "" {
+		return 0, 0
+	}
+	_, rows, cols := g.GetMatrix()
+	const pixelSize = 3
+	return float32(cols) * pixelSize, float32(rows) * pixelSize
+}
+
+// ── SwissQRBarcode — CalcBounds ──────────────────────────────────────────────
+// Swiss QR Code uses the same pixel size as QR Code (4).
+
+// CalcBounds returns the natural (width, height) of the encoded Swiss QR symbol.
+func (s *SwissQRBarcode) CalcBounds() (float32, float32) {
+	if s.encodedText == "" {
+		return 0, 0
+	}
+	_, rows, cols := s.GetMatrix()
+	const pixelSize = 4
+	return float32(cols) * pixelSize, float32(rows) * pixelSize
+}
+
+// ── PharmacodeBarcode — CalcBounds ───────────────────────────────────────────
+
+// CalcBounds returns the natural width of the encoded Pharmacode symbol.
+func (b *PharmacodeBarcode) CalcBounds() (float32, float32) {
+	if b.encodedText == "" {
+		return 0, 0
+	}
+	return linearPatternCalcBounds(b)
+}
+
+// ── PlesseyBarcode — CalcBounds ──────────────────────────────────────────────
+
+// CalcBounds returns the natural width of the encoded Plessey symbol.
+func (b *PlesseyBarcode) CalcBounds() (float32, float32) {
+	if b.encodedText == "" {
+		return 0, 0
+	}
+	return linearPatternCalcBounds(b)
+}
+
+// ── PostNetBarcode — CalcBounds ──────────────────────────────────────────────
+
+// CalcBounds returns the natural width of the encoded POSTNET symbol.
+func (b *PostNetBarcode) CalcBounds() (float32, float32) {
+	if b.encodedText == "" {
+		return 0, 0
+	}
+	return linearPatternCalcBounds(b)
+}
+
+// ── JapanPost4StateBarcode — CalcBounds ──────────────────────────────────────
+
+// CalcBounds returns the natural width of the encoded Japan Post 4-state symbol.
+func (j *JapanPost4StateBarcode) CalcBounds() (float32, float32) {
+	if j.encodedText == "" {
+		return 0, 0
+	}
+	return linearPatternCalcBounds(j)
+}

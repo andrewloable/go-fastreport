@@ -1268,6 +1268,550 @@ func TestSVGExporter_TextObject_BorderDash(t *testing.T) {
 	}
 }
 
+// ── renderObject: negative width/height clamping ──────────────────────────────
+
+func TestSVGExporter_RenderObject_NegativeWidth_ClampedToZero(t *testing.T) {
+	pp := buildPageWithObjects([]preview.PreparedObject{
+		{
+			Name: "NW", Kind: preview.ObjectTypeText,
+			Left: 10, Top: 10, Width: -50, Height: 20,
+			Text: "NegW",
+		},
+	})
+	out := exportSVG(t, pp)
+	// Should render without error and clamp width to 0
+	if !strings.Contains(out, `width="0.00"`) {
+		t.Errorf("negative width: expected width clamped to 0.00")
+	}
+}
+
+func TestSVGExporter_RenderObject_NegativeHeight_ClampedToZero(t *testing.T) {
+	pp := buildPageWithObjects([]preview.PreparedObject{
+		{
+			Name: "NH", Kind: preview.ObjectTypeText,
+			Left: 10, Top: 10, Width: 100, Height: -30,
+			Text: "NegH",
+		},
+	})
+	out := exportSVG(t, pp)
+	// Should render without error and clamp height to 0
+	if !strings.Contains(out, `height="0.00"`) {
+		t.Errorf("negative height: expected height clamped to 0.00")
+	}
+}
+
+// ── renderShape: border line overrides ────────────────────────────────────────
+
+func TestSVGExporter_ShapeObject_WithBorderLineOverride(t *testing.T) {
+	bl := &style.BorderLine{
+		Color: color.RGBA{R: 128, G: 0, B: 255, A: 200},
+		Width: 3,
+	}
+	pp := buildPageWithObjects([]preview.PreparedObject{
+		{
+			Name:      "S", Kind: preview.ObjectTypeShape,
+			Left:      10, Top: 10, Width: 80, Height: 60,
+			ShapeKind: 0,
+			Border: style.Border{
+				Lines: [4]*style.BorderLine{bl, nil, nil, nil},
+			},
+		},
+	})
+	out := exportSVG(t, pp)
+	if !strings.Contains(out, "#8000FF") {
+		t.Errorf("shape border color: expected #8000FF")
+	}
+	if !strings.Contains(out, `stroke-width="3.00"`) {
+		t.Errorf("shape border width: expected stroke-width=3.00")
+	}
+}
+
+func TestSVGExporter_ShapeObject_Ellipse_WithFill(t *testing.T) {
+	pp := buildPageWithObjects([]preview.PreparedObject{
+		{
+			Name:      "S", Kind: preview.ObjectTypeShape,
+			Left:      0, Top: 0, Width: 100, Height: 80,
+			ShapeKind: 2, // ellipse
+			FillColor: color.RGBA{R: 255, G: 0, B: 128, A: 200},
+		},
+	})
+	out := exportSVG(t, pp)
+	if !strings.Contains(out, "#FF0080") {
+		t.Errorf("ellipse fill: expected #FF0080")
+	}
+	if !strings.Contains(out, "fill-opacity") {
+		t.Errorf("ellipse fill: expected fill-opacity attribute")
+	}
+}
+
+func TestSVGExporter_ShapeObject_Triangle_WithFill(t *testing.T) {
+	pp := buildPageWithObjects([]preview.PreparedObject{
+		{
+			Name:      "S", Kind: preview.ObjectTypeShape,
+			Left:      0, Top: 0, Width: 60, Height: 50,
+			ShapeKind: 3, // triangle
+			FillColor: color.RGBA{R: 0, G: 200, B: 100, A: 255},
+		},
+	})
+	out := exportSVG(t, pp)
+	if !strings.Contains(out, "#00C864") {
+		t.Errorf("triangle fill: expected #00C864")
+	}
+}
+
+func TestSVGExporter_ShapeObject_Diamond_WithFill(t *testing.T) {
+	pp := buildPageWithObjects([]preview.PreparedObject{
+		{
+			Name:      "S", Kind: preview.ObjectTypeShape,
+			Left:      0, Top: 0, Width: 60, Height: 50,
+			ShapeKind: 4, // diamond
+			FillColor: color.RGBA{R: 100, G: 100, B: 200, A: 255},
+		},
+	})
+	out := exportSVG(t, pp)
+	if !strings.Contains(out, "#6464C8") {
+		t.Errorf("diamond fill: expected #6464C8")
+	}
+}
+
+func TestSVGExporter_ShapeObject_RoundRect_ZeroCurve(t *testing.T) {
+	pp := buildPageWithObjects([]preview.PreparedObject{
+		{
+			Name:       "S", Kind: preview.ObjectTypeShape,
+			Left:       0, Top: 0, Width: 100, Height: 50,
+			ShapeKind:  1, // round rectangle
+			ShapeCurve: -5,
+		},
+	})
+	out := exportSVG(t, pp)
+	// Negative curve → clamped to 0
+	if !strings.Contains(out, `rx="0.00"`) {
+		t.Errorf("round rect zero curve: expected rx=0.00")
+	}
+}
+
+// ── renderPolyShape: border line overrides ────────────────────────────────────
+
+func TestSVGExporter_PolyLine_WithBorderLineOverride(t *testing.T) {
+	bl := &style.BorderLine{
+		Color: color.RGBA{R: 0, G: 128, B: 0, A: 255},
+		Width: 3,
+	}
+	pp := buildPageWithObjects([]preview.PreparedObject{
+		{
+			Name:   "PL", Kind: preview.ObjectTypePolyLine,
+			Left:   0, Top: 0, Width: 100, Height: 50,
+			Points: [][2]float32{{0, 0}, {50, 25}, {100, 0}},
+			Border: style.Border{
+				Lines: [4]*style.BorderLine{bl, nil, nil, nil},
+			},
+		},
+	})
+	out := exportSVG(t, pp)
+	if !strings.Contains(out, "#008000") {
+		t.Errorf("polyline border color: expected #008000")
+	}
+	if !strings.Contains(out, `stroke-width="3.00"`) {
+		t.Errorf("polyline border width: expected stroke-width=3.00")
+	}
+}
+
+func TestSVGExporter_Polygon_WithBorderLineOverride(t *testing.T) {
+	bl := &style.BorderLine{
+		Color: color.RGBA{R: 255, G: 128, B: 0, A: 255},
+		Width: 2,
+	}
+	pp := buildPageWithObjects([]preview.PreparedObject{
+		{
+			Name:      "PG", Kind: preview.ObjectTypePolygon,
+			Left:      0, Top: 0, Width: 100, Height: 80,
+			Points:    [][2]float32{{50, 0}, {100, 80}, {0, 80}},
+			FillColor: color.RGBA{R: 0, G: 0, B: 255, A: 128},
+			Border: style.Border{
+				Lines: [4]*style.BorderLine{bl, nil, nil, nil},
+			},
+		},
+	})
+	out := exportSVG(t, pp)
+	if !strings.Contains(out, "#FF8000") {
+		t.Errorf("polygon border color: expected #FF8000")
+	}
+	if !strings.Contains(out, "#0000FF") {
+		t.Errorf("polygon fill: expected #0000FF")
+	}
+}
+
+// ── renderBorderLines: all line styles ────────────────────────────────────────
+
+func TestSVGExporter_BorderLineStyle_Dot(t *testing.T) {
+	bl := &style.BorderLine{
+		Color: color.RGBA{R: 0, G: 0, B: 0, A: 255},
+		Width: 1,
+		Style: style.LineStyleDot,
+	}
+	pp := buildPageWithObjects([]preview.PreparedObject{
+		{
+			Name: "T", Kind: preview.ObjectTypeText,
+			Left: 0, Top: 0, Width: 100, Height: 30,
+			Text: "Dotted",
+			Border: style.Border{
+				VisibleLines: style.BorderLinesTop,
+				Lines:        [4]*style.BorderLine{nil, bl, nil, nil},
+			},
+		},
+	})
+	out := exportSVG(t, pp)
+	// LineStyleDot: dasharray = "lw, lw*2" = "1.00, 2.00"
+	if !strings.Contains(out, "stroke-dasharray") {
+		t.Errorf("dot border: expected stroke-dasharray")
+	}
+}
+
+func TestSVGExporter_BorderLineStyle_DashDot(t *testing.T) {
+	bl := &style.BorderLine{
+		Color: color.RGBA{R: 0, G: 0, B: 0, A: 255},
+		Width: 1,
+		Style: style.LineStyleDashDot,
+	}
+	pp := buildPageWithObjects([]preview.PreparedObject{
+		{
+			Name: "T", Kind: preview.ObjectTypeText,
+			Left: 0, Top: 0, Width: 100, Height: 30,
+			Text: "DashDot",
+			Border: style.Border{
+				VisibleLines: style.BorderLinesTop,
+				Lines:        [4]*style.BorderLine{nil, bl, nil, nil},
+			},
+		},
+	})
+	out := exportSVG(t, pp)
+	if !strings.Contains(out, "stroke-dasharray") {
+		t.Errorf("dashdot border: expected stroke-dasharray")
+	}
+}
+
+func TestSVGExporter_BorderLineStyle_DashDotDot(t *testing.T) {
+	bl := &style.BorderLine{
+		Color: color.RGBA{R: 0, G: 0, B: 0, A: 255},
+		Width: 1,
+		Style: style.LineStyleDashDotDot,
+	}
+	pp := buildPageWithObjects([]preview.PreparedObject{
+		{
+			Name: "T", Kind: preview.ObjectTypeText,
+			Left: 0, Top: 0, Width: 100, Height: 30,
+			Text: "DashDotDot",
+			Border: style.Border{
+				VisibleLines: style.BorderLinesTop,
+				Lines:        [4]*style.BorderLine{nil, bl, nil, nil},
+			},
+		},
+	})
+	out := exportSVG(t, pp)
+	if !strings.Contains(out, "stroke-dasharray") {
+		t.Errorf("dashdotdot border: expected stroke-dasharray")
+	}
+}
+
+func TestSVGExporter_BorderLines_NilLine_DefaultsApplied(t *testing.T) {
+	// VisibleLines set but Lines[idx] is nil → should still render with defaults
+	pp := buildPageWithObjects([]preview.PreparedObject{
+		{
+			Name: "T", Kind: preview.ObjectTypeText,
+			Left: 0, Top: 0, Width: 100, Height: 30,
+			Text: "NilLine",
+			Border: style.Border{
+				VisibleLines: style.BorderLinesLeft,
+				Lines:        [4]*style.BorderLine{nil, nil, nil, nil},
+			},
+		},
+	})
+	out := exportSVG(t, pp)
+	// Should still render a line with default color (black) and width (1)
+	if !strings.Contains(out, `stroke="#000000"`) {
+		t.Errorf("nil border line: expected default black stroke")
+	}
+}
+
+// ── renderWatermarkImage: edge cases ──────────────────────────────────────────
+
+func TestSVGExporter_WatermarkImage_NegativeTransparency_ClampedToZero(t *testing.T) {
+	pngData := makePNG(10, 10)
+	pp := preview.New()
+	pp.AddPage(794, 1123, 1)
+	blobIdx := pp.BlobStore.Add("wmneg", pngData)
+	_ = pp.AddBand(&preview.PreparedBand{Name: "B", Top: 0, Height: 40})
+	pg := pp.GetPage(0)
+	pg.Watermark = &preview.PreparedWatermark{
+		Enabled:           true,
+		ImageBlobIdx:      blobIdx,
+		ImageTransparency: 1.5, // > 1.0 means opacity would be negative → clamped to 0
+	}
+	out := exportSVG(t, pp)
+	if !strings.Contains(out, `opacity="0.000"`) {
+		t.Errorf("negative opacity: expected opacity clamped to 0.000")
+	}
+}
+
+func TestSVGExporter_WatermarkImage_DefaultImageSize(t *testing.T) {
+	pngData := makePNG(10, 10)
+	pp := preview.New()
+	pp.AddPage(794, 1123, 1)
+	blobIdx := pp.BlobStore.Add("wmdefault", pngData)
+	_ = pp.AddBand(&preview.PreparedBand{Name: "B", Top: 0, Height: 40})
+	pg := pp.GetPage(0)
+	pg.Watermark = &preview.PreparedWatermark{
+		Enabled:      true,
+		ImageBlobIdx: blobIdx,
+		ImageSize:    preview.WatermarkImageSizeNormal, // default case
+	}
+	out := exportSVG(t, pp)
+	if !strings.Contains(out, `preserveAspectRatio="xMidYMid meet"`) {
+		t.Errorf("default image size: expected preserveAspectRatio=xMidYMid meet")
+	}
+}
+
+func TestSVGExporter_WatermarkImage_NilPP(t *testing.T) {
+	// Test that renderWatermarkImage returns early when pp is nil
+	// This is handled internally by export flow, but we verify with
+	// a watermark that has ImageBlobIdx >= 0 but no actual blob data
+	pp := preview.New()
+	pp.AddPage(794, 1123, 1)
+	_ = pp.AddBand(&preview.PreparedBand{Name: "B", Top: 0, Height: 40})
+	pg := pp.GetPage(0)
+	pg.Watermark = &preview.PreparedWatermark{
+		Enabled:      true,
+		ImageBlobIdx: 999, // index out of range → Get returns nil
+	}
+	out := exportSVG(t, pp)
+	// Should not crash and should not emit <image>
+	if strings.Contains(out, `<image `) {
+		t.Errorf("invalid blob index: should not emit <image>")
+	}
+}
+
+// ── xmlEscape: quote and apostrophe branches ──────────────────────────────────
+
+func TestSVGExporter_XmlEscape_QuotesAndApostrophe(t *testing.T) {
+	pp := buildPageWithObjects([]preview.PreparedObject{
+		{
+			Name: "T", Kind: preview.ObjectTypeText,
+			Left: 0, Top: 0, Width: 200, Height: 20,
+			Text: `He said "hello" & she said 'goodbye'`,
+		},
+	})
+	out := exportSVG(t, pp)
+	if !strings.Contains(out, "&quot;") {
+		t.Errorf("XML escape: expected &quot; for double quote")
+	}
+	if !strings.Contains(out, "&apos;") {
+		t.Errorf("XML escape: expected &apos; for apostrophe")
+	}
+}
+
+// ── imageMIME: various image format detection ─────────────────────────────────
+
+func TestSVGExporter_PictureObject_JPEG(t *testing.T) {
+	jpegData := []byte{0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10} // JPEG magic bytes
+	pp := preview.New()
+	pp.AddPage(794, 1123, 1)
+	blobIdx := pp.BlobStore.Add("jpg", jpegData)
+	_ = pp.AddBand(&preview.PreparedBand{
+		Name:   "Band",
+		Top:    0,
+		Height: 100,
+		Objects: []preview.PreparedObject{
+			{
+				Name:    "Pic", Kind: preview.ObjectTypePicture,
+				Left:    0, Top: 0, Width: 80, Height: 80,
+				BlobIdx: blobIdx,
+			},
+		},
+	})
+	out := exportSVG(t, pp)
+	if !strings.Contains(out, "data:image/jpeg;base64,") {
+		t.Errorf("JPEG: expected data:image/jpeg MIME type")
+	}
+}
+
+func TestSVGExporter_PictureObject_GIF(t *testing.T) {
+	gifData := []byte{0x47, 0x49, 0x46, 0x38, 0x39, 0x61} // GIF89a magic bytes
+	pp := preview.New()
+	pp.AddPage(794, 1123, 1)
+	blobIdx := pp.BlobStore.Add("gif", gifData)
+	_ = pp.AddBand(&preview.PreparedBand{
+		Name:   "Band",
+		Top:    0,
+		Height: 100,
+		Objects: []preview.PreparedObject{
+			{
+				Name:    "Pic", Kind: preview.ObjectTypePicture,
+				Left:    0, Top: 0, Width: 80, Height: 80,
+				BlobIdx: blobIdx,
+			},
+		},
+	})
+	out := exportSVG(t, pp)
+	if !strings.Contains(out, "data:image/gif;base64,") {
+		t.Errorf("GIF: expected data:image/gif MIME type")
+	}
+}
+
+func TestSVGExporter_PictureObject_BMP(t *testing.T) {
+	bmpData := []byte{0x42, 0x4D, 0x00, 0x00, 0x00, 0x00} // BMP magic bytes
+	pp := preview.New()
+	pp.AddPage(794, 1123, 1)
+	blobIdx := pp.BlobStore.Add("bmp", bmpData)
+	_ = pp.AddBand(&preview.PreparedBand{
+		Name:   "Band",
+		Top:    0,
+		Height: 100,
+		Objects: []preview.PreparedObject{
+			{
+				Name:    "Pic", Kind: preview.ObjectTypePicture,
+				Left:    0, Top: 0, Width: 80, Height: 80,
+				BlobIdx: blobIdx,
+			},
+		},
+	})
+	out := exportSVG(t, pp)
+	if !strings.Contains(out, "data:image/bmp;base64,") {
+		t.Errorf("BMP: expected data:image/bmp MIME type")
+	}
+}
+
+func TestSVGExporter_PictureObject_TIFF_LittleEndian(t *testing.T) {
+	tiffData := []byte{0x49, 0x49, 0x2A, 0x00, 0x08, 0x00} // TIFF LE magic bytes
+	pp := preview.New()
+	pp.AddPage(794, 1123, 1)
+	blobIdx := pp.BlobStore.Add("tiff", tiffData)
+	_ = pp.AddBand(&preview.PreparedBand{
+		Name:   "Band",
+		Top:    0,
+		Height: 100,
+		Objects: []preview.PreparedObject{
+			{
+				Name:    "Pic", Kind: preview.ObjectTypePicture,
+				Left:    0, Top: 0, Width: 80, Height: 80,
+				BlobIdx: blobIdx,
+			},
+		},
+	})
+	out := exportSVG(t, pp)
+	if !strings.Contains(out, "data:image/tiff;base64,") {
+		t.Errorf("TIFF LE: expected data:image/tiff MIME type")
+	}
+}
+
+func TestSVGExporter_PictureObject_TIFF_BigEndian(t *testing.T) {
+	tiffData := []byte{0x4D, 0x4D, 0x00, 0x2A, 0x00, 0x00} // TIFF BE magic bytes
+	pp := preview.New()
+	pp.AddPage(794, 1123, 1)
+	blobIdx := pp.BlobStore.Add("tiffbe", tiffData)
+	_ = pp.AddBand(&preview.PreparedBand{
+		Name:   "Band",
+		Top:    0,
+		Height: 100,
+		Objects: []preview.PreparedObject{
+			{
+				Name:    "Pic", Kind: preview.ObjectTypePicture,
+				Left:    0, Top: 0, Width: 80, Height: 80,
+				BlobIdx: blobIdx,
+			},
+		},
+	})
+	out := exportSVG(t, pp)
+	if !strings.Contains(out, "data:image/tiff;base64,") {
+		t.Errorf("TIFF BE: expected data:image/tiff MIME type")
+	}
+}
+
+func TestSVGExporter_PictureObject_SVGContent(t *testing.T) {
+	svgData := []byte(`<svg xmlns="http://www.w3.org/2000/svg"><rect/></svg>`)
+	pp := preview.New()
+	pp.AddPage(794, 1123, 1)
+	blobIdx := pp.BlobStore.Add("svgimg", svgData)
+	_ = pp.AddBand(&preview.PreparedBand{
+		Name:   "Band",
+		Top:    0,
+		Height: 100,
+		Objects: []preview.PreparedObject{
+			{
+				Name:    "Pic", Kind: preview.ObjectTypePicture,
+				Left:    0, Top: 0, Width: 80, Height: 80,
+				BlobIdx: blobIdx,
+			},
+		},
+	})
+	out := exportSVG(t, pp)
+	if !strings.Contains(out, "data:image/svg+xml;base64,") {
+		t.Errorf("SVG content: expected data:image/svg+xml MIME type")
+	}
+}
+
+func TestSVGExporter_PictureObject_XMLContent(t *testing.T) {
+	xmlData := []byte(`<?xml version="1.0"?><svg><circle/></svg>`)
+	pp := preview.New()
+	pp.AddPage(794, 1123, 1)
+	blobIdx := pp.BlobStore.Add("xmlsvg", xmlData)
+	_ = pp.AddBand(&preview.PreparedBand{
+		Name:   "Band",
+		Top:    0,
+		Height: 100,
+		Objects: []preview.PreparedObject{
+			{
+				Name:    "Pic", Kind: preview.ObjectTypePicture,
+				Left:    0, Top: 0, Width: 80, Height: 80,
+				BlobIdx: blobIdx,
+			},
+		},
+	})
+	out := exportSVG(t, pp)
+	if !strings.Contains(out, "data:image/svg+xml;base64,") {
+		t.Errorf("XML SVG content: expected data:image/svg+xml MIME type")
+	}
+}
+
+func TestSVGExporter_PictureObject_ShortData_FallbackPNG(t *testing.T) {
+	// Data too short for any magic byte detection → fallback to image/png
+	shortData := []byte{0x01, 0x02}
+	pp := preview.New()
+	pp.AddPage(794, 1123, 1)
+	blobIdx := pp.BlobStore.Add("short", shortData)
+	_ = pp.AddBand(&preview.PreparedBand{
+		Name:   "Band",
+		Top:    0,
+		Height: 100,
+		Objects: []preview.PreparedObject{
+			{
+				Name:    "Pic", Kind: preview.ObjectTypePicture,
+				Left:    0, Top: 0, Width: 80, Height: 80,
+				BlobIdx: blobIdx,
+			},
+		},
+	})
+	out := exportSVG(t, pp)
+	if !strings.Contains(out, "data:image/png;base64,") {
+		t.Errorf("short data: expected fallback data:image/png MIME type")
+	}
+}
+
+// ── Barcode object type (not handled → default placeholder) ───────────────────
+
+func TestSVGExporter_BarcodeObject_DefaultPlaceholder(t *testing.T) {
+	pp := buildPageWithObjects([]preview.PreparedObject{
+		{
+			Name: "BC", Kind: preview.ObjectTypeBarcode,
+			Left: 0, Top: 0, Width: 100, Height: 40,
+		},
+	})
+	out := exportSVG(t, pp)
+	// Barcode is not explicitly handled → falls through to default placeholder
+	if !strings.Contains(out, `fill="none"`) {
+		t.Errorf("barcode object: expected default placeholder with fill=none")
+	}
+}
+
 // helper
 func min(a, b int) int {
 	if a < b {

@@ -81,7 +81,7 @@ func TestCode128BBarcode_Encode_Empty(t *testing.T) {
 func TestCode128CBarcode_Encode_NonDigits(t *testing.T) {
 	b := barcode.NewCode128CBarcode()
 	// Code128C (after padding) fails if content has non-digit pair.
-	// Actually boombuler Code128 auto-selects code set; this might succeed.
+	// The native Code128 encoder auto-selects code set; this might succeed.
 	// Just exercise the path.
 	err := b.Encode("AB")
 	if err != nil {

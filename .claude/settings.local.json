@@ -69,7 +69,13 @@
       "Bash(git -C /Volumes/mandark-1Tb/projects/loabletech/go-fastreport/.claude/worktrees/agent-a1a1915a log --oneline -3)",
       "Bash(git -C /Volumes/mandark-1Tb/projects/loabletech/go-fastreport/.claude/worktrees/agent-a1a1915a diff --stat)",
       "Bash(git worktree:*)",
-      "Bash(git branch:*)"
+      "Bash(git branch:*)",
+      "Bash(go mod:*)",
+      "Bash(sort -t'%' -k2 -n)",
+      "Bash(sort -t: -k2 -n)",
+      "Bash(head -20 grep -n \"CalcBounds\\\\|PixelSize\\\\|pixelSize\" /Volumes/mandark-1Tb/projects/loabletech/go-fastreport/original-dotnet/FastReport.Base/Barcode/BarcodeQR.cs)",
+      "Bash(head -10 grep -n \"CalcBounds\\\\|PixelSize\\\\|pixelSize\" /Volumes/mandark-1Tb/projects/loabletech/go-fastreport/original-dotnet/FastReport.Base/Barcode/BarcodeDatamatrix.cs)",
+      "Bash(head -10 grep -rn \"func New.*HTML\\\\|func New.*Export\" /Volumes/mandark-1Tb/projects/loabletech/go-fastreport/export/html/*.go)"
     ]
   }
 }

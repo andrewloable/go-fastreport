@@ -1,15 +1,13 @@
 // Package qr provides QR Code barcode generation for go-fastreport.
-// It is backed by the pure-Go github.com/boombuler/barcode library.
+// Uses the native Go QR encoder from the parent barcode package.
 package qr
 
 import (
 	"fmt"
 	"image"
 	"image/color"
-	"image/draw"
 
-	"github.com/boombuler/barcode"
-	"github.com/boombuler/barcode/qr"
+	"github.com/andrewloable/go-fastreport/barcode"
 )
 
 // ErrorCorrectionLevel controls the QR error-correction capacity.
@@ -25,23 +23,6 @@ const (
 	// ECLevelH recovers up to 30% of data.
 	ECLevelH ErrorCorrectionLevel = "H"
 )
-
-// toECLevel converts the string level to the boombuler ErrorCorrectionLevel.
-func toECLevel(level ErrorCorrectionLevel) qr.ErrorCorrectionLevel {
-	switch level {
-	case ECLevelL:
-		return qr.L
-	case ECLevelQ:
-		return qr.Q
-	case ECLevelH:
-		return qr.H
-	default: // ECLevelM and anything unrecognised
-		return qr.M
-	}
-}
-
-// scaleBarcode is the barcode.Scale function, replaceable in tests.
-var scaleBarcode = barcode.Scale
 
 // Encoder generates QR Code images from text content.
 type Encoder struct {
@@ -66,7 +47,6 @@ func NewEncoder() *Encoder {
 }
 
 // Encode generates a QR Code image for text at the given size in pixels.
-// The returned image is an NRGBA image of size×size pixels.
 func (e *Encoder) Encode(text string, size int) (image.Image, error) {
 	if text == "" {
 		return nil, fmt.Errorf("qr: text must not be empty")
@@ -75,56 +55,38 @@ func (e *Encoder) Encode(text string, size int) (image.Image, error) {
 		return nil, fmt.Errorf("qr: size must be positive, got %d", size)
 	}
 
-	// Generate the QR code using boombuler/barcode.
-	bc, err := qr.Encode(text, toECLevel(e.ECLevel), qr.Auto)
-	if err != nil {
+	bc := barcode.NewQRBarcode()
+	bc.ErrorCorrection = string(e.ECLevel)
+	if err := bc.Encode(text); err != nil {
 		return nil, fmt.Errorf("qr encode %q: %w", text, err)
 	}
-
-	// Scale to the requested size.
-	scaled, err := scaleBarcode(bc, size, size)
+	img, err := bc.Render(size, size)
 	if err != nil {
-		return nil, fmt.Errorf("qr scale: %w", err)
+		return nil, fmt.Errorf("qr render: %w", err)
 	}
 
-	// Apply foreground/background colours if they differ from the defaults.
 	fg := e.ForegroundColor
 	bg := e.BackgroundColor
 	if isDefaultColors(fg, bg) {
-		return scaled, nil
+		return img, nil
 	}
-	return applyColors(scaled, fg, bg), nil
+	return applyColors(img, fg, bg), nil
 }
 
-// EncodeMatrix generates a QR Code and returns the raw module matrix as a
-// [][]bool (true = dark module).  Useful for tests and custom rendering.
+// EncodeMatrix generates a QR Code and returns the raw module matrix.
 func (e *Encoder) EncodeMatrix(text string) ([][]bool, error) {
 	if text == "" {
 		return nil, fmt.Errorf("qr: text must not be empty")
 	}
-	bc, err := qr.Encode(text, toECLevel(e.ECLevel), qr.Auto)
-	if err != nil {
+	bc := barcode.NewQRBarcode()
+	bc.ErrorCorrection = string(e.ECLevel)
+	if err := bc.Encode(text); err != nil {
 		return nil, fmt.Errorf("qr encode %q: %w", text, err)
 	}
-
-	bounds := bc.Bounds()
-	w := bounds.Max.X - bounds.Min.X
-	h := bounds.Max.Y - bounds.Min.Y
-
-	matrix := make([][]bool, h)
-	for y := 0; y < h; y++ {
-		matrix[y] = make([]bool, w)
-		for x := 0; x < w; x++ {
-			r, g, b, _ := bc.At(x+bounds.Min.X, y+bounds.Min.Y).RGBA()
-			// Dark module = low luminance (black-ish).
-			lum := 0.299*float64(r) + 0.587*float64(g) + 0.114*float64(b)
-			matrix[y][x] = lum < 32767 // mid-point of uint16 range
-		}
-	}
+	matrix, _, _ := bc.GetMatrix()
 	return matrix, nil
 }
 
-// isDefaultColors returns true when fg/bg are the standard black/white.
 func isDefaultColors(fg, bg color.Color) bool {
 	if fg == nil || bg == nil {
 		return true
@@ -136,11 +98,9 @@ func isDefaultColors(fg, bg color.Color) bool {
 	return black && white
 }
 
-// applyColors replaces black pixels with fg and white pixels with bg.
 func applyColors(src image.Image, fg, bg color.Color) image.Image {
 	bounds := src.Bounds()
 	dst := image.NewNRGBA(bounds)
-	draw.Draw(dst, bounds, src, bounds.Min, draw.Src)
 	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
 		for x := bounds.Min.X; x < bounds.Max.X; x++ {
 			r, g, b, _ := src.At(x, y).RGBA()

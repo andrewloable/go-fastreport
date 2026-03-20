@@ -18,7 +18,7 @@ func TestEncode_TooLongContent_Error(t *testing.T) {
 	veryLong := strings.Repeat("X", 4000)
 	_, err := enc.Encode(veryLong, 300)
 	if err == nil {
-		t.Skip("boombuler qr did not error on oversized content; skipping")
+		t.Skip("qr encoder did not error on oversized content; skipping")
 	}
 }
 
@@ -30,6 +30,6 @@ func TestEncodeMatrix_TooLongContent_Error(t *testing.T) {
 	veryLong := strings.Repeat("X", 4000)
 	_, err := enc.EncodeMatrix(veryLong)
 	if err == nil {
-		t.Skip("boombuler qr did not error on oversized content; skipping")
+		t.Skip("qr encoder did not error on oversized content; skipping")
 	}
 }

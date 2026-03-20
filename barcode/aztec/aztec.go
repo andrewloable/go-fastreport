@@ -1,4 +1,5 @@
 // Package aztec provides an Aztec 2D barcode encoder for go-fastreport.
+// Uses the native Go Aztec encoder from the parent barcode package.
 package aztec
 
 import (
@@ -6,8 +7,7 @@ import (
 	"image"
 	"image/color"
 
-	"github.com/boombuler/barcode"
-	"github.com/boombuler/barcode/aztec"
+	"github.com/andrewloable/go-fastreport/barcode"
 )
 
 // Encoder encodes Aztec barcodes.
@@ -31,7 +31,7 @@ func New() *Encoder {
 	}
 }
 
-// Encode encodes text as an Aztec barcode and scales it to size×size pixels.
+// Encode encodes text as an Aztec barcode and scales it to size*size pixels.
 func (e *Encoder) Encode(text string, size int) (image.Image, error) {
 	if text == "" {
 		return nil, fmt.Errorf("aztec: text must not be empty")
@@ -40,23 +40,18 @@ func (e *Encoder) Encode(text string, size int) (image.Image, error) {
 		return nil, fmt.Errorf("aztec: size must be > 0")
 	}
 
-	ecc := e.MinECCPercent
-	if ecc <= 0 {
-		ecc = 23
-	}
-	layers := e.UserSpecifiedLayers
-
-	bc, err := aztec.Encode([]byte(text), ecc, layers)
-	if err != nil {
+	bc := barcode.NewAztecBarcode()
+	bc.MinECCPercent = e.MinECCPercent
+	bc.UserSpecifiedLayers = e.UserSpecifiedLayers
+	if err := bc.Encode(text); err != nil {
 		return nil, fmt.Errorf("aztec: encode %w", err)
 	}
 
-	scaled, err := barcode.Scale(bc, size, size)
+	img, err := bc.Render(size, size)
 	if err != nil {
-		return nil, fmt.Errorf("aztec: scale %w", err)
+		return nil, fmt.Errorf("aztec: render %w", err)
 	}
-
-	return e.applyColors(scaled), nil
+	return e.applyColors(img), nil
 }
 
 // EncodeMatrix returns the raw boolean matrix for the Aztec barcode.
@@ -64,26 +59,13 @@ func (e *Encoder) EncodeMatrix(text string) ([][]bool, error) {
 	if text == "" {
 		return nil, fmt.Errorf("aztec: text must not be empty")
 	}
-	ecc := e.MinECCPercent
-	if ecc <= 0 {
-		ecc = 23
-	}
-	bc, err := aztec.Encode([]byte(text), ecc, e.UserSpecifiedLayers)
-	if err != nil {
+	bc := barcode.NewAztecBarcode()
+	bc.MinECCPercent = e.MinECCPercent
+	bc.UserSpecifiedLayers = e.UserSpecifiedLayers
+	if err := bc.Encode(text); err != nil {
 		return nil, fmt.Errorf("aztec: encode %w", err)
 	}
-	bounds := bc.Bounds()
-	w := bounds.Max.X - bounds.Min.X
-	h := bounds.Max.Y - bounds.Min.Y
-	matrix := make([][]bool, h)
-	for y := 0; y < h; y++ {
-		matrix[y] = make([]bool, w)
-		for x := 0; x < w; x++ {
-			r, g, b, _ := bc.At(bounds.Min.X+x, bounds.Min.Y+y).RGBA()
-			// dark module = black
-			matrix[y][x] = r == 0 && g == 0 && b == 0
-		}
-	}
+	matrix, _, _ := bc.GetMatrix()
 	return matrix, nil
 }
 

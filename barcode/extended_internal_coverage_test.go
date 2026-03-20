@@ -47,7 +47,7 @@ func TestSwissQRBarcode_Render_ReencodeError(t *testing.T) {
 //
 // GS1Barcode.Encode first tries code128.Encode(FNC1+cleaned). If that fails,
 // it tries code128.Encode(cleaned). If that also fails, it returns an error.
-// The boombuler code128 library accepts \u00f1 as FNC1, so this fallback is
+// The Code128 encoder accepts \u00f1 as FNC1, so this fallback is
 // normally unreachable via the public API. We test Render's re-encode path
 // by setting encodedText to something that will cause Encode to fail.
 //
@@ -59,11 +59,11 @@ func TestGS1Barcode_Render_ReencodeError_InternalPath(t *testing.T) {
 	// Set encodedText to a string that causes the re-encode in Render to fail.
 	// After NewGS1Barcode(), encoded==nil. Render calls Encode(encodedText).
 	// We need an encodedText that makes code128.Encode fail.
-	// The boombuler library rejects the empty string ("code128: empty text").
+	// The Code128 encoder rejects the empty string.
 	// Setting encodedText="" leaves us with just \u00f1 (FNC1), which the
 	// library accepts. So we test the re-encode path using a non-empty
 	// encodedText that causes failure.
-	// Note: \u00f1 is always accepted by boombuler, so this test exercises
+	// Note: \u00f1 is always accepted, so this test exercises
 	// the re-encode path but may succeed. We accept both outcomes.
 	b.encodedText = ""
 	img, err := b.Render(100, 50)

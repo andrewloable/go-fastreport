@@ -1,5 +1,5 @@
 // Package code2of5 provides 2-of-5 barcode encoders for go-fastreport.
-// Supports both Interleaved 2-of-5 (ITF) and Standard 2-of-5.
+// Uses the native Go 2-of-5 encoder from the parent barcode package.
 package code2of5
 
 import (
@@ -7,17 +7,12 @@ import (
 	"image"
 	"image/color"
 
-	"github.com/boombuler/barcode"
-	boomtwooffive "github.com/boombuler/barcode/twooffive"
+	"github.com/andrewloable/go-fastreport/barcode"
 )
-
-// scaleBarcode is the barcode.Scale function, replaceable in tests.
-var scaleBarcode = barcode.Scale
 
 // Encoder encodes 2-of-5 barcodes.
 type Encoder struct {
 	// Interleaved selects Interleaved 2-of-5 (ITF) when true (default: true).
-	// When false, Standard (Industrial) 2-of-5 is used.
 	Interleaved bool
 	// ForegroundColor is the bar color (default: black).
 	ForegroundColor color.Color
@@ -34,8 +29,7 @@ func New() *Encoder {
 	}
 }
 
-// Encode encodes numeric content as a 2-of-5 barcode and scales it to width×height pixels.
-// Interleaved 2-of-5 requires an even number of digits.
+// Encode encodes numeric content as a 2-of-5 barcode and renders it to width*height pixels.
 func (e *Encoder) Encode(content string, width, height int) (image.Image, error) {
 	if content == "" {
 		return nil, fmt.Errorf("code2of5: content must not be empty")
@@ -43,19 +37,31 @@ func (e *Encoder) Encode(content string, width, height int) (image.Image, error)
 	if width <= 0 || height <= 0 {
 		return nil, fmt.Errorf("code2of5: width and height must be > 0")
 	}
-	bc, err := boomtwooffive.Encode(content, e.Interleaved)
-	if err != nil {
+
+	var bc interface {
+		Encode(text string) error
+		Render(width, height int) (image.Image, error)
+	}
+
+	if e.Interleaved {
+		b := barcode.NewCode2of5Barcode()
+		b.Interleaved = true
+		bc = b
+	} else {
+		bc = barcode.NewCode2of5IndustrialBarcode()
+	}
+
+	if err := bc.Encode(content); err != nil {
 		return nil, fmt.Errorf("code2of5: %w", err)
 	}
-	scaled, err := scaleBarcode(bc, width, height)
+	img, err := bc.Render(width, height)
 	if err != nil {
-		return nil, fmt.Errorf("code2of5: scale %w", err)
+		return nil, fmt.Errorf("code2of5: render %w", err)
 	}
-	return e.applyColors(scaled), nil
+	return e.applyColors(img), nil
 }
 
 // Validate checks whether content is valid for 2-of-5 encoding (digits only).
-// For interleaved mode, digit count must be even.
 func (e *Encoder) Validate(content string) error {
 	for _, r := range content {
 		if r < '0' || r > '9' {

@@ -1,26 +1,34 @@
 // Package code128 provides Code 128 barcode generation for go-fastreport.
-// It is backed by the pure-Go github.com/boombuler/barcode library.
+// Uses the native Go Code128 encoder from the parent barcode package.
 package code128
 
 import (
 	"fmt"
 	"image"
 
-	"github.com/boombuler/barcode"
-	"github.com/boombuler/barcode/code128"
+	"github.com/andrewloable/go-fastreport/barcode"
 )
 
 // Encoder generates Code 128 barcode images from text content.
-// Code 128 supports the full printable ASCII character set and uses automatic
-// code-set switching (A/B/C) to minimise symbol length.
 type Encoder struct{}
 
 // NewEncoder creates a Code128 Encoder.
 func NewEncoder() *Encoder { return &Encoder{} }
 
+// barcodeEncoder abstracts the barcode encode+render operations for testing.
+type barcodeEncoder interface {
+	Encode(text string) error
+	Render(width, height int) (image.Image, error)
+}
+
+// newBarcode is the factory function used to create the underlying barcode.
+// Tests can override this to inject errors.
+var newBarcode = func() barcodeEncoder {
+	return barcode.NewCode128Barcode()
+}
+
 // Encode generates a Code 128 barcode image for text at the given width and
 // height in pixels.
-// Returns an error when text contains characters not supported by Code 128.
 func (e *Encoder) Encode(text string, width, height int) (image.Image, error) {
 	if text == "" {
 		return nil, fmt.Errorf("code128: text must not be empty")
@@ -29,20 +37,14 @@ func (e *Encoder) Encode(text string, width, height int) (image.Image, error) {
 		return nil, fmt.Errorf("code128: width and height must be positive, got %dx%d", width, height)
 	}
 
-	bc, err := code128.Encode(text)
-	if err != nil {
+	bc := newBarcode()
+	if err := bc.Encode(text); err != nil {
 		return nil, fmt.Errorf("code128 encode %q: %w", text, err)
 	}
-
-	scaled, err := barcode.Scale(bc, width, height)
-	if err != nil {
-		return nil, fmt.Errorf("code128 scale: %w", err)
-	}
-	return scaled, nil
+	return bc.Render(width, height)
 }
 
 // Validate returns an error if text cannot be encoded as Code 128.
-// Code 128 supports printable ASCII (0x20–0x7E) plus some control characters.
 func Validate(text string) error {
 	if text == "" {
 		return fmt.Errorf("code128: text must not be empty")

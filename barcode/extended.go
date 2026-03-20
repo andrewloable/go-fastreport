@@ -5,10 +5,6 @@ import (
 	"image"
 	"image/color"
 	"strings"
-
-	boombarcode "github.com/boombuler/barcode"
-	"github.com/boombuler/barcode/code128"
-	"github.com/boombuler/barcode/qr"
 )
 
 // extended.go implements the barcode types not yet present in barcode.go:
@@ -47,34 +43,35 @@ func NewGS1Barcode() *GS1Barcode {
 // DefaultValue returns a sample GS1-128 value with an AI (01 = GTIN).
 func (g *GS1Barcode) DefaultValue() string { return "(01)12345678901231" }
 
-// Encode encodes text as GS1-128 using Code128 with the GS1 FNC1 prefix.
-// Application identifiers in parentheses are stripped before encoding.
+// Encode validates and stores text for GS1-128 encoding.
+// Application identifiers in parentheses are kept for GetPattern().
 func (g *GS1Barcode) Encode(text string) error {
-	// Strip parenthesised AI notation: "(01)123" → "01123".
-	cleaned := stripGS1Parens(text)
-	// Prepend GS1 FNC1 start (represented as "\x1d" = ASCII GS / Group Separator).
-	encoded := "\u00f1" + cleaned // \u00f1 is FNC1 in Code128B context
-	bc, err := code128.Encode(encoded)
-	if err != nil {
-		// Fall back to plain text.
-		bc, err = code128.Encode(cleaned)
-		if err != nil {
-			return fmt.Errorf("gs1 encode: %w", err)
-		}
-	}
 	g.encodedText = text
-	g.encoded = bc
 	return nil
 }
 
+// GetPattern generates the Code128 bar pattern with GS1 FNC1 prefix.
+// Delegates to the GS1_128Barcode pattern generator which handles
+// AI-formatted text with FNC1 separators.
+func (g *GS1Barcode) GetPattern() (string, error) {
+	helper := &GS1_128Barcode{}
+	helper.encodedText = g.encodedText
+	return helper.GetPattern()
+}
+
+// GetWideBarRatio returns the wide bar ratio for GS1-128.
+func (g *GS1Barcode) GetWideBarRatio() float32 { return 1 }
+
 // Render returns the GS1-128 barcode as a raster image.
 func (g *GS1Barcode) Render(width, height int) (image.Image, error) {
-	if g.encoded == nil {
-		if err := g.Encode(g.encodedText); err != nil {
-			return nil, err
-		}
+	if g.encodedText == "" {
+		return nil, fmt.Errorf("gs1: Encode must be called before Render")
 	}
-	return boombarcode.Scale(g.encoded, width, height)
+	pattern, err := g.GetPattern()
+	if err != nil {
+		return nil, err
+	}
+	return DrawLinearBarcode(pattern, g.encodedText, width, height, true, g.GetWideBarRatio()), nil
 }
 
 func stripGS1Parens(s string) string {
@@ -668,29 +665,39 @@ func (b *SwissQRBarcode) FormatPayload() string {
 	return b.buildPayload()
 }
 
-// Encode encodes the Swiss QR payload string as a QR code.
+// Encode validates and stores the Swiss QR payload string.
 // When text is empty, FormatPayload is called to build the payload.
 func (b *SwissQRBarcode) Encode(text string) error {
 	if text == "" {
 		text = b.FormatPayload()
 	}
-	bc, err := qr.Encode(text, qr.M, qr.Auto)
-	if err != nil {
-		return fmt.Errorf("swissqr encode: %w", err)
-	}
 	b.encodedText = text
-	b.encoded = bc
 	return nil
 }
 
-// Render renders the Swiss QR Code.
+// GetMatrix returns the QR code module matrix for the Swiss QR payload.
+func (b *SwissQRBarcode) GetMatrix() ([][]bool, int, int) {
+	text := b.encodedText
+	if text == "" {
+		text = b.FormatPayload()
+	}
+	matrix, err := encodeQR(text, qrECM)
+	if err != nil || len(matrix) == 0 {
+		return [][]bool{{true}}, 1, 1
+	}
+	n := len(matrix)
+	return matrix, n, n
+}
+
+// Render renders the Swiss QR Code using the native matrix-based renderer.
 func (b *SwissQRBarcode) Render(width, height int) (image.Image, error) {
-	if b.encoded == nil {
+	if b.encodedText == "" {
 		if err := b.Encode(b.encodedText); err != nil {
 			return nil, err
 		}
 	}
-	return boombarcode.Scale(b.encoded, width, height)
+	matrix, rows, cols := b.GetMatrix()
+	return DrawBarcode2D(matrix, rows, cols, width, height), nil
 }
 
 // buildPayload assembles the structured Swiss QR payload from the legacy flat fields.

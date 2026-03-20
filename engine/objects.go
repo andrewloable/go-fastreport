@@ -900,15 +900,21 @@ func (e *ReportEngine) buildPreparedObject(obj report.Base) *preview.PreparedObj
 		}
 		if text != "" && v.Barcode != nil {
 			if err := v.Barcode.Encode(text); err == nil {
-				w := int(geom.Width())
-				h := int(geom.Height())
+				// Apply auto-size so CalcBounds dimensions are reflected in po.Width/Height
+				v.UpdateAutoSize()
+				w := int(v.Width())
+				h := int(v.Height())
 				if w <= 0 {
 					w = 200
 				}
 				if h <= 0 {
 					h = 60
 				}
-				img, err := renderBarcode(v.Barcode, w, h)
+				// Update po dimensions to reflect auto-size
+				po.Width = v.Width()
+				po.Height = v.Height()
+				// Render at 3x resolution matching C#'s highQualitySVG zoom=3 mode
+			img, err := renderBarcode(v.Barcode, w*3, h*3)
 				if err == nil && img != nil && e.preparedPages != nil {
 					var buf bytes.Buffer
 					if encErr := png.Encode(&buf, img); encErr == nil {

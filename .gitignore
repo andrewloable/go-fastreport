@@ -42,3 +42,6 @@ original-dotnet/
 /csharp-validation/FrxToHtml/bin
 /csharp-validation/FrxToHtml/obj
 html-delta
+compare_html_semantic
+compare_html
+compare_html_bytes

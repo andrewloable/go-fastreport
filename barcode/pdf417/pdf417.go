@@ -1,4 +1,5 @@
 // Package pdf417 provides a PDF417 stacked 2D barcode encoder for go-fastreport.
+// Uses the native Go PDF417 encoder from the parent barcode package.
 package pdf417
 
 import (
@@ -6,16 +7,12 @@ import (
 	"image"
 	"image/color"
 
-	"github.com/boombuler/barcode"
-	"github.com/boombuler/barcode/pdf417"
+	"github.com/andrewloable/go-fastreport/barcode"
 )
-
-// scaleBarcode is the barcode.Scale function, replaceable in tests.
-var scaleBarcode = barcode.Scale
 
 // Encoder encodes PDF417 barcodes.
 type Encoder struct {
-	// SecurityLevel controls error correction (1–8, default: 2).
+	// SecurityLevel controls error correction (0-8, default: 2).
 	SecurityLevel byte
 	// ForegroundColor is the module color (default: black).
 	ForegroundColor color.Color
@@ -32,7 +29,7 @@ func New() *Encoder {
 	}
 }
 
-// Encode encodes text as a PDF417 barcode and scales it to width×height pixels.
+// Encode encodes text as a PDF417 barcode and renders it to width*height pixels.
 func (e *Encoder) Encode(text string, width, height int) (image.Image, error) {
 	if text == "" {
 		return nil, fmt.Errorf("pdf417: text must not be empty")
@@ -41,20 +38,17 @@ func (e *Encoder) Encode(text string, width, height int) (image.Image, error) {
 		return nil, fmt.Errorf("pdf417: width and height must be > 0")
 	}
 
-	sl := e.SecurityLevel
-	if sl == 0 {
-		sl = 2
-	}
-
-	bc, err := pdf417.Encode(text, sl)
-	if err != nil {
+	bc := barcode.NewPDF417Barcode()
+	bc.SecurityLevel = int(e.SecurityLevel)
+	if err := bc.Encode(text); err != nil {
 		return nil, fmt.Errorf("pdf417: encode %w", err)
 	}
-	scaled, err := scaleBarcode(bc, width, height)
+
+	img, err := bc.Render(width, height)
 	if err != nil {
-		return nil, fmt.Errorf("pdf417: scale %w", err)
+		return nil, fmt.Errorf("pdf417: render %w", err)
 	}
-	return e.applyColors(scaled), nil
+	return e.applyColors(img), nil
 }
 
 func (e *Encoder) applyColors(img image.Image) image.Image {

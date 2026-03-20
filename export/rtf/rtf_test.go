@@ -614,6 +614,139 @@ func TestRTFExporter_DefaultFontSize_ZeroSize_Defaults12pt(t *testing.T) {
 	}
 }
 
+// ── RTF strip control words — additional branch coverage ──────────────────────
+
+func TestRTFExporter_RTFObject_EscapedLiterals(t *testing.T) {
+	// Exercise the escaped literal branch: \\, \{, \} inside RTF source.
+	// rtfStripControlWords should output the literal chars \, {, } respectively,
+	// which are then re-escaped by rtfEscape.
+	pp := buildPageWithObjects([]preview.PreparedObject{
+		{
+			Name: "R", Kind: preview.ObjectTypeRTF,
+			Left: 0, Top: 0, Width: 200, Height: 40,
+			Text: `{\rtf1 A\\B\{C\}D}`,
+		},
+	})
+	out := exportRTF(t, pp)
+	// After stripping, plain text is: A\B{C}D
+	// rtfEscape then re-escapes: A\\B\{C\}D
+	if !strings.Contains(out, `A\\B\{C\}D`) {
+		t.Errorf("escaped literals: expected A\\\\B\\{C\\}D in output, got: %q", out)
+	}
+}
+
+func TestRTFExporter_RTFObject_HexEncodedByte(t *testing.T) {
+	// Exercise the hex-encoded byte branch: \'41 should produce 'A'.
+	pp := buildPageWithObjects([]preview.PreparedObject{
+		{
+			Name: "R", Kind: preview.ObjectTypeRTF,
+			Left: 0, Top: 0, Width: 200, Height: 40,
+			Text: `{\rtf1 X\'41Y}`,
+		},
+	})
+	out := exportRTF(t, pp)
+	// \'41 = ASCII 'A', so plain text is "XAY"
+	if !strings.Contains(out, "XAY") {
+		t.Errorf("hex byte: expected 'XAY' in output, got: %q", out)
+	}
+}
+
+func TestRTFExporter_RTFObject_HexEncodedZeroByte(t *testing.T) {
+	// Exercise the hex-encoded zero byte branch: \'00 should be skipped (v == 0).
+	pp := buildPageWithObjects([]preview.PreparedObject{
+		{
+			Name: "R", Kind: preview.ObjectTypeRTF,
+			Left: 0, Top: 0, Width: 200, Height: 40,
+			Text: `{\rtf1 P\'00Q}`,
+		},
+	})
+	out := exportRTF(t, pp)
+	// \'00 produces zero byte which is skipped, so plain text is "PQ"
+	if !strings.Contains(out, "PQ") {
+		t.Errorf("hex zero byte: expected 'PQ' in output, got: %q", out)
+	}
+}
+
+func TestRTFExporter_RTFObject_BackslashNewline(t *testing.T) {
+	// Exercise the \<newline> and \<CR> branches.
+	pp := buildPageWithObjects([]preview.PreparedObject{
+		{
+			Name: "R", Kind: preview.ObjectTypeRTF,
+			Left: 0, Top: 0, Width: 200, Height: 40,
+			Text: "{\\rtf1 M\\\nN\\\rO}",
+		},
+	})
+	out := exportRTF(t, pp)
+	// \<newline> and \<CR> are skipped, so plain text is "MNO"
+	if !strings.Contains(out, "MNO") {
+		t.Errorf("backslash newline/CR: expected 'MNO' in output, got: %q", out)
+	}
+}
+
+func TestRTFExporter_RTFObject_TrailingBackslash(t *testing.T) {
+	// Exercise the branch where \ is at the very end of the string (i >= len(s)).
+	pp := buildPageWithObjects([]preview.PreparedObject{
+		{
+			Name: "R", Kind: preview.ObjectTypeRTF,
+			Left: 0, Top: 0, Width: 200, Height: 40,
+			Text: `{\rtf1 Z\`,
+		},
+	})
+	out := exportRTF(t, pp)
+	// Trailing \ at end of input is silently consumed; plain text is "Z"
+	if !strings.Contains(out, "Z") {
+		t.Errorf("trailing backslash: expected 'Z' in output, got: %q", out)
+	}
+}
+
+func TestRTFExporter_RTFObject_NegativeControlParam(t *testing.T) {
+	// Exercise the control word with '-' in its parameter (e.g. \b-1 means bold off).
+	// The '-' is part of the alpha/symbol scan, and the digits follow.
+	pp := buildPageWithObjects([]preview.PreparedObject{
+		{
+			Name: "R", Kind: preview.ObjectTypeRTF,
+			Left: 0, Top: 0, Width: 200, Height: 40,
+			Text: `{\rtf1\b-1 plain text here}`,
+		},
+	})
+	out := exportRTF(t, pp)
+	// \b-1 is a control word with negative param; should be stripped, leaving "plain text here"
+	if !strings.Contains(out, "plain text here") {
+		t.Errorf("negative control param: expected 'plain text here' in output, got: %q", out)
+	}
+}
+
+func TestRTFExporter_RTFObject_NestedGroups(t *testing.T) {
+	// Exercise deeply nested braces with mixed content.
+	pp := buildPageWithObjects([]preview.PreparedObject{
+		{
+			Name: "R", Kind: preview.ObjectTypeRTF,
+			Left: 0, Top: 0, Width: 200, Height: 40,
+			Text: `{\rtf1{\fonttbl{\f0 Arial;}}{\colortbl;\red0\green0\blue0;} Hello Nested}`,
+		},
+	})
+	out := exportRTF(t, pp)
+	if !strings.Contains(out, "Hello Nested") {
+		t.Errorf("nested groups: expected 'Hello Nested' in output, got: %q", out)
+	}
+}
+
+func TestRTFExporter_RTFObject_HexTruncated(t *testing.T) {
+	// Exercise the hex branch where there aren't enough chars after \' (truncated input).
+	pp := buildPageWithObjects([]preview.PreparedObject{
+		{
+			Name: "R", Kind: preview.ObjectTypeRTF,
+			Left: 0, Top: 0, Width: 200, Height: 40,
+			Text: `{\rtf1 W\'`,
+		},
+	})
+	out := exportRTF(t, pp)
+	// Truncated hex sequence: \'<EOF> — should not crash, "W" should appear
+	if !strings.Contains(out, "W") {
+		t.Errorf("truncated hex: expected 'W' in output, got: %q", out)
+	}
+}
+
 // helper: min for old Go compatibility
 func min(a, b int) int {
 	if a < b {

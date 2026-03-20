@@ -201,23 +201,21 @@ func gs1ParseGS1(code string) string {
 
 func (b *GS1_128Barcode) GetPattern() (string, error) {
 	text := b.encodedText
-	var msg string
+	var raw string
 	if strings.HasPrefix(text, "(") {
 		parsed := gs1ParseGS1(text)
 		if parsed != "" {
-			msg = "&C;" + parsed
+			raw = parsed
 		} else {
-			// Fall back: strip parentheses, prepend FNC1
-			stripped := strings.ReplaceAll(strings.ReplaceAll(text, ")", ""), " ", "")
-			if len(stripped) > 3 {
-				stripped = stripped[3:] // remove first AI prefix "(XX" equivalent
-			}
-			msg = "&C;&1;" + strings.ReplaceAll(stripped, "(", "&A;")
+			// Fall back: strip parentheses
+			raw = "&1;" + stripGS1Parens(text)
 		}
 	} else {
-		clean := strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(text, "(", "&A;"), ")", ""), " ", "")
-		msg = "&C;&1;" + clean
+		raw = "&1;" + text
 	}
+	// Use auto-encoder to insert proper mode switches (A/B/C) around
+	// the FNC1 codes and data segments.
+	msg := c128AutoEncode(raw)
 	return code128GetPattern(msg)
 }
 

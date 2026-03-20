@@ -320,6 +320,9 @@ func dmAsciiEncodation(text []byte, textOffset, textLength int, data []byte, dat
 	dataEnd := dataOffset + dataLength
 
 	for textIndex < textEnd {
+		if dataIndex >= dataEnd {
+			return -1
+		}
 		c := int(text[textIndex]) & 0xff
 		textIndex++
 

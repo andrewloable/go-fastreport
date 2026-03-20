@@ -1499,7 +1499,7 @@ func TestUPCEBarcode_DefaultValue(t *testing.T) {
 }
 
 func TestUPCEBarcode_Encode_ValidSizes(t *testing.T) {
-	// boombuler EAN encoder accepts 7-digit EAN-8 (computes checksum automatically).
+	// EAN encoder accepts 7-digit EAN-8 (computes checksum automatically).
 	// 6-digit and 8-digit with wrong checksum are rejected by the library.
 	cases := []string{"1234567"}
 	for _, tc := range cases {

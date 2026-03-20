@@ -23,14 +23,6 @@ import (
 	"fmt"
 	"image"
 	"strings"
-
-	boombarcode "github.com/boombuler/barcode"
-	"github.com/boombuler/barcode/code128"
-	boomean "github.com/boombuler/barcode/ean"
-
-	"github.com/andrewloable/go-fastreport/barcode/code2of5"
-	"github.com/andrewloable/go-fastreport/barcode/code93"
-	"github.com/andrewloable/go-fastreport/barcode/upc"
 )
 
 // ── EAN8Barcode ───────────────────────────────────────────────────────────────
@@ -46,21 +38,30 @@ func NewEAN8Barcode() *EAN8Barcode {
 // DefaultValue returns a sample 7-digit EAN-8 value (checksum auto-computed).
 func (e *EAN8Barcode) DefaultValue() string { return "1234567" }
 
-// Encode encodes a 7- or 8-digit EAN-8 value.
+// Encode validates and stores a 7- or 8-digit EAN-8 value.
 func (e *EAN8Barcode) Encode(text string) error {
-	bc, err := boomean.Encode(text)
-	if err != nil {
-		// C# recalculates checksum. Try with first 7 digits (let library compute check digit).
-		if len(text) == 8 {
-			bc, err = boomean.Encode(text[:7])
-		}
-		if err != nil {
-			return fmt.Errorf("ean8 encode: %w", err)
+	for _, ch := range text {
+		if ch < '0' || ch > '9' {
+			return fmt.Errorf("ean8: only digits allowed, found %q", ch)
 		}
 	}
+	if len(text) < 7 {
+		return fmt.Errorf("ean8: expected at least 7 digits, got %d", len(text))
+	}
 	e.encodedText = text
-	e.encoded = bc
 	return nil
+}
+
+// Render renders the EAN-8 barcode using the native pattern-based renderer.
+func (e *EAN8Barcode) Render(width, height int) (image.Image, error) {
+	if e.encodedText == "" {
+		return nil, fmt.Errorf("ean8: Encode must be called before Render")
+	}
+	pattern, err := e.GetPattern()
+	if err != nil {
+		return nil, err
+	}
+	return DrawLinearBarcode(pattern, e.encodedText, width, height, true, e.GetWideBarRatio()), nil
 }
 
 // ── UPCABarcode ───────────────────────────────────────────────────────────────
@@ -68,42 +69,45 @@ func (e *EAN8Barcode) Encode(text string) error {
 // UPCABarcode implements the 11/12-digit UPC-A barcode symbology.
 type UPCABarcode struct {
 	BaseBarcodeImpl
-	enc *upc.Encoder
 }
 
 // NewUPCABarcode creates a UPCABarcode.
 func NewUPCABarcode() *UPCABarcode {
 	return &UPCABarcode{
 		BaseBarcodeImpl: newBaseBarcodeImpl(BarcodeTypeUPCA),
-		enc:             upc.New(),
 	}
 }
 
 // DefaultValue returns a sample 11-digit UPC-A value.
 func (u *UPCABarcode) DefaultValue() string { return "01234567890" }
 
-// Encode validates the UPC-A value.
+// Encode validates and stores the UPC-A value.
 func (u *UPCABarcode) Encode(text string) error {
-	if err := u.enc.Validate(text); err != nil {
-		return fmt.Errorf("upca encode: %w", err)
+	for _, ch := range text {
+		if ch < '0' || ch > '9' {
+			return fmt.Errorf("upca: only digits allowed, found %q", ch)
+		}
 	}
 	u.encodedText = text
 	return nil
 }
 
-// Render renders the UPC-A barcode as an image.
+// Render renders the UPC-A barcode using the native pattern-based renderer.
 func (u *UPCABarcode) Render(width, height int) (image.Image, error) {
 	if u.encodedText == "" {
 		return nil, fmt.Errorf("upca: Encode must be called before Render")
 	}
-	return u.enc.Encode(u.encodedText, width, height)
+	pattern, err := u.GetPattern()
+	if err != nil {
+		return nil, err
+	}
+	return DrawLinearBarcode(pattern, u.encodedText, width, height, true, u.GetWideBarRatio()), nil
 }
 
 // ── UPCEBarcode ───────────────────────────────────────────────────────────────
 
 // UPCEBarcode implements the UPC-E (zero-suppressed) barcode symbology.
-// UPC-E is encoded as EAN-13 with a '0' prefix (the boombuler library handles
-// the conversion internally when given an 8-digit UPC-E code starting with 0).
+// Rendered using the UPCE0 pattern encoder.
 type UPCEBarcode struct{ BaseBarcodeImpl }
 
 // NewUPCEBarcode creates a UPCEBarcode.
@@ -114,10 +118,8 @@ func NewUPCEBarcode() *UPCEBarcode {
 // DefaultValue returns a sample 7-digit UPC-E value.
 func (u *UPCEBarcode) DefaultValue() string { return "1234567" }
 
-// Encode encodes a UPC-E value using EAN encoding (boombuler treats 8-digit
-// codes starting with 0 as UPC-E, others as EAN-8).
+// Encode validates and stores a UPC-E value (6-8 digits).
 func (u *UPCEBarcode) Encode(text string) error {
-	// Strip any trailing whitespace and validate.
 	text = strings.TrimSpace(text)
 	if len(text) < 6 || len(text) > 8 {
 		return fmt.Errorf("upce: expected 6-8 digits, got %d", len(text))
@@ -127,13 +129,30 @@ func (u *UPCEBarcode) Encode(text string) error {
 			return fmt.Errorf("upce: only digits allowed, found %q", ch)
 		}
 	}
-	bc, err := boomean.Encode(text)
-	if err != nil {
-		return fmt.Errorf("upce encode: %w", err)
-	}
 	u.encodedText = text
-	u.encoded = bc
 	return nil
+}
+
+// GetPattern generates the UPC-E bar pattern (delegates to UPCE0 pattern).
+func (u *UPCEBarcode) GetPattern() (string, error) {
+	helper := &UPCE0Barcode{}
+	helper.encodedText = u.encodedText
+	return helper.GetPattern()
+}
+
+// GetWideBarRatio returns the wide bar ratio for UPC-E.
+func (u *UPCEBarcode) GetWideBarRatio() float32 { return 2 }
+
+// Render renders the UPC-E barcode using the native pattern-based renderer.
+func (u *UPCEBarcode) Render(width, height int) (image.Image, error) {
+	if u.encodedText == "" {
+		return nil, fmt.Errorf("upce: Encode must be called before Render")
+	}
+	pattern, err := u.GetPattern()
+	if err != nil {
+		return nil, err
+	}
+	return DrawLinearBarcode(pattern, u.encodedText, width, height, true, u.GetWideBarRatio()), nil
 }
 
 // ── Code93ExtendedBarcode ─────────────────────────────────────────────────────
@@ -141,16 +160,12 @@ func (u *UPCEBarcode) Encode(text string) error {
 // Code93ExtendedBarcode implements Code 93 Extended (full ASCII) symbology.
 type Code93ExtendedBarcode struct {
 	BaseBarcodeImpl
-	enc *code93.Encoder
 }
 
 // NewCode93ExtendedBarcode creates a Code93ExtendedBarcode.
 func NewCode93ExtendedBarcode() *Code93ExtendedBarcode {
-	enc := code93.New()
-	enc.FullASCIIMode = true
 	return &Code93ExtendedBarcode{
 		BaseBarcodeImpl: newBaseBarcodeImpl(BarcodeTypeCode93Extended),
-		enc:             enc,
 	}
 }
 
@@ -163,18 +178,22 @@ func (c *Code93ExtendedBarcode) Encode(text string) error {
 	return nil
 }
 
-// Render renders the Code 93 Extended barcode.
+// Render renders the Code 93 Extended barcode using the native pattern-based renderer.
 func (c *Code93ExtendedBarcode) Render(width, height int) (image.Image, error) {
 	if c.encodedText == "" {
 		return nil, fmt.Errorf("code93ext: Encode must be called before Render")
 	}
-	return c.enc.Encode(c.encodedText, width, height)
+	pattern, err := c.GetPattern()
+	if err != nil {
+		return nil, err
+	}
+	return DrawLinearBarcode(pattern, c.encodedText, width, height, true, c.GetWideBarRatio()), nil
 }
 
 // ── Code128ABarcode ───────────────────────────────────────────────────────────
 
 // Code128ABarcode implements Code 128 set A (control chars + uppercase ASCII).
-// boombuler auto-selects the code set; we use the same encoder as Code128.
+// Uses the native Code128 pattern encoder for rendering.
 type Code128ABarcode struct{ BaseBarcodeImpl }
 
 // NewCode128ABarcode creates a Code128ABarcode.
@@ -185,15 +204,25 @@ func NewCode128ABarcode() *Code128ABarcode {
 // DefaultValue returns a sample value valid for Code 128A.
 func (c *Code128ABarcode) DefaultValue() string { return "CODE128A" }
 
-// Encode encodes the text using Code 128 (auto code-set selection).
+// Encode validates and stores the text for Code 128A encoding.
 func (c *Code128ABarcode) Encode(text string) error {
-	bc, err := code128.Encode(text)
-	if err != nil {
-		return fmt.Errorf("code128a encode: %w", err)
+	if text == "" {
+		return fmt.Errorf("code128a: text must not be empty")
 	}
 	c.encodedText = text
-	c.encoded = bc
 	return nil
+}
+
+// Render renders the Code 128A barcode using the native pattern-based renderer.
+func (c *Code128ABarcode) Render(width, height int) (image.Image, error) {
+	if c.encodedText == "" {
+		return nil, fmt.Errorf("code128a: Encode must be called before Render")
+	}
+	pattern, err := c.GetPattern()
+	if err != nil {
+		return nil, err
+	}
+	return DrawLinearBarcode(pattern, c.encodedText, width, height, true, c.GetWideBarRatio()), nil
 }
 
 // ── Code128BBarcode ───────────────────────────────────────────────────────────
@@ -209,15 +238,25 @@ func NewCode128BBarcode() *Code128BBarcode {
 // DefaultValue returns a sample value valid for Code 128B.
 func (c *Code128BBarcode) DefaultValue() string { return "Code128B" }
 
-// Encode encodes the text using Code 128 (auto code-set selection).
+// Encode validates and stores the text for Code 128B encoding.
 func (c *Code128BBarcode) Encode(text string) error {
-	bc, err := code128.Encode(text)
-	if err != nil {
-		return fmt.Errorf("code128b encode: %w", err)
+	if text == "" {
+		return fmt.Errorf("code128b: text must not be empty")
 	}
 	c.encodedText = text
-	c.encoded = bc
 	return nil
+}
+
+// Render renders the Code 128B barcode using the native pattern-based renderer.
+func (c *Code128BBarcode) Render(width, height int) (image.Image, error) {
+	if c.encodedText == "" {
+		return nil, fmt.Errorf("code128b: Encode must be called before Render")
+	}
+	pattern, err := c.GetPattern()
+	if err != nil {
+		return nil, err
+	}
+	return DrawLinearBarcode(pattern, c.encodedText, width, height, true, c.GetWideBarRatio()), nil
 }
 
 // ── Code128CBarcode ───────────────────────────────────────────────────────────
@@ -233,21 +272,23 @@ func NewCode128CBarcode() *Code128CBarcode {
 // DefaultValue returns a sample value valid for Code 128C (even-length digits).
 func (c *Code128CBarcode) DefaultValue() string { return "12345678" }
 
-// Encode encodes the text using Code 128 (auto code-set selection).
+// Encode validates and stores the text for Code 128C encoding.
 // Code 128C requires an even number of digits; a leading '0' is prepended if needed.
 func (c *Code128CBarcode) Encode(text string) error {
-	// Code128C needs even-length digit string; pad if necessary.
-	enc := text
-	if len(enc)%2 != 0 {
-		enc = "0" + enc
-	}
-	bc, err := code128.Encode(enc)
-	if err != nil {
-		return fmt.Errorf("code128c encode: %w", err)
-	}
 	c.encodedText = text
-	c.encoded = bc
 	return nil
+}
+
+// Render renders the Code 128C barcode using the native pattern-based renderer.
+func (c *Code128CBarcode) Render(width, height int) (image.Image, error) {
+	if c.encodedText == "" {
+		return nil, fmt.Errorf("code128c: Encode must be called before Render")
+	}
+	pattern, err := c.GetPattern()
+	if err != nil {
+		return nil, err
+	}
+	return DrawLinearBarcode(pattern, c.encodedText, width, height, true, c.GetWideBarRatio()), nil
 }
 
 // ── Code2of5IndustrialBarcode ─────────────────────────────────────────────────
@@ -271,22 +312,23 @@ func (c *Code2of5IndustrialBarcode) Encode(text string) error {
 	return nil
 }
 
-// Render renders Standard (Industrial) 2-of-5 barcode.
+// Render renders Standard (Industrial) 2-of-5 barcode using the native pattern-based renderer.
 func (c *Code2of5IndustrialBarcode) Render(width, height int) (image.Image, error) {
 	if c.encodedText == "" {
 		return nil, fmt.Errorf("code2of5industrial: Encode must be called before Render")
 	}
-	enc := code2of5.New()
-	enc.Interleaved = false
-	return enc.Encode(c.encodedText, width, height)
+	pattern, err := c.GetPattern()
+	if err != nil {
+		return nil, err
+	}
+	return DrawLinearBarcode(pattern, c.encodedText, width, height, true, c.GetWideBarRatio()), nil
 }
 
 // ── Code2of5MatrixBarcode ─────────────────────────────────────────────────────
 
 // Code2of5MatrixBarcode implements Matrix 2-of-5 symbology.
-// Matrix 2-of-5 uses the same encoding structure as Standard 2-of-5 but with
-// a different bar-width ratio. We render it as Standard (non-interleaved) 2-of-5
-// since the boombuler library does not have a distinct Matrix variant.
+// Matrix 2-of-5 uses a dedicated bar-width encoding pattern distinct from
+// Standard and Interleaved 2-of-5.
 type Code2of5MatrixBarcode struct {
 	BaseBarcodeImpl
 }
@@ -305,14 +347,16 @@ func (c *Code2of5MatrixBarcode) Encode(text string) error {
 	return nil
 }
 
-// Render renders Matrix 2-of-5 barcode (rendered as Standard 2-of-5).
+// Render renders Matrix 2-of-5 barcode using the native pattern-based renderer.
 func (c *Code2of5MatrixBarcode) Render(width, height int) (image.Image, error) {
 	if c.encodedText == "" {
 		return nil, fmt.Errorf("code2of5matrix: Encode must be called before Render")
 	}
-	enc := code2of5.New()
-	enc.Interleaved = false
-	return enc.Encode(c.encodedText, width, height)
+	pattern, err := c.GetPattern()
+	if err != nil {
+		return nil, err
+	}
+	return DrawLinearBarcode(pattern, c.encodedText, width, height, true, c.GetWideBarRatio()), nil
 }
 
 // ── ITF14Barcode ──────────────────────────────────────────────────────────────
@@ -353,14 +397,16 @@ func (i *ITF14Barcode) Encode(text string) error {
 	return nil
 }
 
-// Render renders the ITF-14 barcode as an Interleaved 2-of-5 image.
+// Render renders the ITF-14 barcode using the native pattern-based renderer.
 func (i *ITF14Barcode) Render(width, height int) (image.Image, error) {
 	if i.encodedText == "" {
 		return nil, fmt.Errorf("itf14: Encode must be called before Render")
 	}
-	enc := code2of5.New()
-	enc.Interleaved = true
-	return enc.Encode(i.encodedText, width, height)
+	pattern, err := i.GetPattern()
+	if err != nil {
+		return nil, err
+	}
+	return DrawLinearBarcode(pattern, i.encodedText, width, height, true, i.GetWideBarRatio()), nil
 }
 
 // ── DeutscheIdentcodeBarcode ──────────────────────────────────────────────────
@@ -393,20 +439,16 @@ func (d *DeutscheIdentcodeBarcode) Encode(text string) error {
 	return nil
 }
 
-// Render renders Deutsche Post Identcode as Interleaved 2-of-5.
-// Interleaved 2-of-5 requires an even number of digits; a leading '0' is
-// prepended if the Identcode digit count is odd.
+// Render renders Deutsche Post Identcode using the native pattern-based renderer.
 func (d *DeutscheIdentcodeBarcode) Render(width, height int) (image.Image, error) {
 	if d.encodedText == "" {
 		return nil, fmt.Errorf("identcode: Encode must be called before Render")
 	}
-	enc := code2of5.New()
-	enc.Interleaved = true
-	text := d.encodedText
-	if len(text)%2 != 0 {
-		text = "0" + text
+	pattern, err := d.GetPattern()
+	if err != nil {
+		return nil, err
 	}
-	return enc.Encode(text, width, height)
+	return DrawLinearBarcode(pattern, d.encodedText, width, height, true, d.GetWideBarRatio()), nil
 }
 
 // ── DeutscheLeitcodeBarcode ───────────────────────────────────────────────────
@@ -439,28 +481,23 @@ func (d *DeutscheLeitcodeBarcode) Encode(text string) error {
 	return nil
 }
 
-// Render renders Deutsche Post Leitcode as Interleaved 2-of-5.
-// Interleaved 2-of-5 requires an even number of digits; a leading '0' is
-// prepended if the Leitcode digit count is odd.
+// Render renders Deutsche Post Leitcode using the native pattern-based renderer.
 func (d *DeutscheLeitcodeBarcode) Render(width, height int) (image.Image, error) {
 	if d.encodedText == "" {
 		return nil, fmt.Errorf("leitcode: Encode must be called before Render")
 	}
-	enc := code2of5.New()
-	enc.Interleaved = true
-	text := d.encodedText
-	if len(text)%2 != 0 {
-		text = "0" + text
+	pattern, err := d.GetPattern()
+	if err != nil {
+		return nil, err
 	}
-	return enc.Encode(text, width, height)
+	return DrawLinearBarcode(pattern, d.encodedText, width, height, true, d.GetWideBarRatio()), nil
 }
 
 // ── Supplement2Barcode ────────────────────────────────────────────────────────
 
 // Supplement2Barcode implements the 2-digit EAN/UPC add-on supplement barcode.
 // It encodes a 2-digit numeric value as a supplementary barcode appended to
-// EAN-13 or UPC-A barcodes. Rendered using Code 128 as a visual placeholder
-// since the boombuler library does not have a dedicated supplement encoder.
+// EAN-13 or UPC-A barcodes. Rendered using the native EAN supplement pattern encoder.
 type Supplement2Barcode struct{ BaseBarcodeImpl }
 
 // NewSupplement2Barcode creates a Supplement2Barcode.
@@ -471,7 +508,7 @@ func NewSupplement2Barcode() *Supplement2Barcode {
 // DefaultValue returns a sample 2-digit supplement value.
 func (s *Supplement2Barcode) DefaultValue() string { return "53" }
 
-// Encode validates the 2-digit supplement value.
+// Encode validates and stores the 2-digit supplement value.
 func (s *Supplement2Barcode) Encode(text string) error {
 	text = strings.TrimSpace(text)
 	if len(text) != 2 {
@@ -482,20 +519,20 @@ func (s *Supplement2Barcode) Encode(text string) error {
 			return fmt.Errorf("supplement2: only digits allowed, found %q", ch)
 		}
 	}
-	bc, err := supplement2Encode(text)
-	if err != nil {
-		return fmt.Errorf("supplement2 encode: %w", err)
-	}
 	s.encodedText = text
-	s.encoded = bc
 	return nil
 }
 
-// supplement2Encode encodes a 2-digit supplement using Code 128.
-// This is a visual approximation; a true supplement encoder would generate
-// the interleaved bar pattern per the EAN supplement specification.
-func supplement2Encode(text string) (boombarcode.Barcode, error) {
-	return code128.Encode(text)
+// Render renders the Supplement 2 barcode using the native pattern-based renderer.
+func (s *Supplement2Barcode) Render(width, height int) (image.Image, error) {
+	if s.encodedText == "" {
+		return nil, fmt.Errorf("supplement2: Encode must be called before Render")
+	}
+	pattern, err := s.GetPattern()
+	if err != nil {
+		return nil, err
+	}
+	return DrawLinearBarcode(pattern, s.encodedText, width, height, false, s.GetWideBarRatio()), nil
 }
 
 // ── Supplement5Barcode ────────────────────────────────────────────────────────
@@ -511,7 +548,7 @@ func NewSupplement5Barcode() *Supplement5Barcode {
 // DefaultValue returns a sample 5-digit supplement value.
 func (s *Supplement5Barcode) DefaultValue() string { return "52495" }
 
-// Encode validates the 5-digit supplement value.
+// Encode validates and stores the 5-digit supplement value.
 func (s *Supplement5Barcode) Encode(text string) error {
 	text = strings.TrimSpace(text)
 	if len(text) != 5 {
@@ -522,22 +559,28 @@ func (s *Supplement5Barcode) Encode(text string) error {
 			return fmt.Errorf("supplement5: only digits allowed, found %q", ch)
 		}
 	}
-	bc, err := code128.Encode(text)
-	if err != nil {
-		return fmt.Errorf("supplement5 encode: %w", err)
-	}
 	s.encodedText = text
-	s.encoded = bc
 	return nil
+}
+
+// Render renders the Supplement 5 barcode using the native pattern-based renderer.
+func (s *Supplement5Barcode) Render(width, height int) (image.Image, error) {
+	if s.encodedText == "" {
+		return nil, fmt.Errorf("supplement5: Encode must be called before Render")
+	}
+	pattern, err := s.GetPattern()
+	if err != nil {
+		return nil, err
+	}
+	return DrawLinearBarcode(pattern, s.encodedText, width, height, false, s.GetWideBarRatio()), nil
 }
 
 // ── JapanPost4StateBarcode ────────────────────────────────────────────────────
 
 // JapanPost4StateBarcode implements the Japan Post Customer Barcode (4-state).
 // The barcode encodes a Japanese postal address using 4 bar heights.
-// This implementation renders the value as a Code 128 barcode since the
-// boombuler library does not have a dedicated Japan Post encoder.
-// The encoding accepts the alphanumeric postal code with hyphens.
+// This implementation renders the value as a Code 128 barcode pattern as a
+// visual approximation. The encoding accepts the alphanumeric postal code with hyphens.
 type JapanPost4StateBarcode struct{ BaseBarcodeImpl }
 
 // ── Types referenced by dedicated implementation files ────────────────────────
@@ -559,6 +602,18 @@ func (c *Code39ExtendedBarcode) Encode(text string) error {
 	return nil
 }
 
+// Render renders the Code 39 Extended barcode using the native pattern-based renderer.
+func (c *Code39ExtendedBarcode) Render(width, height int) (image.Image, error) {
+	if c.encodedText == "" {
+		return nil, fmt.Errorf("code39ext: Encode must be called before Render")
+	}
+	pattern, err := c.GetPattern()
+	if err != nil {
+		return nil, err
+	}
+	return DrawLinearBarcode(pattern, c.encodedText, width, height, true, c.GetWideBarRatio()), nil
+}
+
 // UPCE0Barcode implements UPC-E number system 0.
 type UPCE0Barcode struct{ BaseBarcodeImpl }
 
@@ -574,6 +629,18 @@ func (u *UPCE0Barcode) DefaultValue() string { return "01234565" }
 func (u *UPCE0Barcode) Encode(text string) error {
 	u.encodedText = text
 	return nil
+}
+
+// Render renders the UPC-E0 barcode using the native pattern-based renderer.
+func (u *UPCE0Barcode) Render(width, height int) (image.Image, error) {
+	if u.encodedText == "" {
+		return nil, fmt.Errorf("upce0: Encode must be called before Render")
+	}
+	pattern, err := u.GetPattern()
+	if err != nil {
+		return nil, err
+	}
+	return DrawLinearBarcode(pattern, u.encodedText, width, height, true, u.GetWideBarRatio()), nil
 }
 
 // UPCE1Barcode implements UPC-E number system 1.
@@ -593,6 +660,18 @@ func (u *UPCE1Barcode) Encode(text string) error {
 	return nil
 }
 
+// Render renders the UPC-E1 barcode using the native pattern-based renderer.
+func (u *UPCE1Barcode) Render(width, height int) (image.Image, error) {
+	if u.encodedText == "" {
+		return nil, fmt.Errorf("upce1: Encode must be called before Render")
+	}
+	pattern, err := u.GetPattern()
+	if err != nil {
+		return nil, err
+	}
+	return DrawLinearBarcode(pattern, u.encodedText, width, height, true, u.GetWideBarRatio()), nil
+}
+
 // GS1_128Barcode implements GS1-128 (formerly EAN-128).
 type GS1_128Barcode struct{ BaseBarcodeImpl }
 
@@ -608,6 +687,18 @@ func (g *GS1_128Barcode) DefaultValue() string { return "(01)12345678901231" }
 func (g *GS1_128Barcode) Encode(text string) error {
 	g.encodedText = text
 	return nil
+}
+
+// Render renders the GS1-128 barcode using the native pattern-based renderer.
+func (g *GS1_128Barcode) Render(width, height int) (image.Image, error) {
+	if g.encodedText == "" {
+		return nil, fmt.Errorf("gs1_128: Encode must be called before Render")
+	}
+	pattern, err := g.GetPattern()
+	if err != nil {
+		return nil, err
+	}
+	return DrawLinearBarcode(pattern, g.encodedText, width, height, true, g.GetWideBarRatio()), nil
 }
 
 // GS1DatamatrixBarcode implements GS1 DataMatrix.
@@ -627,6 +718,15 @@ func (g *GS1DatamatrixBarcode) Encode(text string) error {
 	return nil
 }
 
+// Render renders the GS1 DataMatrix barcode using the native matrix-based renderer.
+func (g *GS1DatamatrixBarcode) Render(width, height int) (image.Image, error) {
+	if g.encodedText == "" {
+		return nil, fmt.Errorf("gs1datamatrix: Encode must be called before Render")
+	}
+	matrix, rows, cols := g.GetMatrix()
+	return DrawBarcode2D(matrix, rows, cols, width, height), nil
+}
+
 // NewJapanPost4StateBarcode creates a JapanPost4StateBarcode.
 func NewJapanPost4StateBarcode() *JapanPost4StateBarcode {
 	return &JapanPost4StateBarcode{BaseBarcodeImpl: newBaseBarcodeImpl(BarcodeTypeJapanPost4State)}
@@ -635,19 +735,28 @@ func NewJapanPost4StateBarcode() *JapanPost4StateBarcode {
 // DefaultValue returns a sample Japan Post 4-state value.
 func (j *JapanPost4StateBarcode) DefaultValue() string { return "597-8615-5-7-6" }
 
-// Encode stores the postal code for rendering.
+// Encode validates and stores the postal code for rendering.
 func (j *JapanPost4StateBarcode) Encode(text string) error {
 	text = strings.TrimSpace(text)
 	if text == "" {
 		return fmt.Errorf("japanpost4state: text must not be empty")
 	}
-	// Strip hyphens and encode digit-only content as Code 128.
-	cleaned := strings.ReplaceAll(text, "-", "")
-	bc, err := code128.Encode(cleaned)
-	if err != nil {
-		return fmt.Errorf("japanpost4state encode: %w", err)
-	}
 	j.encodedText = text
-	j.encoded = bc
 	return nil
+}
+
+// Render renders the Japan Post 4-state barcode using Code128 pattern as a visual approximation.
+func (j *JapanPost4StateBarcode) Render(width, height int) (image.Image, error) {
+	if j.encodedText == "" {
+		return nil, fmt.Errorf("japanpost4state: Encode must be called before Render")
+	}
+	// Strip hyphens for encoding.
+	cleaned := strings.ReplaceAll(j.encodedText, "-", "")
+	helper := &Code128Barcode{}
+	helper.encodedText = cleaned
+	pattern, err := helper.GetPattern()
+	if err != nil {
+		return nil, err
+	}
+	return DrawLinearBarcode(pattern, j.encodedText, width, height, false, helper.GetWideBarRatio()), nil
 }

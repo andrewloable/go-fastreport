@@ -4,7 +4,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**go-fastreport** is a pure Go port of [FastReport .NET](https://github.com/FastReports/FastReport). It loads `.frx` report definitions, binds data sources, runs a band-based layout engine, and exports to HTML, PDF, PNG, CSV, XLSX, RTF, and SVG. The original C# source is in `original-dotnet/` for reference when porting.
+**go-fastreport** is a pure Go port of [FastReport .NET](https://github.com/FastReports/FastReport). It loads `.frx` report definitions, binds data sources, runs a band-based layout engine, and exports to HTML, PDF, PNG, CSV, XLSX, RTF, and SVG.
+
+## Source of Truth
+
+**The original C# source code in `original-dotnet/` is the single source of truth for all implementation decisions.** When porting features, fixing bugs, or implementing new functionality:
+
+1. **Always read the corresponding C# code first** before writing Go code
+2. **Follow the same processes and algorithms** as the C# implementation — do not invent alternative approaches
+3. **Match C# behavior exactly** — the C# HTML/PDF output is the ground-truth for correctness
+4. **Reference specific C# files and line numbers** in comments when porting non-obvious logic
+5. **Use `tools/compare_html_semantic/`** to verify Go HTML output matches C# output
 
 ## Build & Test
 

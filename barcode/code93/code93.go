@@ -1,4 +1,5 @@
 // Package code93 provides a Code 93 barcode encoder for go-fastreport.
+// Uses the native Go Code93 encoder from the parent barcode package.
 package code93
 
 import (
@@ -6,8 +7,7 @@ import (
 	"image"
 	"image/color"
 
-	"github.com/boombuler/barcode"
-	boomcode93 "github.com/boombuler/barcode/code93"
+	"github.com/andrewloable/go-fastreport/barcode"
 )
 
 // Encoder encodes Code 93 barcodes.
@@ -31,7 +31,26 @@ func New() *Encoder {
 	}
 }
 
-// Encode encodes text as a Code 93 barcode and scales it to width×height pixels.
+// barcodeEncoder abstracts the barcode encode+render operations for testing.
+type barcodeEncoder interface {
+	Encode(text string) error
+	Render(width, height int) (image.Image, error)
+}
+
+// newStandardBarcode creates a standard Code93 encoder. Tests can override this.
+var newStandardBarcode = func(includeChecksum, fullASCII bool) barcodeEncoder {
+	b := barcode.NewCode93Barcode()
+	b.IncludeChecksum = includeChecksum
+	b.FullASCIIMode = fullASCII
+	return b
+}
+
+// newExtendedBarcode creates an extended Code93 encoder. Tests can override this.
+var newExtendedBarcode = func() barcodeEncoder {
+	return barcode.NewCode93ExtendedBarcode()
+}
+
+// Encode encodes text as a Code 93 barcode and renders it to width*height pixels.
 func (e *Encoder) Encode(text string, width, height int) (image.Image, error) {
 	if text == "" {
 		return nil, fmt.Errorf("code93: text must not be empty")
@@ -39,15 +58,27 @@ func (e *Encoder) Encode(text string, width, height int) (image.Image, error) {
 	if width <= 0 || height <= 0 {
 		return nil, fmt.Errorf("code93: width and height must be > 0")
 	}
-	bc, err := boomcode93.Encode(text, e.IncludeChecksum, e.FullASCIIMode)
-	if err != nil {
-		return nil, fmt.Errorf("code93: %w", err)
+
+	var bc barcodeEncoder
+	if e.FullASCIIMode {
+		b := newExtendedBarcode()
+		if err := b.Encode(text); err != nil {
+			return nil, fmt.Errorf("code93: %w", err)
+		}
+		bc = b
+	} else {
+		b := newStandardBarcode(e.IncludeChecksum, e.FullASCIIMode)
+		if err := b.Encode(text); err != nil {
+			return nil, fmt.Errorf("code93: %w", err)
+		}
+		bc = b
 	}
-	scaled, err := barcode.Scale(bc, width, height)
+
+	img, err := bc.Render(width, height)
 	if err != nil {
-		return nil, fmt.Errorf("code93: scale %w", err)
+		return nil, fmt.Errorf("code93: render %w", err)
 	}
-	return e.applyColors(scaled), nil
+	return e.applyColors(img), nil
 }
 
 func (e *Encoder) applyColors(img image.Image) image.Image {

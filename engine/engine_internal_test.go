@@ -370,9 +370,11 @@ func TestRenderBarcode_WithCode128_Success(t *testing.T) {
 // noRenderBarcode satisfies barcode.BarcodeBase but does NOT implement Render.
 type noRenderBarcode struct{}
 
-func (n *noRenderBarcode) Type() barcode.BarcodeType    { return barcode.BarcodeTypeCode128 }
-func (n *noRenderBarcode) Encode(_ string) error        { return nil }
-func (n *noRenderBarcode) DefaultValue() string         { return "" }
+func (n *noRenderBarcode) Type() barcode.BarcodeType       { return barcode.BarcodeTypeCode128 }
+func (n *noRenderBarcode) Encode(_ string) error           { return nil }
+func (n *noRenderBarcode) DefaultValue() string            { return "" }
+func (n *noRenderBarcode) CalcBounds() (float32, float32)  { return 0, 0 }
+func (n *noRenderBarcode) EncodedText() string             { return "" }
 
 func TestRenderBarcode_NoRenderer_ReturnsError(t *testing.T) {
 	_, err := renderBarcode(&noRenderBarcode{}, 200, 60)

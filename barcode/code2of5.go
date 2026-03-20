@@ -60,6 +60,9 @@ func interleavedEncode(text string) string {
 	for i := 0; i < len(text)/2; i++ {
 		d1 := int(text[i*2] - '0')
 		d2 := int(text[i*2+1] - '0')
+		if d1 < 0 || d1 > 9 || d2 < 0 || d2 > 9 {
+			continue // skip invalid digits
+		}
 		for j := 0; j < 5; j++ {
 			if tabelle25[d1][j] == 1 {
 				sb.WriteByte('6') // wide bar

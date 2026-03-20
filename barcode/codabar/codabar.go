@@ -1,4 +1,5 @@
 // Package codabar provides a Codabar barcode encoder for go-fastreport.
+// Uses the native Go Codabar encoder from the parent barcode package.
 package codabar
 
 import (
@@ -6,12 +7,8 @@ import (
 	"image"
 	"image/color"
 
-	"github.com/boombuler/barcode"
-	boomcodabar "github.com/boombuler/barcode/codabar"
+	"github.com/andrewloable/go-fastreport/barcode"
 )
-
-// scaleBarcode is the barcode.Scale function, replaceable in tests.
-var scaleBarcode = barcode.Scale
 
 // Encoder encodes Codabar barcodes.
 type Encoder struct {
@@ -29,8 +26,19 @@ func New() *Encoder {
 	}
 }
 
-// Encode encodes content as a Codabar barcode and scales it to width×height pixels.
-// Content must start and end with a valid Codabar start/stop character (A, B, C, or D).
+// barcodeEncoder abstracts the barcode encode+render operations for testing.
+type barcodeEncoder interface {
+	Encode(text string) error
+	Render(width, height int) (image.Image, error)
+}
+
+// newBarcode is the factory function used to create the underlying barcode.
+// Tests can override this to inject errors.
+var newBarcode = func() barcodeEncoder {
+	return barcode.NewCodabarBarcode()
+}
+
+// Encode encodes content as a Codabar barcode and renders it to width*height pixels.
 func (e *Encoder) Encode(content string, width, height int) (image.Image, error) {
 	if content == "" {
 		return nil, fmt.Errorf("codabar: content must not be empty")
@@ -38,15 +46,16 @@ func (e *Encoder) Encode(content string, width, height int) (image.Image, error)
 	if width <= 0 || height <= 0 {
 		return nil, fmt.Errorf("codabar: width and height must be > 0")
 	}
-	bc, err := boomcodabar.Encode(content)
-	if err != nil {
+
+	bc := newBarcode()
+	if err := bc.Encode(content); err != nil {
 		return nil, fmt.Errorf("codabar: %w", err)
 	}
-	scaled, err := scaleBarcode(bc, width, height)
+	img, err := bc.Render(width, height)
 	if err != nil {
-		return nil, fmt.Errorf("codabar: scale %w", err)
+		return nil, fmt.Errorf("codabar: render %w", err)
 	}
-	return e.applyColors(scaled), nil
+	return e.applyColors(img), nil
 }
 
 func (e *Encoder) applyColors(img image.Image) image.Image {

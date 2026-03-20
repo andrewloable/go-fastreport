@@ -172,8 +172,8 @@ func TestNewBarcodeObject_Defaults(t *testing.T) {
 	if bo.Angle() != 0 {
 		t.Errorf("Angle default = %d, want 0", bo.Angle())
 	}
-	if bo.AutoSize() {
-		t.Error("AutoSize should default to false")
+	if !bo.AutoSize() {
+		t.Error("AutoSize should default to true (C# BarcodeObject.cs:689)")
 	}
 	if !bo.ShowText() {
 		t.Error("ShowText should default to true")
@@ -387,7 +387,7 @@ func TestBaseBarcodeImpl_DefaultValue(t *testing.T) {
 
 func TestCode128Barcode_Encode_Error(t *testing.T) {
 	b := barcode.NewCode128Barcode()
-	// Empty string is invalid for Code128 (boombuler requires 1-80 runes).
+	// Empty string is invalid for Code128.
 	if err := b.Encode(""); err == nil {
 		t.Error("expected error encoding empty string with Code128, got nil")
 	}

@@ -7,18 +7,6 @@ import (
 	"image"
 	"image/color"
 
-	boombarcode "github.com/boombuler/barcode"
-	"github.com/boombuler/barcode/aztec"
-	"github.com/boombuler/barcode/code128"
-	"github.com/boombuler/barcode/code39"
-	"github.com/boombuler/barcode/ean"
-	"github.com/boombuler/barcode/pdf417"
-	"github.com/boombuler/barcode/qr"
-
-	"github.com/andrewloable/go-fastreport/barcode/codabar"
-	"github.com/andrewloable/go-fastreport/barcode/code2of5"
-	"github.com/andrewloable/go-fastreport/barcode/code93"
-	"github.com/andrewloable/go-fastreport/barcode/datamatrix"
 	"github.com/andrewloable/go-fastreport/report"
 	"github.com/andrewloable/go-fastreport/style"
 )
@@ -76,6 +64,12 @@ type BarcodeBase interface {
 	Encode(text string) error
 	// DefaultValue returns a valid sample value for this symbology.
 	DefaultValue() string
+	// CalcBounds returns the natural (width, height) of the barcode in module units
+	// after encoding. Returns (0, 0) if not encoded or not supported (keeps FRX dims).
+	CalcBounds() (float32, float32)
+	// EncodedText returns the canonical display text stored after Encode.
+	// For GS1 types this includes the "(01)" prefix and checksum digit.
+	EncodedText() string
 }
 
 // -----------------------------------------------------------------------
@@ -92,29 +86,16 @@ type BaseBarcodeImpl struct {
 	encodedText string
 	// barcodeType is the symbology.
 	barcodeType BarcodeType
-	// encoded holds the boombuler Barcode result after Encode.
-	encoded boombarcode.Barcode
 }
 
-// scaleBarcode scales an encoded barcode to target dimensions. If scaling fails
-// (target smaller than minimum module width), returns the barcode at natural size.
-// This matches C#'s behavior where obj.Draw() always renders regardless of size.
-func scaleBarcode(bc boombarcode.Barcode, width, height int) (image.Image, error) {
-	img, err := boombarcode.Scale(bc, width, height)
-	if err != nil {
-		// Return at natural size — HTML exporter's resizeImagePNG will downscale.
-		return bc, nil
-	}
-	return img, nil
-}
-
-// Render scales the encoded barcode to the given pixel dimensions and returns
-// an image.Image. Returns an error if Encode has not been called yet.
+// Render returns an error indicating the barcode type must provide its own Render.
+// Concrete types override this by implementing Render via pattern or matrix rendering.
 func (b *BaseBarcodeImpl) Render(width, height int) (image.Image, error) {
-	if b.encoded == nil {
+	if b.encodedText == "" {
 		return nil, fmt.Errorf("barcode not encoded — call Encode first")
 	}
-	return scaleBarcode(b.encoded, width, height)
+	// Fallback: return a placeholder image. Concrete types should override.
+	return placeholderImage(width, height), nil
 }
 
 // newBaseBarcodeImpl creates a BaseBarcodeImpl for the given type.
@@ -132,6 +113,9 @@ func (b *BaseBarcodeImpl) Type() BarcodeType { return b.barcodeType }
 // DefaultValue returns a generic sample string.
 func (b *BaseBarcodeImpl) DefaultValue() string { return "12345" }
 
+// CalcBounds returns (0, 0) by default; concrete types override as needed.
+func (b *BaseBarcodeImpl) CalcBounds() (float32, float32) { return 0, 0 }
+
 // EncodedText returns the validated text stored by the last Encode call.
 func (b *BaseBarcodeImpl) EncodedText() string { return b.encodedText }
 
@@ -147,15 +131,25 @@ func NewCode128Barcode() *Code128Barcode {
 	return &Code128Barcode{BaseBarcodeImpl: newBaseBarcodeImpl(BarcodeTypeCode128)}
 }
 
-// Encode encodes text using Code128 symbology.
+// Encode validates and stores text for Code128 encoding.
 func (c *Code128Barcode) Encode(text string) error {
-	bc, err := code128.Encode(text)
-	if err != nil {
-		return fmt.Errorf("code128 encode: %w", err)
+	if text == "" {
+		return fmt.Errorf("code128: text must not be empty")
 	}
 	c.encodedText = text
-	c.encoded = bc
 	return nil
+}
+
+// Render renders the Code128 barcode using the native pattern-based renderer.
+func (c *Code128Barcode) Render(width, height int) (image.Image, error) {
+	if c.encodedText == "" {
+		return nil, fmt.Errorf("code128: Encode must be called before Render")
+	}
+	pattern, err := c.GetPattern()
+	if err != nil {
+		return nil, err
+	}
+	return DrawLinearBarcode(pattern, c.encodedText, width, height, true, c.GetWideBarRatio()), nil
 }
 
 // DefaultValue returns a sample Code128 value.
@@ -175,15 +169,29 @@ func NewCode39Barcode() *Code39Barcode {
 	return &Code39Barcode{BaseBarcodeImpl: newBaseBarcodeImpl(BarcodeTypeCode39)}
 }
 
-// Encode encodes text using Code39 symbology.
+// Encode validates and stores text for Code39 encoding.
 func (c *Code39Barcode) Encode(text string) error {
-	bc, err := code39.Encode(text, c.CalcChecksum, c.AllowExtended)
-	if err != nil {
-		return fmt.Errorf("code39 encode: %w", err)
+	if !c.AllowExtended {
+		for _, ch := range text {
+			if ch >= 'a' && ch <= 'z' {
+				return fmt.Errorf("code39: lowercase not allowed without AllowExtended, found %q", ch)
+			}
+		}
 	}
 	c.encodedText = text
-	c.encoded = bc
 	return nil
+}
+
+// Render renders the Code39 barcode using the native pattern-based renderer.
+func (c *Code39Barcode) Render(width, height int) (image.Image, error) {
+	if c.encodedText == "" {
+		return nil, fmt.Errorf("code39: Encode must be called before Render")
+	}
+	pattern, err := c.GetPattern()
+	if err != nil {
+		return nil, err
+	}
+	return DrawLinearBarcode(pattern, c.encodedText, width, height, true, c.GetWideBarRatio()), nil
 }
 
 // DefaultValue returns a sample Code39 value.
@@ -204,24 +212,19 @@ func NewQRBarcode() *QRBarcode {
 	}
 }
 
-// Encode encodes text as a QR code using the configured error correction level.
+// Encode validates and stores text for QR encoding.
 func (q *QRBarcode) Encode(text string) error {
-	level := qr.M
-	switch q.ErrorCorrection {
-	case "L":
-		level = qr.L
-	case "Q":
-		level = qr.Q
-	case "H":
-		level = qr.H
-	}
-	bc, err := qr.Encode(text, level, qr.Auto)
-	if err != nil {
-		return fmt.Errorf("qr encode: %w", err)
-	}
 	q.encodedText = text
-	q.encoded = bc
 	return nil
+}
+
+// Render renders the QR barcode using the native matrix-based renderer.
+func (q *QRBarcode) Render(width, height int) (image.Image, error) {
+	if q.encodedText == "" {
+		return nil, fmt.Errorf("qr: Encode must be called before Render")
+	}
+	matrix, rows, cols := q.GetMatrix()
+	return DrawBarcode2D(matrix, rows, cols, width, height), nil
 }
 
 // DefaultValue returns a sample QR value.
@@ -269,11 +272,19 @@ type Padding struct {
 	Left, Top, Right, Bottom float32
 }
 
+// Horizontal returns left + right padding.
+func (p Padding) Horizontal() float32 { return p.Left + p.Right }
+
+// Vertical returns top + bottom padding.
+func (p Padding) Vertical() float32 { return p.Top + p.Bottom }
+
 // NewBarcodeObject creates a BarcodeObject with defaults.
+// AutoSize defaults to true, matching C# BarcodeObject (BarcodeObject.cs:689).
 func NewBarcodeObject() *BarcodeObject {
 	return &BarcodeObject{
 		ReportComponentBase: *report.NewReportComponentBase(),
 		Barcode:             NewCode128Barcode(),
+		autoSize:            true,
 		showText:            true,
 		zoom:                1.0,
 		allowExpressions:    true,
@@ -355,6 +366,59 @@ func (b *BarcodeObject) Brackets() string { return b.brackets }
 // SetBrackets sets the delimiter.
 func (b *BarcodeObject) SetBrackets(s string) { b.brackets = s }
 
+// UpdateAutoSize resizes the BarcodeObject to fit the barcode's natural dimensions.
+// Mirrors C# BarcodeObject.UpdateAutoSize() (BarcodeObject.cs:390-412) and
+// C# LinearBarcodeBase.CalcBounds() ShowText extra-padding logic (LinearBarcodeBase.cs:435-452).
+// Called after Encode() so that CalcBounds() can use the encoded data.
+func (b *BarcodeObject) UpdateAutoSize() {
+	if b.Barcode == nil {
+		return
+	}
+	w, h := b.Barcode.CalcBounds()
+	if w == 0 && h == 0 {
+		return // barcode type doesn't support CalcBounds, keep FRX dimensions
+	}
+
+	// Apply ShowText extra padding for linear (1-D) barcodes only.
+	// C# LinearBarcodeBase.CalcBounds() measures the human-readable text with GDI+
+	// and adds symmetric padding when the text is wider than the bar area.
+	// h == 0 is the Go convention for linear barcodes (2-D barcodes return height > 0).
+	if b.showText && h == 0 {
+		displayText := b.Barcode.EncodedText()
+		if displayText != "" {
+			// Undo the 1.25 scaling applied by CalcBounds to recover raw bar width.
+			barWidth := w / 1.25
+			// Approximate Arial 8pt GDI+ MeasureString at 96 DPI.
+			// C#: using (Graphics g = ...) txtWidth = g.MeasureString(text, Font, 100000).Width
+			// Average character advance for Arial Regular 8pt at 96 DPI ≈ fontPx × 0.542.
+			const arialAvgWidthFactor = 0.542
+			fontPx := float32(8.0) * 96.0 / 72.0 // barcode default: Arial 8pt
+			txtWidth := float32(len(displayText)) * fontPx * arialAvgWidthFactor
+			if barWidth < txtWidth {
+				extra := (txtWidth-barWidth)/2 + 2
+				w = (barWidth + 2*extra) * 1.25
+			}
+		}
+	}
+
+	w *= b.zoom
+	h *= b.zoom
+	if !b.autoSize {
+		return
+	}
+	if b.angle == 0 || b.angle == 180 {
+		b.SetWidth(w + b.padding.Horizontal())
+		if h > 0 {
+			b.SetHeight(h + b.padding.Vertical())
+		}
+	} else if b.angle == 90 || b.angle == 270 {
+		b.SetHeight(w + b.padding.Vertical())
+		if h > 0 {
+			b.SetWidth(h + b.padding.Horizontal())
+		}
+	}
+}
+
 // BarcodeType returns the type string of the current barcode symbology.
 func (b *BarcodeObject) BarcodeType() BarcodeType {
 	if b.Barcode == nil {
@@ -376,8 +440,8 @@ func (b *BarcodeObject) Serialize(w report.Writer) error {
 	if b.angle != 0 {
 		w.WriteInt("Angle", b.angle)
 	}
-	if b.autoSize {
-		w.WriteBool("AutoSize", true)
+	if !b.autoSize {
+		w.WriteBool("AutoSize", false)
 	}
 	if b.dataColumn != "" {
 		w.WriteStr("DataColumn", b.dataColumn)
@@ -431,7 +495,7 @@ func (b *BarcodeObject) Deserialize(r report.Reader) error {
 		}
 	}
 	b.angle = r.ReadInt("Angle", 0)
-	b.autoSize = r.ReadBool("AutoSize", false)
+	b.autoSize = r.ReadBool("AutoSize", true)
 	b.dataColumn = r.ReadStr("DataColumn", "")
 	b.expression = r.ReadStr("Expression", "")
 	b.text = r.ReadStr("Text", "")
@@ -456,22 +520,30 @@ func NewEAN13Barcode() *EAN13Barcode {
 	return &EAN13Barcode{BaseBarcodeImpl: newBaseBarcodeImpl(BarcodeTypeEAN13)}
 }
 
-// Encode encodes a 12 or 13 digit EAN-13 barcode value.
+// Encode validates and stores a 12 or 13 digit EAN-13 barcode value.
 func (e *EAN13Barcode) Encode(text string) error {
-	bc, err := ean.Encode(text)
-	if err != nil {
-		// C# FastReport recalculates the checksum if invalid.
-		// Try encoding with just the first 12 digits (let the library compute check digit).
-		if len(text) == 13 {
-			bc, err = ean.Encode(text[:12])
-		}
-		if err != nil {
-			return fmt.Errorf("ean13 encode: %w", err)
+	for _, ch := range text {
+		if ch < '0' || ch > '9' {
+			return fmt.Errorf("ean13: only digits allowed, found %q", ch)
 		}
 	}
+	if len(text) < 12 {
+		return fmt.Errorf("ean13: expected at least 12 digits, got %d", len(text))
+	}
 	e.encodedText = text
-	e.encoded = bc
 	return nil
+}
+
+// Render renders the EAN-13 barcode using the native pattern-based renderer.
+func (e *EAN13Barcode) Render(width, height int) (image.Image, error) {
+	if e.encodedText == "" {
+		return nil, fmt.Errorf("ean13: Encode must be called before Render")
+	}
+	pattern, err := e.GetPattern()
+	if err != nil {
+		return nil, err
+	}
+	return DrawLinearBarcode(pattern, e.encodedText, width, height, true, e.GetWideBarRatio()), nil
 }
 
 // DefaultValue returns a sample EAN-13 value.
@@ -499,15 +571,23 @@ func NewAztecBarcode() *AztecBarcode {
 	}
 }
 
-// Encode encodes text as an Aztec barcode.
+// Encode validates and stores text for Aztec encoding.
 func (a *AztecBarcode) Encode(text string) error {
-	bc, err := aztec.Encode([]byte(text), a.MinECCPercent, a.UserSpecifiedLayers)
-	if err != nil {
-		return fmt.Errorf("aztec encode: %w", err)
+	if a.UserSpecifiedLayers > 32 {
+		return fmt.Errorf("aztec: UserSpecifiedLayers must be 0-32, got %d", a.UserSpecifiedLayers)
 	}
 	a.encodedText = text
-	a.encoded = bc
 	return nil
+}
+
+// Render renders the Aztec barcode using the native matrix-based renderer.
+// The Aztec matrix is generated by the aztec subpackage encoder.
+func (a *AztecBarcode) Render(width, height int) (image.Image, error) {
+	if a.encodedText == "" {
+		return nil, fmt.Errorf("aztec: Encode must be called before Render")
+	}
+	matrix, rows, cols := a.GetMatrix()
+	return DrawBarcode2D(matrix, rows, cols, width, height), nil
 }
 
 // DefaultValue returns a sample Aztec value.
@@ -535,15 +615,22 @@ func NewPDF417Barcode() *PDF417Barcode {
 	}
 }
 
-// Encode encodes text as a PDF417 barcode.
+// Encode validates and stores text for PDF417 encoding.
 func (p *PDF417Barcode) Encode(text string) error {
-	bc, err := pdf417.Encode(text, byte(p.SecurityLevel))
-	if err != nil {
-		return fmt.Errorf("pdf417 encode: %w", err)
+	if p.SecurityLevel < 0 || p.SecurityLevel > 8 {
+		return fmt.Errorf("pdf417: SecurityLevel must be 0-8, got %d", p.SecurityLevel)
 	}
 	p.encodedText = text
-	p.encoded = bc
 	return nil
+}
+
+// Render renders the PDF417 barcode using the native matrix-based renderer.
+func (p *PDF417Barcode) Render(width, height int) (image.Image, error) {
+	if p.encodedText == "" {
+		return nil, fmt.Errorf("pdf417: Encode must be called before Render")
+	}
+	matrix, rows, cols := p.GetMatrix()
+	return DrawBarcode2D(matrix, rows, cols, width, height), nil
 }
 
 // DefaultValue returns a sample PDF417 value.
@@ -576,19 +663,16 @@ func (c *Code93Barcode) Encode(text string) error {
 	return nil
 }
 
-// Render renders the Code 93 barcode to an image of the given size.
+// Render renders the Code 93 barcode using the native pattern-based renderer.
 func (c *Code93Barcode) Render(width, height int) (image.Image, error) {
 	if c.encodedText == "" {
 		return nil, fmt.Errorf("code93: Encode must be called before Render")
 	}
-	enc := code93.New()
-	enc.IncludeChecksum = c.IncludeChecksum
-	enc.FullASCIIMode = c.FullASCIIMode
-	img, err := enc.Encode(c.encodedText, width, height)
+	pattern, err := c.GetPattern()
 	if err != nil {
-		img, err = enc.Encode(c.encodedText, 0, 0)
+		return nil, err
 	}
-	return img, err
+	return DrawLinearBarcode(pattern, c.encodedText, width, height, true, c.GetWideBarRatio()), nil
 }
 
 // DefaultValue returns a sample Code 93 value.
@@ -613,29 +697,27 @@ func NewCode2of5Barcode() *Code2of5Barcode {
 	}
 }
 
-// Encode stores the text for later rendering.
+// Encode validates and stores the text for later rendering.
 func (c *Code2of5Barcode) Encode(text string) error {
+	for _, ch := range text {
+		if ch < '0' || ch > '9' {
+			return fmt.Errorf("code2of5: only digits allowed, found %q", ch)
+		}
+	}
 	c.encodedText = text
 	return nil
 }
 
-// Render renders the 2-of-5 barcode to an image of the given size.
+// Render renders the 2-of-5 barcode using the native pattern-based renderer.
 func (c *Code2of5Barcode) Render(width, height int) (image.Image, error) {
 	if c.encodedText == "" {
 		return nil, fmt.Errorf("code2of5: Encode must be called before Render")
 	}
-	enc := code2of5.New()
-	enc.Interleaved = c.Interleaved
-	img, err := enc.Encode(c.encodedText, width, height)
+	pattern, err := c.GetPattern()
 	if err != nil {
-		// Target too small — render at a larger size, HTML exporter will resize.
-		// code2of5.Encode doesn't support 0×0, use double width as fallback.
-		img, err = enc.Encode(c.encodedText, width*2, height)
-		if err != nil {
-			return nil, err
-		}
+		return nil, err
 	}
-	return img, nil
+	return DrawLinearBarcode(pattern, c.encodedText, width, height, true, c.GetWideBarRatio()), nil
 }
 
 // DefaultValue returns a sample 2-of-5 value.
@@ -661,17 +743,16 @@ func (c *CodabarBarcode) Encode(text string) error {
 	return nil
 }
 
-// Render renders the Codabar barcode to an image of the given size.
+// Render renders the Codabar barcode using the native pattern-based renderer.
 func (c *CodabarBarcode) Render(width, height int) (image.Image, error) {
 	if c.encodedText == "" {
 		return nil, fmt.Errorf("codabar: Encode must be called before Render")
 	}
-	enc := codabar.New()
-	img, err := enc.Encode(c.encodedText, width, height)
+	pattern, err := c.GetPattern()
 	if err != nil {
-		img, err = enc.Encode(c.encodedText, 0, 0)
+		return nil, err
 	}
-	return img, err
+	return DrawLinearBarcode(pattern, c.encodedText, width, height, true, c.GetWideBarRatio()), nil
 }
 
 // DefaultValue returns a sample Codabar value.
@@ -697,17 +778,13 @@ func (d *DataMatrixBarcode) Encode(text string) error {
 	return nil
 }
 
-// Render renders the DataMatrix barcode to an image of the given size.
+// Render renders the DataMatrix barcode using the native matrix-based renderer.
 func (d *DataMatrixBarcode) Render(width, height int) (image.Image, error) {
 	if d.encodedText == "" {
 		return nil, fmt.Errorf("datamatrix: Encode must be called before Render")
 	}
-	enc := datamatrix.New()
-	img, err := enc.Encode(d.encodedText, width, height)
-	if err != nil {
-		img, err = enc.Encode(d.encodedText, 0, 0)
-	}
-	return img, err
+	matrix, rows, cols := d.GetMatrix()
+	return DrawBarcode2D(matrix, rows, cols, width, height), nil
 }
 
 // DefaultValue returns a sample DataMatrix value.
@@ -787,6 +864,14 @@ func NewBarcodeByType(t BarcodeType) BarcodeBase {
 		return NewSupplement5Barcode()
 	case BarcodeTypeJapanPost4State:
 		return NewJapanPost4StateBarcode()
+	case BarcodeTypeGS1DataBarOmni:
+		return NewGS1DataBarOmniBarcode()
+	case BarcodeTypeGS1DataBarStacked:
+		return NewGS1DataBarStackedBarcode()
+	case BarcodeTypeGS1DataBarStackedOmni:
+		return NewGS1DataBarStackedOmniBarcode()
+	case BarcodeTypeGS1DataBarLimited:
+		return NewGS1DataBarLimitedBarcode()
 	default:
 		return NewCode128Barcode()
 	}
@@ -829,10 +914,10 @@ var barcodeDisplayNames = map[string]BarcodeType{
 	"Japan Post 4 State Code":             BarcodeTypeJapanPost4State,
 	"Supplement 2":                        BarcodeTypeSupplement2,
 	"Supplement 5":                        BarcodeTypeSupplement5,
-	"GS1 DataBar Omnidirectional":         BarcodeTypeCode128,
-	"GS1 DataBar Limited":                 BarcodeTypeCode128,
-	"GS1 DataBar Stacked":                 BarcodeTypeCode128,
-	"GS1 DataBar Stacked Omnidirectional": BarcodeTypeCode128,
+	"GS1 DataBar Omnidirectional":         BarcodeTypeGS1DataBarOmni,
+	"GS1 DataBar Limited":                 BarcodeTypeGS1DataBarLimited,
+	"GS1 DataBar Stacked":                 BarcodeTypeGS1DataBarStacked,
+	"GS1 DataBar Stacked Omnidirectional": BarcodeTypeGS1DataBarStackedOmni,
 	"GS1 Datamatrix":                      BarcodeTypeDataMatrix,
 	"SwissQR":                             BarcodeTypeSwissQR,
 }

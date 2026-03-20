@@ -1,5 +1,11 @@
 # Agent Instructions
 
+## Source of Truth
+
+**The C# source code in `original-dotnet/` is the single source of truth.** All Go implementations must follow the same processes, algorithms, and rendering pipelines as the C# code. Do not invent alternative approaches — read the C# code first, then port it faithfully to idiomatic Go. When fixing bugs or adding features, always verify against the C# behavior using the comparison tools in `tools/`.
+
+## Issue Tracking
+
 This project uses **bd** (beads) for issue tracking. Run `bd onboard` to get started.
 
 ## Quick Reference

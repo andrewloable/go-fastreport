@@ -31,8 +31,14 @@ var ean13Parity = [10][6]byte{
 	{'A', 'B', 'B', 'A', 'B', 'A'}, // 9
 }
 
-// eanDigit converts a character '0'-'9' to int.
-func eanDigit(c byte) int { return int(c - '0') }
+// eanDigit converts a character '0'-'9' to int. Returns 0 for invalid chars.
+func eanDigit(c byte) int {
+	d := int(c - '0')
+	if d < 0 || d > 9 {
+		return 0
+	}
+	return d
+}
 
 // eanSetLen pads or truncates to exactly n chars, zero-filled on the left.
 func eanSetLen(text string, n int) string {

@@ -395,16 +395,25 @@ func (e *Exporter) renderObject(obj preview.PreparedObject, scale float32) {
 				picCSS.WriteString(fmt.Sprintf("border:none;width:%spx;height:%spx;", pxVal(w), pxVal(h)))
 				picClass := e.css.Register(picCSS.String())
 
-				// C# GetLayerPicture re-renders the image at display dimensions
-				// (Width*Zoom × Height*Zoom). We resize the image to match.
-				targetW := int(math.Round(float64(w)))
-				targetH := int(math.Round(float64(h)))
-				resized := resizeImagePNG(data, targetW, targetH)
-				mime := imageMIMEForCSS(resized)
-				encoded := base64.StdEncoding.EncodeToString(resized)
+				// For barcodes rendered at higher resolution (3x), keep the
+				// high-res image and let the browser downscale via background-size.
+				// For regular pictures, resize to display dimensions matching
+				// C#'s GetLayerPicture behavior.
+				var imgData []byte
+				bgSize := ""
+				if obj.IsBarcode {
+					imgData = data
+					bgSize = "background-size:100% 100%;"
+				} else {
+					targetW := int(math.Round(float64(w)))
+					targetH := int(math.Round(float64(h)))
+					imgData = resizeImagePNG(data, targetW, targetH)
+				}
+				mime := imageMIMEForCSS(imgData)
+				encoded := base64.StdEncoding.EncodeToString(imgData)
 				imgCSS := fmt.Sprintf(
-					"background: url('data:%s;base64,%s') no-repeat !important;-webkit-print-color-adjust:exact;",
-					mime, encoded,
+					"%sbackground: url('data:%s;base64,%s') no-repeat !important;-webkit-print-color-adjust:exact;",
+					bgSize, mime, encoded,
 				)
 				imgClass := e.css.Register(imgCSS)
 

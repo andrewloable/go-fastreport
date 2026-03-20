@@ -1,5 +1,5 @@
 // Package upc provides UPC-A barcode encoding for go-fastreport.
-// UPC-A is a subset of EAN-13: it is encoded as EAN-13 with a leading '0'.
+// Uses the native Go UPC-A encoder from the parent barcode package.
 package upc
 
 import (
@@ -7,15 +7,8 @@ import (
 	"image"
 	"image/color"
 
-	"github.com/boombuler/barcode"
-	boomean "github.com/boombuler/barcode/ean"
+	"github.com/andrewloable/go-fastreport/barcode"
 )
-
-// scaleBarcode is the barcode.Scale function, replaceable in tests.
-var scaleBarcode = barcode.Scale
-
-// encodeEAN is the boombuler EAN Encode function, replaceable in tests.
-var encodeEAN = boomean.Encode
 
 // Encoder encodes UPC-A barcodes.
 type Encoder struct {
@@ -33,9 +26,19 @@ func New() *Encoder {
 	}
 }
 
-// Encode encodes an 11- or 12-digit UPC-A code and scales it to width×height pixels.
-// The 12th checksum digit is automatically calculated if omitted.
-// Internally UPC-A is encoded as EAN-13 by prepending a '0'.
+// barcodeEncoder abstracts the barcode encode+render operations for testing.
+type barcodeEncoder interface {
+	Encode(text string) error
+	Render(width, height int) (image.Image, error)
+}
+
+// newBarcode is the factory function used to create the underlying barcode.
+// Tests can override this to inject errors.
+var newBarcode = func() barcodeEncoder {
+	return barcode.NewUPCABarcode()
+}
+
+// Encode encodes an 11- or 12-digit UPC-A code and renders it to width*height pixels.
 func (e *Encoder) Encode(code string, width, height int) (image.Image, error) {
 	if code == "" {
 		return nil, fmt.Errorf("upc: code must not be empty")
@@ -47,17 +50,15 @@ func (e *Encoder) Encode(code string, width, height int) (image.Image, error) {
 		return nil, err
 	}
 
-	// Pad to 12 digits so boombuler treats it as EAN-13 after prepending '0'.
-	ean13Code := "0" + code
-	bc, err := encodeEAN(ean13Code)
-	if err != nil {
+	bc := newBarcode()
+	if err := bc.Encode(code); err != nil {
 		return nil, fmt.Errorf("upc: %w", err)
 	}
-	scaled, err := scaleBarcode(bc, width, height)
+	img, err := bc.Render(width, height)
 	if err != nil {
-		return nil, fmt.Errorf("upc: scale %w", err)
+		return nil, fmt.Errorf("upc: render %w", err)
 	}
-	return e.applyColors(scaled), nil
+	return e.applyColors(img), nil
 }
 
 // Validate checks whether code is a valid UPC-A digit string (11 or 12 digits).

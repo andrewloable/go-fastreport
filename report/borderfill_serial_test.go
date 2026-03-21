@@ -566,8 +566,8 @@ func TestSerializeFill_HatchFill(t *testing.T) {
 	if _, ok := w.data["Fill.BackColor"]; !ok {
 		t.Error("Fill.BackColor should be written")
 	}
-	if v, ok := w.data["Fill.Style"]; !ok || v != 5 {
-		t.Errorf("Fill.Style = %v, want 5", v)
+	if v, ok := w.data["Fill.Style"]; !ok || v != "DiagonalCross" {
+		t.Errorf("Fill.Style = %v, want DiagonalCross", v)
 	}
 }
 

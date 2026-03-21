@@ -119,10 +119,11 @@ func (p *Parameter) AddParameter(child *Parameter) {
 	p.nested = append(p.nested, child)
 }
 
-// FindByName returns the first nested parameter with the given name, or nil.
+// FindByName returns the first nested parameter with the given name (case-insensitive), or nil.
+// C# ParameterCollection.FindByName uses case-insensitive comparison.
 func FindParameterByName(params []*Parameter, name string) *Parameter {
 	for _, p := range params {
-		if p.Name == name {
+		if strings.EqualFold(p.Name, name) {
 			return p
 		}
 	}
@@ -173,6 +174,17 @@ type Total struct {
 	Evaluator string
 	// PrintOn is the name of the band where the total is printed/reset.
 	PrintOn string
+	// ResetAfterPrint resets the total after it is printed.
+	// C# default: false.
+	ResetAfterPrint bool
+	// ResetOnReprint controls whether the total resets when a band is reprinted.
+	// C# default: true (serialized only when false).
+	ResetOnReprint bool
+	// EvaluateCondition is an optional filter expression applied per row.
+	EvaluateCondition string
+	// IncludeInvisibleRows includes hidden rows in the aggregate.
+	// C# default: false.
+	IncludeInvisibleRows bool
 }
 
 // DictionaryLookup is the minimal interface that DataHelper needs from the

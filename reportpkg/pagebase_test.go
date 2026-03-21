@@ -175,7 +175,7 @@ func TestSerialize_NewFields(t *testing.T) {
 		`UnlimitedHeightValue="1200"`,
 		`UnlimitedWidthValue="800"`,
 		`FirstPageSource="2"`,
-		`OtherPagesSource="3"`,
+		`OtherPageSource="3"`, // C# uses "OtherPageSource" (singular) not "OtherPagesSource"
 		`LastPageSource="4"`,
 		`Duplex="Vertical"`,
 	} {
@@ -208,7 +208,7 @@ func TestSerialize_DefaultsOmitted(t *testing.T) {
 		"UnlimitedHeightValue",
 		"UnlimitedWidthValue",
 		"FirstPageSource",
-		"OtherPagesSource",
+		"OtherPageSource", // C# uses "OtherPageSource" (singular)
 		"LastPageSource",
 		"Duplex",
 	} {

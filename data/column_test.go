@@ -261,6 +261,33 @@ func TestDataColumnSetName_KeepsCustomAlias(t *testing.T) {
 	}
 }
 
+// TestDataColumnSetName_CaseInsensitivePropNameSync verifies that PropName syncs
+// when it differs from Name only in case (case-insensitive equality).
+// C# Column.SetName uses base.SetName which relies on String.Compare ignoreCase.
+func TestDataColumnSetName_CaseInsensitivePropNameSync(t *testing.T) {
+	col := data.NewDataColumn("orders")
+	// Manually set PropName to a different case of Name.
+	col.PropName = "ORDERS"
+	// Now rename: "ORDERS" EqualFold "orders" → PropName should sync.
+	col.SetName("Customers")
+	if col.PropName != "Customers" {
+		t.Errorf("PropName should sync (case-insensitive): got %q, want Customers", col.PropName)
+	}
+}
+
+// TestDataColumnSetName_CaseInsensitiveAliasSync verifies that Alias syncs
+// when it differs from Name only in case (case-insensitive equality).
+func TestDataColumnSetName_CaseInsensitiveAliasSync(t *testing.T) {
+	col := data.NewDataColumn("orders")
+	// Set Alias to upper-case form of Name.
+	col.Alias = "ORDERS"
+	// Rename: "ORDERS" EqualFold "orders" → Alias should sync to new name.
+	col.SetName("Customers")
+	if col.Alias != "Customers" {
+		t.Errorf("Alias should sync (case-insensitive): got %q, want Customers", col.Alias)
+	}
+}
+
 // ---- FullName --------------------------------------------------------------
 
 func TestDataColumnFullName_TopLevel(t *testing.T) {

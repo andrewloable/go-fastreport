@@ -1453,3 +1453,155 @@ func TestLoadFromSerialReader_WrongRootElement(t *testing.T) {
 		t.Error("loadFromSerialReader should return error for wrong root element")
 	}
 }
+
+// ── Total — new fields round-trip ─────────────────────────────────────────────
+
+// TestDeserializeTotal_NewFields verifies that ResetAfterPrint, ResetOnReprint,
+// EvaluateCondition, and IncludeInvisibleRows are correctly loaded from FRX.
+// C# ref: FastReport.Data.Total.Serialize (Total.cs:300-321)
+func TestDeserializeTotal_NewFields(t *testing.T) {
+	frx := `<?xml version="1.0" encoding="utf-8"?><Report>
+		<Dictionary>
+			<Total Name="T1" Expression="[Amount]" TotalType="Sum"
+				Evaluator="DataBand1" PrintOn="Footer1"
+				ResetAfterPrint="true" ResetOnReprint="false"
+				EvaluateCondition="[Active]" IncludeInvisibleRows="true"/>
+		</Dictionary>
+		<ReportPage Name="Page1"/>
+	</Report>`
+	r := NewReport()
+	if err := r.LoadFromString(frx); err != nil {
+		t.Fatalf("LoadFromString: %v", err)
+	}
+	totals := r.Dictionary().Totals()
+	if len(totals) != 1 {
+		t.Fatalf("expected 1 total, got %d", len(totals))
+	}
+	t1 := totals[0]
+	if !t1.ResetAfterPrint {
+		t.Error("ResetAfterPrint should be true")
+	}
+	if t1.ResetOnReprint {
+		t.Error("ResetOnReprint should be false")
+	}
+	if t1.EvaluateCondition != "[Active]" {
+		t.Errorf("EvaluateCondition = %q, want [Active]", t1.EvaluateCondition)
+	}
+	if !t1.IncludeInvisibleRows {
+		t.Error("IncludeInvisibleRows should be true")
+	}
+}
+
+// TestSerializeTotal_NewFields verifies that ResetAfterPrint, EvaluateCondition,
+// and IncludeInvisibleRows are written to FRX when non-default.
+// ResetOnReprint is written only when false (C# default is true).
+func TestSerializeTotal_NewFields(t *testing.T) {
+	r := NewReport()
+	pg := NewReportPage()
+	pg.SetName("P1")
+	r.AddPage(pg)
+	r.Dictionary().AddTotal(&data.Total{
+		Name:                 "T1",
+		Expression:           "[Qty]",
+		TotalType:            data.TotalTypeCount,
+		ResetAfterPrint:      true,
+		ResetOnReprint:       false, // non-default (C# default is true)
+		EvaluateCondition:    "[Active]",
+		IncludeInvisibleRows: true,
+	})
+	xml, err := r.SaveToString()
+	if err != nil {
+		t.Fatalf("SaveToString: %v", err)
+	}
+	for _, want := range []string{
+		`ResetAfterPrint="true"`,
+		`ResetOnReprint="false"`,
+		`EvaluateCondition="[Active]"`,
+		`IncludeInvisibleRows="true"`,
+	} {
+		if !strings.Contains(xml, want) {
+			t.Errorf("expected %q in XML:\n%s", want, xml)
+		}
+	}
+}
+
+// TestSerializeTotal_DefaultsOmitted verifies that ResetOnReprint (true by default)
+// and ResetAfterPrint/IncludeInvisibleRows (false by default) are omitted when default.
+func TestSerializeTotal_DefaultsOmitted(t *testing.T) {
+	r := NewReport()
+	pg := NewReportPage()
+	pg.SetName("P1")
+	r.AddPage(pg)
+	r.Dictionary().AddTotal(&data.Total{
+		Name:           "T1",
+		Expression:     "[Amount]",
+		ResetOnReprint: true, // default — should NOT be written
+	})
+	xml, err := r.SaveToString()
+	if err != nil {
+		t.Fatalf("SaveToString: %v", err)
+	}
+	for _, absent := range []string{"ResetAfterPrint", "ResetOnReprint", "EvaluateCondition", "IncludeInvisibleRows"} {
+		if strings.Contains(xml, absent) {
+			t.Errorf("field %q should be absent when at default value in:\n%s", absent, xml)
+		}
+	}
+}
+
+// ── Parameter — new fields round-trip ────────────────────────────────────────
+
+// TestDeserializeParameter_DescriptionAndAsString verifies that Description and
+// AsString are read correctly from FRX.
+// C# ref: FastReport.Data.Parameter.Serialize (Parameter.cs:188-198)
+func TestDeserializeParameter_DescriptionAndAsString(t *testing.T) {
+	frx := `<?xml version="1.0" encoding="utf-8"?><Report>
+		<Dictionary>
+			<Parameter Name="MinDate" DataType="String" AsString="2024-01-01"
+				Description="Start date filter"/>
+		</Dictionary>
+		<ReportPage Name="P1"/>
+	</Report>`
+	r := NewReport()
+	if err := r.LoadFromString(frx); err != nil {
+		t.Fatalf("LoadFromString: %v", err)
+	}
+	params := r.Dictionary().Parameters()
+	if len(params) != 1 {
+		t.Fatalf("expected 1 parameter, got %d", len(params))
+	}
+	p := params[0]
+	if p.Description != "Start date filter" {
+		t.Errorf("Description = %q, want 'Start date filter'", p.Description)
+	}
+	if p.Value != "2024-01-01" {
+		t.Errorf("Value = %v, want '2024-01-01'", p.Value)
+	}
+}
+
+// TestSerializeParameter_DescriptionAndValue verifies that Description and
+// AsString (from Value) are written to FRX when non-empty.
+func TestSerializeParameter_DescriptionAndValue(t *testing.T) {
+	r := NewReport()
+	pg := NewReportPage()
+	pg.SetName("P1")
+	r.AddPage(pg)
+	r.Dictionary().AddParameter(&data.Parameter{
+		Name:        "MinDate",
+		DataType:    "String",
+		Value:       "2024-01-01",
+		Description: "Start date filter",
+	})
+	xml, err := r.SaveToString()
+	if err != nil {
+		t.Fatalf("SaveToString: %v", err)
+	}
+	for _, want := range []string{
+		`AsString="2024-01-01"`,
+		`Description="Start date filter"`,
+	} {
+		if !strings.Contains(xml, want) {
+			t.Errorf("expected %q in XML:\n%s", want, xml)
+		}
+	}
+	// When Expression is non-empty, AsString should not be written.
+}

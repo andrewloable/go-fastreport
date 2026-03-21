@@ -59,6 +59,9 @@ func (f *CurrencyFormat) FormatValue(v any) string {
 	if v == nil {
 		return ""
 	}
+	if isNilPointer(v) {
+		return ""
+	}
 	val, ok := toFloat64(v)
 	if !ok {
 		return fmt.Sprint(v)

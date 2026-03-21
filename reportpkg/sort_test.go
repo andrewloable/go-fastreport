@@ -13,23 +13,24 @@ import (
 // findDataBands collects all DataBand instances from the report.
 func findDataBands(r *reportpkg.Report) []*band.DataBand {
 	var result []*band.DataBand
-	type hasObjects interface {
-		Objects() *report.ObjectCollection
+	var collectBands func(b report.Base)
+	collectBands = func(b report.Base) {
+		if db, ok := b.(*band.DataBand); ok {
+			result = append(result, db)
+		}
+		// Recurse into GroupHeaderBand's nested DataBand and NestedGroup.
+		if gh, ok := b.(*band.GroupHeaderBand); ok {
+			if gh.Data() != nil {
+				collectBands(gh.Data())
+			}
+			if gh.NestedGroup() != nil {
+				collectBands(gh.NestedGroup())
+			}
+		}
 	}
 	for _, pg := range r.Pages() {
 		for _, b := range pg.AllBands() {
-			if db, ok := b.(*band.DataBand); ok {
-				result = append(result, db)
-			}
-			// Also check nested bands inside the band's Objects().
-			if h, ok := b.(hasObjects); ok {
-				objs := h.Objects()
-				for i := 0; i < objs.Len(); i++ {
-					if db, ok := objs.Get(i).(*band.DataBand); ok {
-						result = append(result, db)
-					}
-				}
-			}
+			collectBands(b)
 		}
 	}
 	return result

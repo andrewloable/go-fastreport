@@ -75,8 +75,15 @@ func NewBaseDataSource(name string) *BaseDataSource {
 // Name returns the data source name.
 func (ds *BaseDataSource) Name() string { return ds.name }
 
-// SetName sets the data source name.
-func (ds *BaseDataSource) SetName(n string) { ds.name = n }
+// SetName sets the data source name. When alias was previously equal to name
+// (case-insensitively) or empty, it is kept in sync with the new name.
+// Mirrors C# DataComponentBase.SetName alias-sync behavior.
+func (ds *BaseDataSource) SetName(n string) {
+	if ds.alias == "" || strings.EqualFold(ds.alias, ds.name) {
+		ds.alias = n
+	}
+	ds.name = n
+}
 
 // Alias returns the display alias.
 func (ds *BaseDataSource) Alias() string { return ds.alias }

@@ -186,13 +186,14 @@ func TestSerializeTextFormat_CurrencyWithLocale(t *testing.T) {
 	}
 }
 
-// TestSerializeTextFormat_DateNonDefaults exercises DateFormat with non-default Format string
-// and UseLocaleSettings=true (which writes the UseLocale attribute, matching C# FRX).
+// TestSerializeTextFormat_DateNonDefaults exercises DateFormat with non-default Format string.
+// C# DateFormat inherits CustomFormat.Serialize() which only writes the "Format" pattern
+// attribute — UseLocale is NOT serialized for Date/Time formats.
 func TestSerializeTextFormat_DateNonDefaults(t *testing.T) {
 	orig := object.NewTextObject()
 	df := &format.DateFormat{
 		Format:            "dd-MM-yyyy", // non-default
-		UseLocaleSettings: true,         // non-default (default=false), writes UseLocale=true
+		UseLocaleSettings: true,
 	}
 	orig.SetFormat(df)
 
@@ -207,12 +208,15 @@ func TestSerializeTextFormat_DateNonDefaults(t *testing.T) {
 	checks := []string{
 		`Format="Date"`,
 		`Format.Format=`,
-		`Format.UseLocale="true"`,
 	}
 	for _, c := range checks {
 		if !strings.Contains(xml, c) {
 			t.Errorf("expected %q in XML:\n%s", c, xml)
 		}
+	}
+	// C# does not serialize UseLocale for DateFormat.
+	if strings.Contains(xml, "UseLocale") {
+		t.Errorf("unexpected UseLocale in XML:\n%s", xml)
 	}
 
 	r := serial.NewReader(bytes.NewReader(buf.Bytes()))
@@ -231,18 +235,16 @@ func TestSerializeTextFormat_DateNonDefaults(t *testing.T) {
 	if dfGot.Format != "dd-MM-yyyy" {
 		t.Errorf("DateFormat.Format: got %q, want 'dd-MM-yyyy'", dfGot.Format)
 	}
-	if !dfGot.UseLocaleSettings {
-		t.Error("DateFormat.UseLocaleSettings should be true after round-trip")
-	}
 }
 
-// TestSerializeTextFormat_TimeNonDefaults exercises TimeFormat with non-default Format
-// and UseLocaleSettings=true (writes UseLocale attribute, matching C# FRX).
+// TestSerializeTextFormat_TimeNonDefaults exercises TimeFormat with non-default Format.
+// C# TimeFormat inherits CustomFormat.Serialize() which only writes the "Format" pattern
+// attribute — UseLocale is NOT serialized for Date/Time formats.
 func TestSerializeTextFormat_TimeNonDefaults(t *testing.T) {
 	orig := object.NewTextObject()
 	tf := &format.TimeFormat{
 		Format:            "HH:mm:ss.fff", // non-default
-		UseLocaleSettings: true,           // non-default (writes UseLocale=true)
+		UseLocaleSettings: true,
 	}
 	orig.SetFormat(tf)
 
@@ -257,12 +259,15 @@ func TestSerializeTextFormat_TimeNonDefaults(t *testing.T) {
 	checks := []string{
 		`Format="Time"`,
 		`Format.Format=`,
-		`Format.UseLocale="true"`,
 	}
 	for _, c := range checks {
 		if !strings.Contains(xml, c) {
 			t.Errorf("expected %q in XML:\n%s", c, xml)
 		}
+	}
+	// C# does not serialize UseLocale for TimeFormat.
+	if strings.Contains(xml, "UseLocale") {
+		t.Errorf("unexpected UseLocale in XML:\n%s", xml)
 	}
 
 	r := serial.NewReader(bytes.NewReader(buf.Bytes()))

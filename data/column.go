@@ -92,10 +92,14 @@ func NewDataColumn(name string) *DataColumn {
 // SetName sets the column's Name and, when PropName was previously synced with
 // Name (or empty), keeps PropName in sync. This mirrors C# Column.SetName.
 func (c *DataColumn) SetName(name string) {
-	if c.PropName == "" || c.PropName == c.Name {
+	// Sync PropName when it was previously identical to Name (case-insensitive)
+	// or when it was empty. Matches C# Column.SetName.
+	if c.PropName == "" || strings.EqualFold(c.PropName, c.Name) {
 		c.PropName = name
 	}
-	if c.Alias == "" || c.Alias == c.Name {
+	// Sync Alias when it was previously identical to Name (case-insensitive)
+	// or when it was empty. Matches C# DataComponentBase.SetName alias-sync logic.
+	if c.Alias == "" || strings.EqualFold(c.Alias, c.Name) {
 		c.Alias = name
 	}
 	c.Name = name

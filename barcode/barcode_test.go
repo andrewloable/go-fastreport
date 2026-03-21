@@ -188,8 +188,8 @@ func TestNewBarcodeObject_Defaults(t *testing.T) {
 	if bo.Brackets() != "[,]" {
 		t.Errorf("Brackets default = %q, want [,]", bo.Brackets())
 	}
-	if bo.HideIfNoData() {
-		t.Error("HideIfNoData should default to false")
+	if !bo.HideIfNoData() {
+		t.Error("HideIfNoData should default to true (C# BarcodeObject.cs:696)")
 	}
 }
 
@@ -438,6 +438,121 @@ func TestQRBarcode_DefaultValue(t *testing.T) {
 	q := barcode.NewQRBarcode()
 	if got := q.DefaultValue(); got == "" {
 		t.Error("QRBarcode.DefaultValue returned empty string")
+	}
+}
+
+// TestQRBarcode_HelloWorld_ECLevelM is an end-to-end test verifying that
+// "HELLO WORLD" encoded at error-correction level M produces a valid QR code
+// matrix with the expected structural properties from QR spec Annex I
+// (ISO 18004:2015 — the canonical reference example).
+//
+// "HELLO WORLD" at level M fits in a Version 1 QR code (21×21 modules):
+//   - Alphanumeric mode, 11 characters
+//   - Version 1-M capacity: 14 alphanumeric characters
+//   - Matrix dimensions: 21×21
+//
+// Static elements verified (same for ALL version-1 QR codes):
+//   - Top-left finder pattern 7×7 corner: outer ring is all dark
+//   - Top-right finder pattern 7×7 corner: outer ring is all dark
+//   - Bottom-left finder pattern 7×7 corner: outer ring is all dark
+//   - Timing patterns on row 6 and column 6 are alternating
+func TestQRBarcode_HelloWorld_ECLevelM(t *testing.T) {
+	q := barcode.NewQRBarcode()
+	q.ErrorCorrection = "M"
+	q.QuietZone = false // disable 4-module border so matrix is the raw 21×21 QR code
+	if err := q.Encode("HELLO WORLD"); err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	matrix, rows, cols := q.GetMatrix()
+	if matrix == nil {
+		t.Fatal("GetMatrix returned nil")
+	}
+
+	// Version 1 QR code must be exactly 21×21.
+	const wantSize = 21
+	if rows != wantSize || cols != wantSize {
+		t.Fatalf("dimensions = %d×%d, want %d×%d (version 1)", rows, cols, wantSize, wantSize)
+	}
+
+	// Helper: true = dark module (1), false = light module (0).
+	dark := func(r, c int) bool { return matrix[r][c] }
+
+	// Verify top-left finder pattern outer ring (rows 0-6, cols 0-6).
+	// The 7×7 finder pattern has: all-dark outer ring (rows 0, 6 and cols 0, 6).
+	for c := 0; c < 7; c++ {
+		if !dark(0, c) {
+			t.Errorf("top-left finder: row 0, col %d should be dark", c)
+		}
+		if !dark(6, c) {
+			t.Errorf("top-left finder: row 6, col %d should be dark", c)
+		}
+	}
+	for r := 1; r < 6; r++ {
+		if !dark(r, 0) {
+			t.Errorf("top-left finder: row %d, col 0 should be dark", r)
+		}
+		if !dark(r, 6) {
+			t.Errorf("top-left finder: row %d, col 6 should be dark", r)
+		}
+	}
+
+	// Verify top-right finder pattern outer ring (rows 0-6, cols 14-20).
+	for c := 14; c < 21; c++ {
+		if !dark(0, c) {
+			t.Errorf("top-right finder: row 0, col %d should be dark", c)
+		}
+		if !dark(6, c) {
+			t.Errorf("top-right finder: row 6, col %d should be dark", c)
+		}
+	}
+	for r := 1; r < 6; r++ {
+		if !dark(r, 14) {
+			t.Errorf("top-right finder: row %d, col 14 should be dark", r)
+		}
+		if !dark(r, 20) {
+			t.Errorf("top-right finder: row %d, col 20 should be dark", r)
+		}
+	}
+
+	// Verify bottom-left finder pattern outer ring (rows 14-20, cols 0-6).
+	for c := 0; c < 7; c++ {
+		if !dark(14, c) {
+			t.Errorf("bottom-left finder: row 14, col %d should be dark", c)
+		}
+		if !dark(20, c) {
+			t.Errorf("bottom-left finder: row 20, col %d should be dark", c)
+		}
+	}
+	for r := 15; r < 20; r++ {
+		if !dark(r, 0) {
+			t.Errorf("bottom-left finder: row %d, col 0 should be dark", r)
+		}
+		if !dark(r, 6) {
+			t.Errorf("bottom-left finder: row %d, col 6 should be dark", r)
+		}
+	}
+
+	// Verify horizontal timing pattern (row 6, cols 8-12 for version 1).
+	// Timing pattern alternates dark/light starting dark at even columns.
+	for c := 8; c <= 12; c++ {
+		wantDark := (c % 2) == 0
+		if dark(6, c) != wantDark {
+			t.Errorf("timing row 6, col %d: dark=%v, want %v", c, dark(6, c), wantDark)
+		}
+	}
+
+	// Verify vertical timing pattern (col 6, rows 8-12 for version 1).
+	for r := 8; r <= 12; r++ {
+		wantDark := (r % 2) == 0
+		if dark(r, 6) != wantDark {
+			t.Errorf("timing col 6, row %d: dark=%v, want %v", r, dark(r, 6), wantDark)
+		}
+	}
+
+	// Verify the dark module at (4*version+9, 8) = (13, 8) is always dark
+	// per the QR spec. For version 1 this is row 13, col 8.
+	if !dark(13, 8) {
+		t.Error("dark module at (13,8) should always be dark (QR spec fixed)")
 	}
 }
 

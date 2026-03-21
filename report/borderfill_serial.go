@@ -99,6 +99,49 @@ func formatLineStyle(ls style.LineStyle) string {
 	}
 }
 
+// ── HatchStyle ───────────────────────────────────────────────────────────────
+
+// formatHatchStyle converts a HatchStyle to the C# System.Drawing.Drawing2D.HatchStyle
+// enum name used by FRWriter.WriteValue.
+func formatHatchStyle(h style.HatchStyle) string {
+	switch h {
+	case style.HatchHorizontal:
+		return "Horizontal"
+	case style.HatchVertical:
+		return "Vertical"
+	case style.HatchDiagonal1:
+		return "ForwardDiagonal"
+	case style.HatchDiagonal2:
+		return "BackwardDiagonal"
+	case style.HatchCross:
+		return "Cross"
+	case style.HatchDiagonalCross:
+		return "DiagonalCross"
+	default:
+		return "Horizontal"
+	}
+}
+
+// parseHatchStyle converts a C# HatchStyle enum name (or int string) to HatchStyle.
+func parseHatchStyle(s string) style.HatchStyle {
+	switch strings.TrimSpace(s) {
+	case "Horizontal", "0":
+		return style.HatchHorizontal
+	case "Vertical", "1":
+		return style.HatchVertical
+	case "ForwardDiagonal", "2":
+		return style.HatchDiagonal1
+	case "BackwardDiagonal", "3":
+		return style.HatchDiagonal2
+	case "Cross", "4":
+		return style.HatchCross
+	case "DiagonalCross", "5":
+		return style.HatchDiagonalCross
+	default:
+		return style.HatchHorizontal
+	}
+}
+
 // ── Border ────────────────────────────────────────────────────────────────────
 
 // defaultLineColor is the FRX default border line colour (opaque black).
@@ -313,7 +356,7 @@ func serializeFill(w Writer, f style.Fill) {
 			w.WriteStr("Fill.BackColor", utils.FormatColor(ft.BackColor))
 		}
 		if ft.Style != 0 {
-			w.WriteInt("Fill.Style", int(ft.Style))
+			w.WriteStr("Fill.Style", formatHatchStyle(ft.Style))
 		}
 
 	// NoneFill and unknown types: no output.
@@ -367,7 +410,7 @@ func deserializeFill(r Reader, current style.Fill) style.Fill {
 				f.BackColor = c
 			}
 		}
-		f.Style = style.HatchStyle(r.ReadInt("Fill.Style", 0))
+		f.Style = parseHatchStyle(r.ReadStr("Fill.Style", "Horizontal"))
 		return f
 
 	default:

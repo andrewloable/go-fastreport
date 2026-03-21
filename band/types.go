@@ -381,7 +381,45 @@ func (g *GroupHeaderBand) Serialize(w report.Writer) error {
 	if g.resetPageNumber {
 		w.WriteBool("ResetPageNumber", true)
 	}
-	return g.BandBase.serializeChildren(w)
+	if err := g.BandBase.serializeChildren(w); err != nil {
+		return err
+	}
+	// Write special child bands not in the objects collection.
+	// Mirrors C# GroupHeaderBand.GetChildObjects (GroupHeaderBand.cs:272).
+	if g.nestedGroup != nil {
+		if err := w.WriteObject(g.nestedGroup); err != nil {
+			return err
+		}
+	}
+	if g.data != nil {
+		if err := w.WriteObject(g.data); err != nil {
+			return err
+		}
+	}
+	if g.groupFooter != nil {
+		if err := w.WriteObject(g.groupFooter); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// AddChild routes deserialized child bands to the correct GroupHeaderBand field.
+// Mirrors C# GroupHeaderBand.AddChild (GroupHeaderBand.cs:295).
+func (g *GroupHeaderBand) AddChild(child report.Base) {
+	switch c := child.(type) {
+	case *DataBand:
+		g.data = c
+		c.SetParent(g)
+	case *GroupHeaderBand:
+		g.nestedGroup = c
+		c.SetParent(g)
+	case *GroupFooterBand:
+		g.groupFooter = c
+		c.SetParent(g)
+	default:
+		g.BandBase.AddChild(child)
+	}
 }
 
 // Deserialize reads GroupHeaderBand properties.
@@ -597,6 +635,21 @@ func (d *DataBand) IsDeepmostDataBand() bool {
 
 // Serialize writes DataBand properties that differ from defaults.
 // Attributes are written before child objects (required by the streaming XML encoder).
+// AddChild routes deserialized child bands to the correct DataBand field.
+// Mirrors C# DataBand.AddChild (DataBand.cs).
+func (d *DataBand) AddChild(child report.Base) {
+	switch c := child.(type) {
+	case *DataHeaderBand:
+		d.header = c
+		c.SetParent(d)
+	case *DataFooterBand:
+		d.footer = c
+		c.SetParent(d)
+	default:
+		d.BandBase.AddChild(child)
+	}
+}
+
 func (d *DataBand) Serialize(w report.Writer) error {
 	// Write BandBase + parent attrs first (no children yet).
 	if err := d.BandBase.serializeAttrs(w); err != nil {
@@ -660,7 +713,22 @@ func (d *DataBand) Serialize(w report.Writer) error {
 		}
 	}
 	// Write child objects after all attrs.
-	return d.BandBase.serializeChildren(w)
+	if err := d.BandBase.serializeChildren(w); err != nil {
+		return err
+	}
+	// Write header/footer sub-bands not in the objects collection.
+	// Mirrors C# DataBand.GetChildObjects.
+	if d.header != nil {
+		if err := w.WriteObject(d.header); err != nil {
+			return err
+		}
+	}
+	if d.footer != nil {
+		if err := w.WriteObject(d.footer); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Deserialize reads DataBand properties.

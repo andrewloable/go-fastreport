@@ -33,6 +33,34 @@ func TestBaseDataSourceName(t *testing.T) {
 	}
 }
 
+// TestBaseDataSource_SetName_SyncsAlias_CaseInsensitive verifies that SetName
+// syncs alias when it previously matched name case-insensitively.
+// C# DataComponentBase.SetName: String.Compare(Alias, Name, ignoreCase:true) == 0.
+func TestBaseDataSource_SetName_SyncsAlias_CaseInsensitive(t *testing.T) {
+	// Case 1: alias == name exactly → should sync.
+	ds := data.NewBaseDataSource("orders")
+	ds.SetName("Customers")
+	if ds.Alias() != "Customers" {
+		t.Errorf("case 1: alias should sync, got %q", ds.Alias())
+	}
+
+	// Case 2: alias matches name only in different case → should still sync.
+	ds2 := data.NewBaseDataSource("orders")
+	ds2.SetAlias("ORDERS") // same as name but uppercase
+	ds2.SetName("Customers")
+	if ds2.Alias() != "Customers" {
+		t.Errorf("case 2: case-insensitive alias match should sync, got %q", ds2.Alias())
+	}
+
+	// Case 3: alias is a genuinely different value → must NOT sync.
+	ds3 := data.NewBaseDataSource("orders")
+	ds3.SetAlias("My Custom Alias")
+	ds3.SetName("Invoices")
+	if ds3.Alias() != "My Custom Alias" {
+		t.Errorf("case 3: custom alias should NOT be overwritten, got %q", ds3.Alias())
+	}
+}
+
 func TestBaseDataSourceColumns(t *testing.T) {
 	ds := data.NewBaseDataSource("test")
 	ds.AddColumn(data.Column{Name: "ID", Alias: "ID", DataType: "int"})

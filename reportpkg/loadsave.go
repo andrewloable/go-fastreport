@@ -405,9 +405,15 @@ func deserializeDictionary(rdr *serial.Reader, dict *data.Dictionary, baseDir st
 			dict.AddTotal(t)
 			// Also register as an AggregateTotal so the engine accumulates per-row.
 			at := &data.AggregateTotal{
-				Name:       t.Name,
-				TotalType:  t.TotalType,
-				Expression: t.Expression,
+				Name:                 t.Name,
+				TotalType:            t.TotalType,
+				Expression:           t.Expression,
+				Evaluator:            t.Evaluator,
+				PrintOn:              t.PrintOn,
+				ResetAfterPrint:      t.ResetAfterPrint,
+				ResetOnReprint:       t.ResetOnReprint,
+				EvaluateCondition:    t.EvaluateCondition,
+				IncludeInvisibleRows: t.IncludeInvisibleRows,
 			}
 			dict.AddAggregateTotal(at)
 		case "JsonDataConnection":
@@ -809,9 +815,15 @@ func deserializeBusinessObjectDataSource(rdr *serial.Reader) []data.DataSource {
 // deserializeParameter reads a single <Parameter> element (and nested children).
 func deserializeParameter(rdr *serial.Reader) *data.Parameter {
 	p := &data.Parameter{
-		Name:       rdr.ReadStr("Name", ""),
-		DataType:   rdr.ReadStr("DataType", ""),
-		Expression: rdr.ReadStr("Expression", ""),
+		Name:        rdr.ReadStr("Name", ""),
+		DataType:    rdr.ReadStr("DataType", ""),
+		Expression:  rdr.ReadStr("Expression", ""),
+		Description: rdr.ReadStr("Description", ""),
+	}
+	// AsString is the persistent string value when Expression is empty.
+	// C# ref: FastReport.Data.Parameter.Serialize (Parameter.cs:192-193)
+	if asStr := rdr.ReadStr("AsString", ""); asStr != "" && p.Expression == "" {
+		p.Value = asStr
 	}
 	// Read nested Parameter children.
 	for {
@@ -855,11 +867,15 @@ func deserializeRelation(rdr *serial.Reader) *data.Relation {
 // deserializeTotal reads a single <Total> element.
 func deserializeTotal(rdr *serial.Reader) *data.Total {
 	t := &data.Total{
-		Name:       rdr.ReadStr("Name", ""),
-		Expression: rdr.ReadStr("Expression", ""),
-		TotalType:  parseTotalType(rdr.ReadStr("TotalType", "Sum")),
-		Evaluator:  rdr.ReadStr("Evaluator", ""),
-		PrintOn:    rdr.ReadStr("PrintOn", ""),
+		Name:                 rdr.ReadStr("Name", ""),
+		Expression:           rdr.ReadStr("Expression", ""),
+		TotalType:            parseTotalType(rdr.ReadStr("TotalType", "Sum")),
+		Evaluator:            rdr.ReadStr("Evaluator", ""),
+		PrintOn:              rdr.ReadStr("PrintOn", ""),
+		ResetAfterPrint:      rdr.ReadBool("ResetAfterPrint", false),
+		ResetOnReprint:       rdr.ReadBool("ResetOnReprint", true), // C# default is true
+		EvaluateCondition:    rdr.ReadStr("EvaluateCondition", ""),
+		IncludeInvisibleRows: rdr.ReadBool("IncludeInvisibleRows", false),
 	}
 	// Drain children (none expected).
 	for {

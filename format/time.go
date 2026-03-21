@@ -34,6 +34,9 @@ func (f *TimeFormat) FormatValue(v any) string {
 	if v == nil {
 		return ""
 	}
+	if isNilPointer(v) {
+		return ""
+	}
 	layout := f.Format
 	if layout == "" {
 		layout = "15:04"

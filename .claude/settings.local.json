@@ -111,7 +111,9 @@
       "Bash(kill 22074)",
       "Bash(BD_NO_DB=true bd close go-fastreport-8guu --force)",
       "Bash(/dev/null ls:*)",
-      "Bash(1 go:*)"
+      "Bash(1 go:*)",
+      "Bash(head -5 /Volumes/mandark-1Tb/projects/loabletech/go-fastreport/reportpkg/frx_serialization_fixes_test.go grep -n \"loadFRXSmoke\\\\|roundTripFRX\\\\|type Report\\\\|func.*Report\" /Volumes/mandark-1Tb/projects/loabletech/go-fastreport/reportpkg/reportpkg_smoke_test.go)",
+      "Bash(head -20 grep -n \"type Parent\\\\|AddChild\" /Volumes/mandark-1Tb/projects/loabletech/go-fastreport/report/interfaces.go)"
     ]
   }
 }

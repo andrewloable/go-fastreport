@@ -475,7 +475,7 @@ func (t *TableDataSource) Serialize(w report.Writer) error {
 	if t.name != "" {
 		w.WriteStr("Name", t.name)
 	}
-	if t.alias != t.name && t.alias != "" {
+	if t.alias != "" && !strings.EqualFold(t.alias, t.name) {
 		w.WriteStr("Alias", t.alias)
 	}
 	if !t.enabled {

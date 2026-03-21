@@ -72,10 +72,7 @@ func serializeTextFormat(w report.Writer, f format.Format) {
 		if v.Format != dflt.Format {
 			w.WriteStr(pfx+"Format", v.Format)
 		}
-		if v.UseLocaleSettings {
-			// C# FRX attribute name is "UseLocale" (not "UseLocaleSettings")
-			w.WriteBool(pfx+"UseLocale", true)
-		}
+		// C# DateFormat inherits CustomFormat.Serialize which only writes "Format" — no UseLocale.
 
 	case *format.TimeFormat:
 		w.WriteStr("Format", "Time")
@@ -83,10 +80,7 @@ func serializeTextFormat(w report.Writer, f format.Format) {
 		if v.Format != dflt.Format {
 			w.WriteStr(pfx+"Format", v.Format)
 		}
-		if v.UseLocaleSettings {
-			// C# FRX attribute name is "UseLocale" (not "UseLocaleSettings")
-			w.WriteBool(pfx+"UseLocale", true)
-		}
+		// C# TimeFormat inherits CustomFormat.Serialize which only writes "Format" — no UseLocale.
 
 	case *format.PercentFormat:
 		w.WriteStr("Format", "Percent")

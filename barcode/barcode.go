@@ -460,16 +460,20 @@ func (p Padding) Vertical() float32 { return p.Top + p.Bottom }
 // AutoSize defaults to true, matching C# BarcodeObject (BarcodeObject.cs:689).
 // C# BarcodeObject constructor: Barcode = new Barcode39() (BarcodeObject.cs:688).
 func NewBarcodeObject() *BarcodeObject {
-	return &BarcodeObject{
+	b := &BarcodeObject{
 		ReportComponentBase: *report.NewReportComponentBase(),
 		Barcode:             NewCode39Barcode(),
 		autoSize:            true,
 		showText:            true,
+		showMarker:          true,  // C# BarcodeObject.cs:695 ShowMarker = true
+		hideIfNoData:        true,  // C# BarcodeObject.cs:696 HideIfNoData = true
 		zoom:                1.0,
 		allowExpressions:    false, // C# BarcodeObject.cs:232 [DefaultValue(false)]
 		brackets:            "[,]",
 		trim:                true, // C# LinearBarcodeBase default
 	}
+	b.text = b.Barcode.DefaultValue() // C# BarcodeObject.cs:697 Text = Barcode.GetDefaultValue()
+	return b
 }
 
 // --- Property accessors ---
@@ -743,8 +747,8 @@ func (b *BarcodeObject) Serialize(w report.Writer) error {
 	if b.zoom != 1.0 {
 		w.WriteFloat("Zoom", b.zoom)
 	}
-	if b.hideIfNoData {
-		w.WriteBool("HideIfNoData", true)
+	if !b.hideIfNoData {
+		w.WriteBool("HideIfNoData", false)
 	}
 	if b.noDataText != "" {
 		w.WriteStr("NoDataText", b.noDataText)
@@ -766,9 +770,9 @@ func (b *BarcodeObject) Serialize(w report.Writer) error {
 	if b.horzAlign != BarcodeHorzAlignLeft {
 		w.WriteStr("HorzAlign", barcodeHorzAlignStr(b.horzAlign))
 	}
-	// ShowMarker: default false (BarcodeObject.cs:329).
-	if b.showMarker {
-		w.WriteBool("ShowMarker", true)
+	// ShowMarker: default true (BarcodeObject.cs:695).
+	if !b.showMarker {
+		w.WriteBool("ShowMarker", false)
 	}
 	// AsBitmap: default false (BarcodeObject.cs:318).
 	if b.asBitmap {
@@ -925,7 +929,7 @@ func (b *BarcodeObject) Deserialize(r report.Reader) error {
 	b.text = r.ReadStr("Text", "")
 	b.showText = r.ReadBool("ShowText", true)
 	b.zoom = r.ReadFloat("Zoom", 1.0)
-	b.hideIfNoData = r.ReadBool("HideIfNoData", false)
+	b.hideIfNoData = r.ReadBool("HideIfNoData", true) // C# BarcodeObject default true
 	b.noDataText = r.ReadStr("NoDataText", "")
 	b.allowExpressions = r.ReadBool("AllowExpressions", true)
 	b.brackets = r.ReadStr("Brackets", "[,]")
@@ -938,8 +942,8 @@ func (b *BarcodeObject) Deserialize(r report.Reader) error {
 	b.padding.Bottom = r.ReadFloat("Padding.Bottom", 0)
 	// HorzAlign: default Left (BarcodeObject.cs:119).
 	b.horzAlign = parseBarcodeHorzAlign(r.ReadStr("HorzAlign", "Left"))
-	// ShowMarker: default false (BarcodeObject.cs:329).
-	b.showMarker = r.ReadBool("ShowMarker", false)
+	// ShowMarker: default true (BarcodeObject.cs:695).
+	b.showMarker = r.ReadBool("ShowMarker", true)
 	// AsBitmap: default false (BarcodeObject.cs:318).
 	b.asBitmap = r.ReadBool("AsBitmap", false)
 	return nil

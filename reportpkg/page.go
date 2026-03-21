@@ -540,13 +540,14 @@ func (p *ReportPage) Serialize(w report.Writer) error {
 		w.WriteFloat("UnlimitedWidthValue", p.UnlimitedWidthValue)
 	}
 	if p.FirstPageSource != 7 {
-		w.WriteInt("FirstPageSource", p.FirstPageSource)
+		w.WriteFloat("FirstPageSource", float32(p.FirstPageSource))
 	}
+	// C# attribute name is "OtherPageSource" (singular) — FastReport.Base/ReportPage.cs:1198
 	if p.OtherPagesSource != 7 {
-		w.WriteInt("OtherPagesSource", p.OtherPagesSource)
+		w.WriteFloat("OtherPageSource", float32(p.OtherPagesSource))
 	}
 	if p.LastPageSource != 7 {
-		w.WriteInt("LastPageSource", p.LastPageSource)
+		w.WriteFloat("LastPageSource", float32(p.LastPageSource))
 	}
 	if p.Duplex != "" && p.Duplex != "Default" {
 		w.WriteStr("Duplex", p.Duplex)
@@ -680,7 +681,11 @@ func (p *ReportPage) Deserialize(r report.Reader) error {
 	p.UnlimitedHeightValue = r.ReadFloat("UnlimitedHeightValue", 0)
 	p.UnlimitedWidthValue = r.ReadFloat("UnlimitedWidthValue", 0)
 	p.FirstPageSource = r.ReadInt("FirstPageSource", 7)
-	p.OtherPagesSource = r.ReadInt("OtherPagesSource", 7)
+	// C# uses "OtherPageSource" (singular); fall back to "OtherPagesSource" for older Go-generated files.
+	p.OtherPagesSource = r.ReadInt("OtherPageSource", -1)
+	if p.OtherPagesSource == -1 {
+		p.OtherPagesSource = r.ReadInt("OtherPagesSource", 7)
+	}
 	p.LastPageSource = r.ReadInt("LastPageSource", 7)
 	p.Duplex = r.ReadStr("Duplex", "")
 	p.OutlineExpression = r.ReadStr("OutlineExpression", "")

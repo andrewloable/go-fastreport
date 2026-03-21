@@ -493,6 +493,177 @@ func TestGS1Barcode_KnownEncoding_Pattern(t *testing.T) {
 	}
 }
 
+// ── Boundary confirmation tests ───────────────────────────────────────────────
+//
+// These tests confirm correct behaviour at exact boundary values for each
+// barcode checksum / character-set algorithm. The audit (go-fastreport-i7nfi)
+// verified all implementations are correct; these tests pin that correctness.
+
+// TestCode39_Checksum_MaxValue_Percent verifies that a single input whose
+// checksum reaches the maximum mod-43 value (42 → '%') is encoded correctly.
+//
+// tabelle_39 assigns:
+//   '9' → chk=9, 'Z' → chk=35, Sum("9Z") = 44, mod43 = 1 → '1'
+//   '%' → chk=42, so Sum("%") = 42, mod43 = 42 → '%'
+//
+// Encoding '%' with CalcChecksum=true produces checksum '%' again, so the
+// pattern contains two copies of the '%' data between start and stop markers.
+func TestCode39_Checksum_MaxValue_Percent(t *testing.T) {
+	b := barcode.NewCode39Barcode()
+	b.CalcChecksum = true
+	// '%' has chk=42; mod-43 of 42 is 42, which maps back to '%'.
+	if err := b.Encode("%"); err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	pattern, err := b.GetPattern()
+	if err != nil {
+		t.Fatalf("GetPattern: %v", err)
+	}
+	// Pattern must have at least start + '%' + checksum('%') + stop.
+	// That is 4 symbols = start(10) + %(10) + %(10) + stop(9) = 39 chars.
+	const wantLen = 39
+	if len(pattern) != wantLen {
+		t.Errorf("pattern length = %d, want %d (start+%%+%%+stop)", len(pattern), wantLen)
+	}
+}
+
+// TestCode39_Checksum_WrapAround verifies the modulo-43 wrapping:
+// "9Z" has chk sum = 9+35 = 44, mod 43 = 1 → '1'.
+// Pattern: start + '9' + 'Z' + '1' + stop = 5 symbols.
+// Each symbol (except stop) = 9 chars + 1 gap = 10 chars; stop = 9 chars.
+// Total = 4 * 10 + 9 = 49 chars.
+func TestCode39_Checksum_WrapAround(t *testing.T) {
+	b := barcode.NewCode39Barcode()
+	b.CalcChecksum = true
+	if err := b.Encode("9Z"); err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	pattern, err := b.GetPattern()
+	if err != nil {
+		t.Fatalf("GetPattern: %v", err)
+	}
+	const wantLen = 49
+	if len(pattern) != wantLen {
+		t.Errorf("pattern length = %d, want %d", len(pattern), wantLen)
+	}
+}
+
+// TestEAN8_CheckDigit_AllNines verifies the check digit when all seven input
+// digits are '9'. This is the maximum-value boundary.
+//
+// Weights alternate 3,1,3,1,3,1,3 (left-to-right, i.e. odd from right):
+//
+//	sum = 9*3 + 9*1 + 9*3 + 9*1 + 9*3 + 9*1 + 9*3 = 9*(3+1+3+1+3+1+3) = 9*15 = 135
+//	check digit = (10 - (135 mod 10)) mod 10 = (10 - 5) mod 10 = 5
+//
+// So "9999999" → EAN-8 = "99999995". The pattern ends with eanTableC[5]+stop.
+// eanTableC[5] = "5170", stop guard = "A0A" → pattern suffix "5170A0A".
+func TestEAN8_CheckDigit_AllNines(t *testing.T) {
+	b := barcode.NewEAN8Barcode()
+	if err := b.Encode("9999999"); err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	pattern, err := b.GetPattern()
+	if err != nil {
+		t.Fatalf("GetPattern: %v", err)
+	}
+	// EAN-8 fixed pattern length:
+	// start(3) + 4 left digits × 4 + centre(5) + 4 right digits × 4 + end(3) = 43.
+	const wantLen = 43
+	if len(pattern) != wantLen {
+		t.Errorf("EAN-8 pattern length = %d, want %d", len(pattern), wantLen)
+	}
+	// The 8th digit is the check digit 5; it's encoded in the right half as
+	// eanTableC[5]="5170". The stop guard "A0A" follows. Verify suffix.
+	const wantSuffix = "5170A0A"
+	if !strings.HasSuffix(pattern, wantSuffix) {
+		t.Errorf("pattern suffix = %q, want %q (check digit 5 for all-nines input)", pattern[len(pattern)-7:], wantSuffix)
+	}
+}
+
+// TestMSI_Checksum_AllNines verifies Luhn checksum for three '9' digits.
+//
+// MSI Luhn: separate odd-index digits (position 1, 3-indexed from 0) and even.
+//
+//	Input "999": odd=[9] (index 1), even=[9,9] (indices 0,2)
+//	checkOdd = 9, checkEven = 18
+//	digitSum(9*2) = digitSum(18) = 1+8 = 9
+//	total = 9 + 18 = 27, mod10 = 7, final = 10-7 = 3
+//
+// So "999" → check digit 3 appended in GetPattern.
+// Pattern = start(2) + 3 digits×8 + check(8) + stop(3) = 37 chars.
+// The check-digit bar is tabelleMSI[3]="51516060", stop="515".
+func TestMSI_Checksum_AllNines(t *testing.T) {
+	b := barcode.NewMSIBarcode()
+	b.CalcChecksum = true
+	if err := b.Encode("999"); err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	// EncodedText stores raw input only; check digit is appended in GetPattern.
+	if got := b.EncodedText(); got != "999" {
+		t.Errorf("EncodedText = %q, want 999 (raw input, check digit is in GetPattern)", got)
+	}
+	pattern, err := b.GetPattern()
+	if err != nil {
+		t.Fatalf("GetPattern: %v", err)
+	}
+	// start(2) + 3 data digits × 8 + check digit 3 × 8 + stop(3) = 37.
+	if len(pattern) != 37 {
+		t.Errorf("GetPattern len = %d, want 37 (check digit 3 for 999)", len(pattern))
+	}
+	// Check digit 3 → tabelleMSI[3]="51516060"; stop="515".
+	const wantSuffix = "51516060515"
+	if !strings.HasSuffix(pattern, wantSuffix) {
+		t.Errorf("GetPattern suffix = %q, want %q (check digit 3)", pattern[len(pattern)-len(wantSuffix):], wantSuffix)
+	}
+}
+
+// TestMSI_Checksum_SingleDigitZero verifies that "0" produces check digit 0.
+//
+//	Input "0": odd=[] (no index 1), even=[0] (index 0)
+//	checkOdd=0, checkEven=0
+//	digitSum(0*2)=0, total=0, mod10=0, final=0 (special case: 0 stays 0)
+//
+// Pattern = start(2) + 1 digit×8 + check(8) + stop(3) = 21 chars.
+func TestMSI_Checksum_SingleDigitZero(t *testing.T) {
+	b := barcode.NewMSIBarcode()
+	b.CalcChecksum = true
+	if err := b.Encode("0"); err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	// EncodedText stores raw input only; check digit is appended in GetPattern.
+	if got := b.EncodedText(); got != "0" {
+		t.Errorf("EncodedText = %q, want 0 (raw input)", got)
+	}
+	pattern, err := b.GetPattern()
+	if err != nil {
+		t.Fatalf("GetPattern: %v", err)
+	}
+	// start(2) + 1 digit×8 + check digit 0×8 + stop(3) = 21.
+	if len(pattern) != 21 {
+		t.Errorf("GetPattern len = %d, want 21 (check digit 0 for single 0)", len(pattern))
+	}
+}
+
+// TestPlessey_SingleChar_NoCRCError verifies that a minimal single-hex-digit
+// input does not cause a CRC computation panic or error. The CRC bit buffer
+// for 1 hex digit = 4 data bits + 8 CRC bits = 12 total bits.
+// This confirms the LSB-first bit extraction and CRC loop boundary for
+// the shortest possible valid input.
+func TestPlessey_SingleChar_NoCRCError(t *testing.T) {
+	b := barcode.NewPlesseyBarcode()
+	if err := b.Encode("0"); err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	pattern, err := b.GetPattern()
+	if err != nil {
+		t.Fatalf("GetPattern single-char: %v", err)
+	}
+	if len(pattern) == 0 {
+		t.Error("Plessey single-char pattern should be non-empty")
+	}
+}
+
 // minI/maxI helpers for test-only indexing operations.
 // Named minI/maxI to avoid conflict with swissqr_test.go's min helper.
 func minI(a, b int) int {

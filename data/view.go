@@ -1,6 +1,9 @@
 package data
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // ViewDataSource wraps a base DataSource and exposes only rows that satisfy a
 // filter expression. The filter is evaluated lazily using a user-supplied
@@ -51,8 +54,15 @@ func NewViewDataSource(inner DataSource, name, alias, filter string, eval ViewEx
 func (v *ViewDataSource) Name() string  { return v.name }
 func (v *ViewDataSource) Alias() string { return v.alias }
 
-// SetName sets the internal name.
-func (v *ViewDataSource) SetName(name string) { v.name = name }
+// SetName sets the internal name. When alias was previously equal to name
+// (case-insensitively) or empty, it is kept in sync with the new name.
+// Mirrors C# DataComponentBase.SetName alias-sync behavior.
+func (v *ViewDataSource) SetName(name string) {
+	if v.alias == "" || strings.EqualFold(v.alias, v.name) {
+		v.alias = name
+	}
+	v.name = name
+}
 
 // SetAlias sets the human-friendly alias.
 func (v *ViewDataSource) SetAlias(alias string) { v.alias = alias }

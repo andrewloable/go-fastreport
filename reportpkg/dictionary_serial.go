@@ -16,6 +16,7 @@ package reportpkg
 // TableDataSource without a connection), and Relations.
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 
@@ -294,8 +295,17 @@ func (s *parameterSerializer) Serialize(w report.Writer) error {
 	if p.DataType != "" {
 		w.WriteStr("DataType", p.DataType)
 	}
-	if p.Expression != "" {
+	// C# writes AsString when Expression is empty; Expression otherwise.
+	// C# ref: FastReport.Data.Parameter.Serialize (Parameter.cs:188-198)
+	if p.Expression == "" {
+		if p.Value != nil {
+			w.WriteStr("AsString", fmt.Sprint(p.Value))
+		}
+	} else {
 		w.WriteStr("Expression", p.Expression)
+	}
+	if p.Description != "" {
+		w.WriteStr("Description", p.Description)
 	}
 	// Nested parameters.
 	for _, child := range p.Parameters() {
@@ -322,19 +332,33 @@ func (s *totalSerializer) Serialize(w report.Writer) error {
 	if t.Name != "" {
 		w.WriteStr("Name", t.Name)
 	}
-	if t.Expression != "" {
-		w.WriteStr("Expression", t.Expression)
-	}
 	// Write TotalType string. C# ref: FastReport.Data.Total.Serialize
+	// Default is Sum; only write when non-default.
 	tt := totalTypeToString(t.TotalType)
 	if tt != "" && tt != "Sum" {
 		w.WriteStr("TotalType", tt)
+	}
+	if t.Expression != "" {
+		w.WriteStr("Expression", t.Expression)
 	}
 	if t.Evaluator != "" {
 		w.WriteStr("Evaluator", t.Evaluator)
 	}
 	if t.PrintOn != "" {
 		w.WriteStr("PrintOn", t.PrintOn)
+	}
+	if t.ResetAfterPrint {
+		w.WriteBool("ResetAfterPrint", true)
+	}
+	// C# default for ResetOnReprint is true; write only when false.
+	if !t.ResetOnReprint {
+		w.WriteBool("ResetOnReprint", false)
+	}
+	if t.EvaluateCondition != "" {
+		w.WriteStr("EvaluateCondition", t.EvaluateCondition)
+	}
+	if t.IncludeInvisibleRows {
+		w.WriteBool("IncludeInvisibleRows", true)
 	}
 	return nil
 }

@@ -826,8 +826,8 @@ func TestBarcodeObject_HorzAlign_Accessor(t *testing.T) {
 // TestBarcodeObject_ShowMarker_Accessor verifies ShowMarker()/SetShowMarker() methods.
 func TestBarcodeObject_ShowMarker_Accessor(t *testing.T) {
 	obj := NewBarcodeObject()
-	if obj.ShowMarker() {
-		t.Error("ShowMarker should default to false")
+	if !obj.ShowMarker() {
+		t.Error("ShowMarker should default to true (C# BarcodeObject.cs:695)")
 	}
 	obj.SetShowMarker(true)
 	if !obj.ShowMarker() {

@@ -3,12 +3,14 @@
 package reportpkg
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 
 	"github.com/andrewloable/go-fastreport/band"
 	"github.com/andrewloable/go-fastreport/report"
 	"github.com/andrewloable/go-fastreport/style"
+	"github.com/andrewloable/go-fastreport/units"
 )
 
 // parseFloatList parses a comma-separated list of floats (e.g. "0,90").
@@ -221,6 +223,30 @@ func (p *ReportPage) GetPaperHeight() float32 { return p.PaperHeight }
 // IsUnlimitedHeight reports whether the page has unlimited (dynamic) height.
 // Satisfies export.ReportPageDims.
 func (p *ReportPage) IsUnlimitedHeight() bool { return p.UnlimitedHeight }
+
+// HeightInPixels returns the current page height in report pixels (96 dpi).
+// When UnlimitedHeight is true, returns UnlimitedHeightValue (set by the engine
+// during Run); otherwise returns PaperHeight * Units.Millimeters.
+// Mirrors FastReport.ReportPage.HeightInPixels (ReportPage.cs:374-379).
+func (p *ReportPage) HeightInPixels() float32 {
+	if p.UnlimitedHeight {
+		return p.UnlimitedHeightValue
+	}
+	return p.PaperHeight * units.Millimeters
+}
+
+// WidthInPixels returns the current page width in report pixels (96 dpi).
+// When UnlimitedWidth is true and the engine has set UnlimitedWidthValue,
+// returns UnlimitedWidthValue; otherwise returns PaperWidth * Units.Millimeters.
+// Mirrors FastReport.ReportPage.WidthInPixels (ReportPage.cs:385-398).
+// Note: C# checks IsDesigning to gate UnlimitedWidthValue; Go always uses the
+// runtime value when it is non-zero, which matches the headless engine use case.
+func (p *ReportPage) WidthInPixels() float32 {
+	if p.UnlimitedWidth && p.UnlimitedWidthValue != 0 {
+		return p.UnlimitedWidthValue
+	}
+	return p.PaperWidth * units.Millimeters
+}
 
 // Visible returns whether this page template is included in report output.
 // Pages with Visible=false are skipped by the engine (e.g. drill-down detail pages).
@@ -572,6 +598,20 @@ func (p *ReportPage) Serialize(w report.Writer) error {
 	}
 	if p.BackPageOddEven != 0 {
 		w.WriteInt("BackPageOddEven", p.BackPageOddEven)
+	}
+
+	// Page columns — mirror PageColumns.Serialize (FastReport.Base/PageColumns.cs:101-111).
+	// Count != 1 (C# default) triggers column serialization; Go default is 0 (single column).
+	if p.Columns.Count > 1 {
+		w.WriteInt("Columns.Count", p.Columns.Count)
+		w.WriteFloat("Columns.Width", p.Columns.Width)
+		if len(p.Columns.Positions) > 0 {
+			parts := make([]string, len(p.Columns.Positions))
+			for i, v := range p.Columns.Positions {
+				parts[i] = fmt.Sprintf("%g", v)
+			}
+			w.WriteStr("Columns.Positions", strings.Join(parts, ","))
+		}
 	}
 
 	// Watermark properties are written as flat attributes on the page element.

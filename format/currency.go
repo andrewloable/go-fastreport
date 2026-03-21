@@ -101,6 +101,40 @@ func applyCurrencyPositivePattern(n, sym string, pattern int) string {
 	}
 }
 
+// Clone returns a deep copy of this CurrencyFormat.
+// Mirrors C# CurrencyFormat.Clone().
+func (f *CurrencyFormat) Clone() Format {
+	return &CurrencyFormat{
+		UseLocaleSettings: f.UseLocaleSettings,
+		DecimalDigits:     f.DecimalDigits,
+		DecimalSeparator:  f.DecimalSeparator,
+		GroupSeparator:    f.GroupSeparator,
+		CurrencySymbol:    f.CurrencySymbol,
+		PositivePattern:   f.PositivePattern,
+		NegativePattern:   f.NegativePattern,
+	}
+}
+
+// Equals reports whether f and other represent the same format configuration.
+// Mirrors C# CurrencyFormat.Equals().
+func (f *CurrencyFormat) Equals(other Format) bool {
+	o, ok := other.(*CurrencyFormat)
+	return ok &&
+		f.UseLocaleSettings == o.UseLocaleSettings &&
+		f.DecimalDigits == o.DecimalDigits &&
+		f.DecimalSeparator == o.DecimalSeparator &&
+		f.GroupSeparator == o.GroupSeparator &&
+		f.CurrencySymbol == o.CurrencySymbol &&
+		f.PositivePattern == o.PositivePattern &&
+		f.NegativePattern == o.NegativePattern
+}
+
+// GetSampleValue returns a representative formatted string for UI preview.
+// Mirrors C# CurrencyFormat.GetSampleValue() which calls FormatValue(-12345).
+func (f *CurrencyFormat) GetSampleValue() string {
+	return f.FormatValue(-12345)
+}
+
 func applyCurrencyNegativePattern(n, sym string, pattern int) string {
 	switch pattern {
 	case 0:

@@ -41,3 +41,25 @@ func (f *BooleanFormat) FormatValue(v any) string {
 	}
 	return fmt.Sprint(v)
 }
+
+// Clone returns a deep copy of this BooleanFormat.
+// Mirrors C# BooleanFormat.Clone().
+func (f *BooleanFormat) Clone() Format {
+	return &BooleanFormat{
+		TrueText:  f.TrueText,
+		FalseText: f.FalseText,
+	}
+}
+
+// Equals reports whether f and other represent the same format configuration.
+// Mirrors C# BooleanFormat.Equals().
+func (f *BooleanFormat) Equals(other Format) bool {
+	o, ok := other.(*BooleanFormat)
+	return ok && f.TrueText == o.TrueText && f.FalseText == o.FalseText
+}
+
+// GetSampleValue returns a representative formatted string for UI preview.
+// Mirrors C# BooleanFormat.GetSampleValue() which calls FormatValue(false).
+func (f *BooleanFormat) GetSampleValue() string {
+	return f.FormatValue(false)
+}

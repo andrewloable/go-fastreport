@@ -592,10 +592,31 @@ func processAtToEngineState(pa object.ProcessAt) EngineState {
 // buildPreparedObject converts a single report.Base object into a PreparedObject,
 // or returns nil if the object type is not renderable (e.g. a nested band).
 func (e *ReportEngine) buildPreparedObject(obj report.Base) *preview.PreparedObject {
-	// Skip invisible and band types.
-	type hasVisible interface{ Visible() bool }
-	if v, ok := obj.(hasVisible); ok && !v.Visible() {
-		return nil
+	// Skip invisible objects.
+	// If VisibleExpression is set it overrides the static Visible flag,
+	// matching C# ComponentBase.CalcVisibleExpression behaviour (ComponentBase.cs:536).
+	type hasVisibleExpr interface {
+		Visible() bool
+		VisibleExpression() string
+		CalcVisibleExpression(expression string, calc func(string) (any, error)) bool
+	}
+	if v, ok := obj.(hasVisibleExpr); ok {
+		expr := v.VisibleExpression()
+		if expr != "" {
+			// Expression present: evaluate it; result overrides static Visible.
+			if e.report != nil {
+				visible := v.CalcVisibleExpression(expr, func(s string) (any, error) {
+					return e.report.Calc(s)
+				})
+				if !visible {
+					return nil
+				}
+			} else if !v.Visible() {
+				return nil
+			}
+		} else if !v.Visible() {
+			return nil
+		}
 	}
 
 	// Geometry accessors common to all component objects.

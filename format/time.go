@@ -27,6 +27,29 @@ func NewTimeFormat() *TimeFormat {
 // FormatType implements Format.
 func (f *TimeFormat) FormatType() string { return "Time" }
 
+// Clone returns a deep copy of this TimeFormat.
+// Mirrors C# TimeFormat.Clone().
+func (f *TimeFormat) Clone() Format {
+	return &TimeFormat{
+		Format:            f.Format,
+		UseLocaleSettings: f.UseLocaleSettings,
+	}
+}
+
+// Equals reports whether f and other represent the same format configuration.
+// Mirrors C# TimeFormat.Equals().
+func (f *TimeFormat) Equals(other Format) bool {
+	o, ok := other.(*TimeFormat)
+	return ok && f.Format == o.Format && f.UseLocaleSettings == o.UseLocaleSettings
+}
+
+// GetSampleValue returns a representative formatted string for UI preview.
+// Mirrors C# TimeFormat.GetSampleValue() which uses 2007-11-30 13:30:00.
+func (f *TimeFormat) GetSampleValue() string {
+	sample := time.Date(2007, 11, 30, 13, 30, 0, 0, time.UTC)
+	return f.FormatValue(sample)
+}
+
 // FormatValue implements Format. Accepts time.Time, time.Duration (converted
 // to a time on the zero date), string (parsed via common layouts), or
 // anything that can be Sprint-ed.

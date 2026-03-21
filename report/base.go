@@ -158,8 +158,34 @@ func (b *BaseObject) SetTag(t any) { b.tag = t }
 
 // --- ZOrder ---
 
-// ZOrder returns the object's current z-order index within its parent.
-func (b *BaseObject) ZOrder() int { return b.zOrder }
+// ZOrder returns the object's z-order (index within parent's child list).
+// If the object has a parent, the parent's GetChildOrder is queried, mirroring
+// the C# Base.ZOrder property (Base.cs).  When there is no parent the internal
+// zOrder field is returned.
+func (b *BaseObject) ZOrder() int {
+	if b.parent != nil {
+		return b.parent.GetChildOrder(b)
+	}
+	return b.zOrder
+}
+
+// SetZOrder sets the z-order of the object.
+// If the object has a parent, the parent's SetChildOrder is called, mirroring
+// the C# Base.ZOrder setter.  When there is no parent the internal zOrder field
+// is updated directly.
+func (b *BaseObject) SetZOrder(order int) {
+	if b.parent != nil {
+		b.parent.SetChildOrder(b, order)
+	} else {
+		b.zOrder = order
+	}
+}
+
+// HasRestriction reports whether the object has the given restriction set.
+// It is the Go equivalent of Base.HasRestriction(Restrictions) (Base.cs).
+func (b *BaseObject) HasRestriction(r Restrictions) bool {
+	return b.restrictions&r != 0
+}
 
 // --- ObjectState helpers ---
 
@@ -215,6 +241,48 @@ func FindObject(name string, list []Base) Base {
 		}
 	}
 	return nil
+}
+
+// AllObjects returns all descendants of root recursively, not including root
+// itself.  It is the Go equivalent of Base.AllObjects (Base.cs).
+// root must implement Parent; if it does not, an empty slice is returned.
+func AllObjects(root Base) []Base {
+	var result []Base
+	if p, ok := root.(Parent); ok {
+		enumObjects(p, &result)
+	}
+	return result
+}
+
+// enumObjects appends all descendants of parent to result.
+func enumObjects(parent Parent, result *[]Base) {
+	var children []Base
+	parent.GetChildObjects(&children)
+	for _, child := range children {
+		*result = append(*result, child)
+		if p, ok := child.(Parent); ok {
+			enumObjects(p, result)
+		}
+	}
+}
+
+// HasParent reports whether obj has ancestor in its parent chain.
+// It is the Go equivalent of Base.HasParent(Base) (Base.cs).
+func HasParent(obj Base, ancestor Parent) bool {
+	p := obj.Parent()
+	for p != nil {
+		if p == ancestor {
+			return true
+		}
+		// Walk up: Parent interface does not expose its own Parent directly;
+		// check if the Parent is also a Base so we can continue climbing.
+		if b, ok := p.(Base); ok {
+			p = b.Parent()
+		} else {
+			break
+		}
+	}
+	return false
 }
 
 // --- Serialization ---

@@ -112,3 +112,24 @@ func (c *Collection) All() []Format {
 	copy(out, c.items)
 	return out
 }
+
+// Equals reports whether c and other contain the same number of formats
+// and each format at the same index is equal (via the Equaler interface if
+// available, otherwise pointer identity).
+// Mirrors C# FormatCollection.Equals().
+func (c *Collection) Equals(other *Collection) bool {
+	if other == nil || len(c.items) != len(other.items) {
+		return false
+	}
+	for i, f := range c.items {
+		o := other.items[i]
+		if eq, ok := f.(interface{ Equals(Format) bool }); ok {
+			if !eq.Equals(o) {
+				return false
+			}
+		} else if f != o {
+			return false
+		}
+	}
+	return true
+}

@@ -29,6 +29,25 @@ func (f *GeneralFormat) FormatValue(v any) string {
 	return fmt.Sprint(v)
 }
 
+// Clone returns a new GeneralFormat.
+// Mirrors C# GeneralFormat.Clone().
+func (f *GeneralFormat) Clone() Format {
+	return &GeneralFormat{}
+}
+
+// Equals reports whether other is also a GeneralFormat.
+// Mirrors C# GeneralFormat.Equals().
+func (f *GeneralFormat) Equals(other Format) bool {
+	_, ok := other.(*GeneralFormat)
+	return ok
+}
+
+// GetSampleValue returns a representative formatted string for UI preview.
+// Mirrors C# GeneralFormat.GetSampleValue() which returns "".
+func (f *GeneralFormat) GetSampleValue() string {
+	return ""
+}
+
 // isNilPointer reports whether v is a typed nil pointer.
 func isNilPointer(v any) bool {
 	if v == nil {

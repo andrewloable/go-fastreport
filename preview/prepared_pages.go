@@ -470,6 +470,35 @@ type PreparedObject struct {
 	// MergeModeNone (0) means no merging (default).
 	// C# source: TextObject.MergeMode (TextObject.cs)
 	MergeMode MergeMode
+
+	// ── Picture-specific fields (ObjectTypePicture only) ─────────────────────
+	// PictureSizeMode mirrors object.SizeMode (0=Normal,1=StretchImage,2=AutoSize,
+	// 3=CenterImage,4=Zoom). Default 4 (Zoom).
+	// C# PictureObjectBase.SizeMode (PictureObjectBase.cs).
+	PictureSizeMode int
+	// PictureAngle is the rotation angle in degrees (0, 90, 180, 270).
+	// C# PictureObjectBase.Angle (PictureObjectBase.cs).
+	PictureAngle int
+	// PictureTransparency is the global image transparency (0.0=opaque, 1.0=invisible).
+	// C# PictureObject.Transparency (PictureObject.cs).
+	PictureTransparency float32
+	// PictureTile indicates the image is tiled across the object bounds.
+	// C# PictureObject.Tile (PictureObject.cs).
+	PictureTile bool
+	// PictureGrayscale indicates the image should be rendered in grayscale.
+	// C# PictureObjectBase.Grayscale (PictureObjectBase.cs).
+	PictureGrayscale bool
+	// PictureTransparentColor is the color treated as transparent in the image.
+	// C# PictureObject.TransparentColor (PictureObject.cs).
+	PictureTransparentColor color.RGBA
+	// PictureShapeKind is the clipping-mask shape (0=Rectangle,1=RoundRectangle,
+	// 2=Ellipse,3=Triangle,4=Diamond).
+	// C# PictureObjectBase.Shape (PictureObjectBase.cs).
+	PictureShapeKind int
+	// PictureImageAlign is the fixed-position image alignment within the object
+	// (0=None,1=TopLeft,...,9=BottomRight).
+	// C# PictureObjectBase.ImageAlign (PictureObjectBase.cs).
+	PictureImageAlign int
 }
 
 // ── PreparedWatermark ─────────────────────────────────────────────────────────

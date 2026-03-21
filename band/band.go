@@ -35,11 +35,12 @@ type BandBase struct {
 	isLastRow  bool
 
 	// Internal engine flags.
-	FlagUseStartNewPage bool
-	FlagCheckFreeSpace  bool
-	FlagIsDataBand      bool
-	FlagIsGroupHeader   bool
-	FlagMustBreak       bool
+	FlagUseStartNewPage    bool
+	FlagCheckFreeSpace     bool
+	FlagIsDataBand         bool
+	FlagIsGroupHeader      bool
+	FlagMustBreak          bool
+	FlagIsColumnDependent  bool // true for column-dependent band types (see IsColumnDependentBand)
 
 	// Ruler guides in designer (pixel offsets from band left edge).
 	guides []float32
@@ -223,6 +224,75 @@ func (b *BandBase) ReprintOffset() float32 { return b.reprintOffset }
 
 // SetReprintOffset sets the reprint offset.
 func (b *BandBase) SetReprintOffset(v float32) { b.reprintOffset = v }
+
+// --- Engine utility methods ---
+
+// IsEmpty returns true when this band has no visible child objects.
+// The base implementation always returns true (empty by default); concrete band
+// types such as DataBand may override this.
+//
+// Mirrors C# BandBase.IsEmpty() (BandBase.cs line 926-929), which is virtual
+// and returns true in the base class.
+func (b *BandBase) IsEmpty() bool {
+	return b.objects == nil || b.objects.Len() == 0
+}
+
+// GetExpressions returns all expressions referenced by this band, including
+// the OutlineExpression if set.  The engine uses this to pre-compile
+// expressions before the first run.
+//
+// Mirrors C# BandBase.GetExpressions() (BandBase.cs line 606-615).
+func (b *BandBase) GetExpressions() []string {
+	var result []string
+	if b.outlineExpression != "" {
+		result = append(result, b.outlineExpression)
+	}
+	return result
+}
+
+// Assign copies all BandBase properties from src into this band.
+// It is the Go equivalent of C# BandBase.Assign(Base source) (BandBase.cs line 514-529).
+// Note: Guides slice is deep-copied; child bands and objects are NOT copied
+// (structural copying is out of scope — engine never clones whole bands).
+func (b *BandBase) Assign(src *BandBase) {
+	if src == nil {
+		return
+	}
+	b.BreakableComponent = src.BreakableComponent
+	// Deep-copy guides slice so mutations do not alias.
+	if src.guides != nil {
+		b.guides = make([]float32, len(src.guides))
+		copy(b.guides, src.guides)
+	} else {
+		b.guides = nil
+	}
+	b.startNewPage = src.startNewPage
+	b.firstRowStartsNewPage = src.firstRowStartsNewPage
+	b.printOnBottom = src.printOnBottom
+	b.keepChild = src.keepChild
+	b.outlineExpression = src.outlineExpression
+	b.beforeLayoutEvent = src.beforeLayoutEvent
+	b.afterLayoutEvent = src.afterLayoutEvent
+	b.repeatBandNTimes = src.repeatBandNTimes
+	b.isLastRow = src.isLastRow
+}
+
+// IsColumnDependentBand returns true when this band type participates in
+// multi-column layout width computation.
+//
+// The base BandBase implementation reads FlagIsColumnDependent which is set to
+// true by the constructors of the column-dependent concrete types
+// (DataBand, DataHeaderBand, DataFooterBand, GroupHeaderBand, GroupFooterBand,
+// ColumnHeaderBand, ColumnFooterBand, ReportSummaryBand).
+//
+// Using a flag rather than virtual dispatch via interface ensures correct
+// behaviour even when Go embedding stores a *BandBase parent reference instead
+// of the concrete outer type pointer.
+//
+// Mirrors C# BandBase.IsColumnDependentBand (BandBase.cs line 577-595).
+func (b *BandBase) IsColumnDependentBand() bool {
+	return b.FlagIsColumnDependent
+}
 
 // --- report.Parent implementation ---
 
@@ -433,4 +503,62 @@ func (c *ChildBand) Deserialize(r report.Reader) error {
 	c.CompleteToNRows = r.ReadInt("CompleteToNRows", 0)
 	c.PrintIfDatabandEmpty = r.ReadBool("PrintIfDatabandEmpty", false)
 	return nil
+}
+
+// columnDependentChecker is an internal interface satisfied by any band type
+// that has an IsColumnDependentBand method.  Used by GetTopParentBand and
+// ChildBand.IsColumnDependentBand to avoid importing concrete types.
+type columnDependentChecker interface {
+	IsColumnDependentBand() bool
+}
+
+// GetTopParentBand traverses the parent chain and returns the first band that
+// is not itself a ChildBand.  This is the band that "owns" this child band
+// (e.g. a DataBand, GroupHeaderBand, etc.).
+//
+// Returns nil only when this ChildBand has no parent at all.
+//
+// Mirrors C# ChildBand.GetTopParentBand (ChildBand.cs line 67-79).
+// Note: the return type is columnDependentChecker (an interface) rather than
+// *BandBase because in Go, concrete band types like *DataBand embed BandBase
+// by value and are not directly type-assertable to *BandBase.
+func (c *ChildBand) GetTopParentBand() columnDependentChecker {
+	current := c.Parent()
+	for current != nil {
+		if cb, ok := current.(*ChildBand); ok {
+			current = cb.Parent()
+			continue
+		}
+		if checker, ok := current.(columnDependentChecker); ok {
+			return checker
+		}
+		// Reached a non-band parent (e.g. ReportPage) — stop.
+		break
+	}
+	return nil
+}
+
+// IsColumnDependentBand delegates to the top parent band to determine whether
+// this child band is part of a column-dependent layout.
+//
+// Mirrors C# BandBase.IsColumnDependentBand which walks the ChildBand parent
+// chain (BandBase.cs line 582-586).
+func (c *ChildBand) IsColumnDependentBand() bool {
+	top := c.GetTopParentBand()
+	if top == nil {
+		return false
+	}
+	return top.IsColumnDependentBand()
+}
+
+// Assign copies all ChildBand properties from src into this band.
+// Mirrors C# ChildBand.Assign(Base source) (ChildBand.cs line 82-89).
+func (c *ChildBand) Assign(src *ChildBand) {
+	if src == nil {
+		return
+	}
+	c.BandBase.Assign(&src.BandBase)
+	c.FillUnusedSpace = src.FillUnusedSpace
+	c.CompleteToNRows = src.CompleteToNRows
+	c.PrintIfDatabandEmpty = src.PrintIfDatabandEmpty
 }

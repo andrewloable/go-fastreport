@@ -1,6 +1,7 @@
 package report
 
 import (
+	"encoding/base64"
 	"image/color"
 	"strings"
 
@@ -77,6 +78,10 @@ func parseLineStyle(s string) style.LineStyle {
 		return style.LineStyleDashDotDot
 	case "Double":
 		return style.LineStyleDouble
+	case "Custom":
+		// LineStyle.Custom (value 6 in C#) — rendered as custom dash by GDI+;
+		// treat as Solid for serialization since no FRX DashPattern attribute exists.
+		return style.LineStyleSolid
 	default:
 		return style.LineStyleSolid
 	}
@@ -96,6 +101,62 @@ func formatLineStyle(ls style.LineStyle) string {
 		return "Double"
 	default:
 		return "Solid"
+	}
+}
+
+// ── PathGradientStyle ────────────────────────────────────────────────────────
+
+// formatPathGradientStyle converts a PathGradientStyle to its FRX string.
+func formatPathGradientStyle(s style.PathGradientStyle) string {
+	switch s {
+	case style.PathGradientRectangular:
+		return "Rectangular"
+	default:
+		return "Elliptic"
+	}
+}
+
+// parsePathGradientStyle converts an FRX Fill.Style string to PathGradientStyle.
+func parsePathGradientStyle(s string) style.PathGradientStyle {
+	switch strings.TrimSpace(s) {
+	case "Rectangular":
+		return style.PathGradientRectangular
+	default:
+		return style.PathGradientElliptic
+	}
+}
+
+// ── WrapMode ─────────────────────────────────────────────────────────────────
+
+// formatWrapMode converts a WrapMode to its C# WrapMode enum name.
+func formatWrapMode(w style.WrapMode) string {
+	switch w {
+	case style.WrapModeTileFlipX:
+		return "TileFlipX"
+	case style.WrapModeTileFlipY:
+		return "TileFlipY"
+	case style.WrapModeTileFlipXY:
+		return "TileFlipXY"
+	case style.WrapModeClamp:
+		return "Clamp"
+	default:
+		return "Tile"
+	}
+}
+
+// parseWrapMode converts a C# WrapMode enum name to WrapMode.
+func parseWrapMode(s string) style.WrapMode {
+	switch strings.TrimSpace(s) {
+	case "TileFlipX":
+		return style.WrapModeTileFlipX
+	case "TileFlipY":
+		return style.WrapModeTileFlipY
+	case "TileFlipXY":
+		return style.WrapModeTileFlipXY
+	case "Clamp":
+		return style.WrapModeClamp
+	default:
+		return style.WrapModeTile
 	}
 }
 
@@ -359,6 +420,43 @@ func serializeFill(w Writer, f style.Fill) {
 			w.WriteStr("Fill.Style", formatHatchStyle(ft.Style))
 		}
 
+	case *style.PathGradientFill:
+		w.WriteStr("Fill", "PathGradient")
+		if ft.CenterColor != transparent {
+			w.WriteStr("Fill.CenterColor", utils.FormatColor(ft.CenterColor))
+		}
+		if ft.EdgeColor != transparent {
+			w.WriteStr("Fill.EdgeColor", utils.FormatColor(ft.EdgeColor))
+		}
+		// Default style is Elliptic — only write when Rectangular.
+		if ft.Style != style.PathGradientElliptic {
+			w.WriteStr("Fill.Style", formatPathGradientStyle(ft.Style))
+		}
+
+	case *style.TextureFill:
+		w.WriteStr("Fill", "Texture")
+		if ft.ImageWidth != 0 {
+			w.WriteInt("Fill.ImageWidth", ft.ImageWidth)
+		}
+		if ft.ImageHeight != 0 {
+			w.WriteInt("Fill.ImageHeight", ft.ImageHeight)
+		}
+		if ft.PreserveAspectRatio {
+			w.WriteBool("Fill.PreserveAspectRatio", true)
+		}
+		if ft.WrapMode != style.WrapModeTile {
+			w.WriteStr("Fill.WrapMode", formatWrapMode(ft.WrapMode))
+		}
+		if ft.ImageOffsetX != 0 {
+			w.WriteInt("Fill.ImageOffsetX", ft.ImageOffsetX)
+		}
+		if ft.ImageOffsetY != 0 {
+			w.WriteInt("Fill.ImageOffsetY", ft.ImageOffsetY)
+		}
+		if len(ft.ImageData) > 0 {
+			w.WriteStr("Fill.ImageData", base64.StdEncoding.EncodeToString(ft.ImageData))
+		}
+
 	// NoneFill and unknown types: no output.
 	}
 }
@@ -411,6 +509,41 @@ func deserializeFill(r Reader, current style.Fill) style.Fill {
 			}
 		}
 		f.Style = parseHatchStyle(r.ReadStr("Fill.Style", "Horizontal"))
+		return f
+
+	case "PathGradient":
+		// Mirrors FastReport.PathGradientFill — CenterColor, EdgeColor, Style.
+		f := &style.PathGradientFill{}
+		if s := r.ReadStr("Fill.CenterColor", ""); s != "" {
+			if c, err := utils.ParseColor(s); err == nil {
+				f.CenterColor = c
+			}
+		}
+		if s := r.ReadStr("Fill.EdgeColor", ""); s != "" {
+			if c, err := utils.ParseColor(s); err == nil {
+				f.EdgeColor = c
+			}
+		}
+		f.Style = parsePathGradientStyle(r.ReadStr("Fill.Style", "Elliptic"))
+		return f
+
+	case "Texture":
+		// Mirrors FastReport.TextureFill — inline ImageData path only.
+		// BlobStore image-index mechanism is not implemented in the Go port.
+		f := &style.TextureFill{
+			WrapMode: style.WrapModeTile,
+		}
+		f.ImageWidth = r.ReadInt("Fill.ImageWidth", 0)
+		f.ImageHeight = r.ReadInt("Fill.ImageHeight", 0)
+		f.PreserveAspectRatio = r.ReadBool("Fill.PreserveAspectRatio", false)
+		f.WrapMode = parseWrapMode(r.ReadStr("Fill.WrapMode", "Tile"))
+		f.ImageOffsetX = r.ReadInt("Fill.ImageOffsetX", 0)
+		f.ImageOffsetY = r.ReadInt("Fill.ImageOffsetY", 0)
+		if s := r.ReadStr("Fill.ImageData", ""); s != "" {
+			if decoded, err := base64.StdEncoding.DecodeString(s); err == nil {
+				f.ImageData = decoded
+			}
+		}
 		return f
 
 	default:

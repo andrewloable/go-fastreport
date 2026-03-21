@@ -327,7 +327,178 @@ func TestNoneFill(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Fill interface satisfaction
+// PathGradientStyle constants
+// ---------------------------------------------------------------------------
+
+func TestPathGradientStyle_Values(t *testing.T) {
+	if PathGradientElliptic != 0 {
+		t.Errorf("PathGradientElliptic want 0, got %d", PathGradientElliptic)
+	}
+	if PathGradientRectangular != 1 {
+		t.Errorf("PathGradientRectangular want 1, got %d", PathGradientRectangular)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// PathGradientFill
+// ---------------------------------------------------------------------------
+
+func TestNewPathGradientFill(t *testing.T) {
+	center := color.RGBA{R: 0, G: 0, B: 0, A: 255}
+	edge := color.RGBA{R: 255, G: 255, B: 255, A: 255}
+	f := NewPathGradientFill(center, edge, PathGradientElliptic)
+
+	if f.CenterColor != center {
+		t.Errorf("CenterColor: want %v, got %v", center, f.CenterColor)
+	}
+	if f.EdgeColor != edge {
+		t.Errorf("EdgeColor: want %v, got %v", edge, f.EdgeColor)
+	}
+	if f.Style != PathGradientElliptic {
+		t.Errorf("Style: want Elliptic, got %v", f.Style)
+	}
+	if f.FillType() != FillTypePathGradient {
+		t.Errorf("FillType: want PathGradient, got %v", f.FillType())
+	}
+}
+
+func TestPathGradientFill_IsTransparent(t *testing.T) {
+	both := &PathGradientFill{
+		CenterColor: color.RGBA{A: 0},
+		EdgeColor:   color.RGBA{A: 0},
+	}
+	if !both.IsTransparent() {
+		t.Error("both alpha=0 should be transparent")
+	}
+
+	oneOpaque := &PathGradientFill{
+		CenterColor: color.RGBA{A: 255},
+		EdgeColor:   color.RGBA{A: 0},
+	}
+	if oneOpaque.IsTransparent() {
+		t.Error("one opaque colour should not be transparent")
+	}
+}
+
+func TestPathGradientFill_Clone(t *testing.T) {
+	orig := NewPathGradientFill(
+		color.RGBA{R: 50, A: 255},
+		color.RGBA{B: 200, A: 255},
+		PathGradientRectangular,
+	)
+	clone := orig.Clone()
+
+	pg, ok := clone.(*PathGradientFill)
+	if !ok {
+		t.Fatalf("Clone did not return *PathGradientFill")
+	}
+	if pg == orig {
+		t.Error("Clone returned the same pointer")
+	}
+	if *pg != *orig {
+		t.Errorf("Clone content differs: %+v vs %+v", *pg, *orig)
+	}
+	pg.Style = PathGradientElliptic
+	if orig.Style == PathGradientElliptic {
+		t.Error("mutating clone affected original")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// WrapMode constants
+// ---------------------------------------------------------------------------
+
+func TestWrapMode_Values(t *testing.T) {
+	if WrapModeTile != 0 {
+		t.Errorf("WrapModeTile want 0, got %d", WrapModeTile)
+	}
+	if WrapModeTileFlipX != 1 {
+		t.Errorf("WrapModeTileFlipX want 1, got %d", WrapModeTileFlipX)
+	}
+	if WrapModeTileFlipY != 2 {
+		t.Errorf("WrapModeTileFlipY want 2, got %d", WrapModeTileFlipY)
+	}
+	if WrapModeTileFlipXY != 3 {
+		t.Errorf("WrapModeTileFlipXY want 3, got %d", WrapModeTileFlipXY)
+	}
+	if WrapModeClamp != 4 {
+		t.Errorf("WrapModeClamp want 4, got %d", WrapModeClamp)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// TextureFill
+// ---------------------------------------------------------------------------
+
+func TestTextureFill_FillType(t *testing.T) {
+	f := &TextureFill{}
+	if f.FillType() != FillTypeTexture {
+		t.Errorf("FillType: want Texture, got %v", f.FillType())
+	}
+}
+
+func TestTextureFill_IsTransparent(t *testing.T) {
+	// TextureFill.IsTransparent always returns false (matches C# implementation).
+	f := &TextureFill{}
+	if f.IsTransparent() {
+		t.Error("TextureFill.IsTransparent should always be false")
+	}
+}
+
+func TestTextureFill_Clone(t *testing.T) {
+	orig := &TextureFill{
+		ImageData:           []byte{1, 2, 3, 4},
+		ImageWidth:          100,
+		ImageHeight:         80,
+		PreserveAspectRatio: true,
+		WrapMode:            WrapModeClamp,
+		ImageOffsetX:        5,
+		ImageOffsetY:        10,
+	}
+	clone := orig.Clone()
+
+	tf, ok := clone.(*TextureFill)
+	if !ok {
+		t.Fatalf("Clone did not return *TextureFill")
+	}
+	if tf == orig {
+		t.Error("Clone returned the same pointer")
+	}
+	// Fields should match.
+	if tf.ImageWidth != orig.ImageWidth {
+		t.Errorf("ImageWidth: want %d, got %d", orig.ImageWidth, tf.ImageWidth)
+	}
+	if tf.WrapMode != orig.WrapMode {
+		t.Errorf("WrapMode: want %v, got %v", orig.WrapMode, tf.WrapMode)
+	}
+	// ImageData should be a deep copy.
+	if len(tf.ImageData) != len(orig.ImageData) {
+		t.Errorf("ImageData length: want %d, got %d", len(orig.ImageData), len(tf.ImageData))
+	}
+	if &tf.ImageData[0] == &orig.ImageData[0] {
+		t.Error("ImageData slice should be a deep copy, not a reference")
+	}
+	// Mutating clone should not affect original.
+	tf.ImageData[0] = 99
+	if orig.ImageData[0] == 99 {
+		t.Error("mutating clone ImageData affected original")
+	}
+}
+
+func TestTextureFill_Clone_NilImageData(t *testing.T) {
+	orig := &TextureFill{ImageData: nil}
+	clone := orig.Clone()
+	tf, ok := clone.(*TextureFill)
+	if !ok {
+		t.Fatalf("Clone did not return *TextureFill")
+	}
+	if tf.ImageData != nil {
+		t.Error("Clone of nil ImageData should be nil")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Fill interface satisfaction (extended with new types)
 // ---------------------------------------------------------------------------
 
 func TestFill_InterfaceSatisfaction(t *testing.T) {
@@ -338,6 +509,8 @@ func TestFill_InterfaceSatisfaction(t *testing.T) {
 		NewLinearGradientFill(color.RGBA{}, color.RGBA{}),
 		NewGlassFill(color.RGBA{}),
 		NewHatchFill(color.RGBA{}, color.RGBA{}, HatchHorizontal),
+		NewPathGradientFill(color.RGBA{}, color.RGBA{}, PathGradientElliptic),
+		&TextureFill{},
 		&NoneFill{},
 	}
 	for _, f := range fills {
@@ -347,5 +520,18 @@ func TestFill_InterfaceSatisfaction(t *testing.T) {
 		_ = f.FillType()
 		_ = f.Clone()
 		_ = f.IsTransparent()
+	}
+}
+
+// ---------------------------------------------------------------------------
+// FillType constants (extended)
+// ---------------------------------------------------------------------------
+
+func TestFillType_PathGradientAndTexture(t *testing.T) {
+	if FillTypePathGradient != "PathGradient" {
+		t.Errorf("FillTypePathGradient want PathGradient, got %q", FillTypePathGradient)
+	}
+	if FillTypeTexture != "Texture" {
+		t.Errorf("FillTypeTexture want Texture, got %q", FillTypeTexture)
 	}
 }

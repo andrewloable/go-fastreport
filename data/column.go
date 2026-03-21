@@ -31,6 +31,40 @@ const (
 	ColumnFormatBoolean
 )
 
+// ColumnBindableControl specifies the type of report object created when a
+// column is dropped on a report page. It is the Go equivalent of
+// FastReport.Data.ColumnBindableControl.
+// C# ref: FastReport.Base/Data/Column.cs
+type ColumnBindableControl int
+
+const (
+	// ColumnBindableControlText creates a TextObject (default).
+	ColumnBindableControlText ColumnBindableControl = iota
+	// ColumnBindableControlRichText creates a RichObject.
+	ColumnBindableControlRichText
+	// ColumnBindableControlPicture creates a PictureObject.
+	ColumnBindableControlPicture
+	// ColumnBindableControlCheckBox creates a CheckBoxObject.
+	ColumnBindableControlCheckBox
+	// ColumnBindableControlCustom creates a custom object type specified by
+	// CustomBindableControl.
+	ColumnBindableControlCustom
+)
+
+var columnBindableControlNames = [...]string{
+	"Text", "RichText", "Picture", "CheckBox", "Custom",
+}
+
+// parseColumnBindableControl converts an FRX string to a ColumnBindableControl.
+func parseColumnBindableControl(s string) ColumnBindableControl {
+	for i, name := range columnBindableControlNames {
+		if name == s {
+			return ColumnBindableControl(i)
+		}
+	}
+	return ColumnBindableControlText
+}
+
 // columnFormatNames maps ColumnFormat values to their FRX string representation
 // for serialization. The index matches the iota value.
 var columnFormatNames = [...]string{
@@ -59,6 +93,14 @@ type DataColumn struct {
 	DataType string
 	// Format specifies the display format.
 	Format ColumnFormat
+	// BindableControl specifies the type of report object created when this
+	// column is dropped on a report page. Defaults to ColumnBindableControlText.
+	// C# ref: FastReport.Data.Column.BindableControl
+	BindableControl ColumnBindableControl
+	// CustomBindableControl specifies the type name of a custom object when
+	// BindableControl is ColumnBindableControlCustom.
+	// C# ref: FastReport.Data.Column.CustomBindableControl
+	CustomBindableControl string
 	// Calculated is true when the column value comes from an expression.
 	Calculated bool
 	// Expression is the formula used for calculated columns.
@@ -82,10 +124,25 @@ type DataColumn struct {
 // PropName is initialised to name (matching C# Column constructor + SetName).
 func NewDataColumn(name string) *DataColumn {
 	return &DataColumn{
-		Name:     name,
-		Alias:    name,
-		PropName: name,
-		Enabled:  true,
+		Name:            name,
+		Alias:           name,
+		PropName:        name,
+		Enabled:         true,
+		BindableControl: ColumnBindableControlText,
+	}
+}
+
+// SetBindableControlType sets BindableControl based on the Go type string.
+// Byte slice and image types → Picture; bool → CheckBox; anything else → Text.
+// C# ref: FastReport.Data.Column.SetBindableControlType(Type)
+func (c *DataColumn) SetBindableControlType(goType string) {
+	switch goType {
+	case "[]byte", "image.Image":
+		c.BindableControl = ColumnBindableControlPicture
+	case "bool":
+		c.BindableControl = ColumnBindableControlCheckBox
+	default:
+		c.BindableControl = ColumnBindableControlText
 	}
 }
 
@@ -154,6 +211,12 @@ func (c *DataColumn) Serialize(w report.Writer) error {
 	if c.Format != ColumnFormatAuto {
 		w.WriteStr("Format", columnFormatNames[c.Format])
 	}
+	if c.BindableControl != ColumnBindableControlText {
+		w.WriteStr("BindableControl", columnBindableControlNames[c.BindableControl])
+	}
+	if c.CustomBindableControl != "" {
+		w.WriteStr("CustomBindableControl", c.CustomBindableControl)
+	}
 	if c.Calculated {
 		w.WriteBool("Calculated", true)
 		w.WriteStr("Expression", c.Expression)
@@ -175,6 +238,14 @@ func (c *DataColumn) Deserialize(r report.Reader) error {
 	fmtStr := r.ReadStr("Format", "")
 	if fmtStr != "" {
 		c.Format = parseColumnFormat(fmtStr)
+	}
+	bindableStr := r.ReadStr("BindableControl", "")
+	if bindableStr != "" {
+		c.BindableControl = parseColumnBindableControl(bindableStr)
+	}
+	c.CustomBindableControl = r.ReadStr("CustomBindableControl", c.CustomBindableControl)
+	if c.CustomBindableControl != "" {
+		c.BindableControl = ColumnBindableControlCustom
 	}
 	c.Calculated = r.ReadBool("Calculated", false)
 	if c.Calculated {

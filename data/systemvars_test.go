@@ -150,3 +150,112 @@ func TestSystemVariables_ToParameters(t *testing.T) {
 		t.Error("ToParameters should include PageNumber=3")
 	}
 }
+
+// ── New constant names (C# naming) ────────────────────────────────────────────
+
+// TestSysVarPage verifies that the C#-canonical "Page" constant resolves the
+// same field as "PageNumber".
+// C# ref: FastReport.Data.PageVariable.Name = "Page" (SystemVariables.cs:92).
+func TestSysVarPage_Get(t *testing.T) {
+	sv := data.NewSystemVariables()
+	sv.PageNumber = 7
+	if v := sv.Get(data.SysVarPage); v != 7 {
+		t.Errorf("Get(SysVarPage) = %v, want 7", v)
+	}
+}
+
+func TestSysVarPage_Set(t *testing.T) {
+	sv := data.NewSystemVariables()
+	sv.Set(data.SysVarPage, 12)
+	if sv.PageNumber != 12 {
+		t.Errorf("PageNumber after Set(SysVarPage) = %d, want 12", sv.PageNumber)
+	}
+}
+
+// TestSysVarHierarchyRow_IsString verifies HierarchyRow is a string (e.g. "1.2.3").
+// C# ref: HierarchyRowNoVariable returns Engine.HierarchyRowNo which is a string.
+func TestSysVarHierarchyRow_IsString(t *testing.T) {
+	sv := data.NewSystemVariables()
+	sv.HierarchyRow = "1.2.3"
+	if v := sv.Get(data.SysVarHierarchyRow); v != "1.2.3" {
+		t.Errorf("Get(SysVarHierarchyRow) = %v, want \"1.2.3\"", v)
+	}
+}
+
+func TestSysVarHierarchyRow_Set(t *testing.T) {
+	sv := data.NewSystemVariables()
+	sv.Set(data.SysVarHierarchyRow, "2.1")
+	if sv.HierarchyRow != "2.1" {
+		t.Errorf("HierarchyRow after Set = %q, want \"2.1\"", sv.HierarchyRow)
+	}
+}
+
+func TestSysVarHierarchyRow_Set_WrongType_NoOp(t *testing.T) {
+	sv := data.NewSystemVariables()
+	sv.HierarchyRow = "original"
+	sv.Set(data.SysVarHierarchyRow, 42) // int not string → no-op
+	if sv.HierarchyRow != "original" {
+		t.Errorf("HierarchyRow should be unchanged after wrong-type Set, got %q", sv.HierarchyRow)
+	}
+}
+
+// TestSysVarPageN_Constant verifies the PageN constant value.
+func TestSysVarPageN_Constant(t *testing.T) {
+	if data.SysVarPageN != "PageN" {
+		t.Errorf("SysVarPageN = %q, want \"PageN\"", data.SysVarPageN)
+	}
+}
+
+// TestSysVarPageNofM_Constant verifies the PageNofM constant value.
+func TestSysVarPageNofM_Constant(t *testing.T) {
+	if data.SysVarPageNofM != "PageNofM" {
+		t.Errorf("SysVarPageNofM = %q, want \"PageNofM\"", data.SysVarPageNofM)
+	}
+}
+
+// TestSysVarMacroConstants verifies the macro variable name constants.
+// C# ref: PageMacroVariable, TotalPagesMacroVariable, CopyNameMacroVariable.
+func TestSysVarMacroConstants(t *testing.T) {
+	tests := []struct {
+		name string
+		want string
+	}{
+		{data.SysVarPageMacro, "Page#"},
+		{data.SysVarTotalPagesMacro, "TotalPages#"},
+		{data.SysVarCopyNameMacro, "CopyName#"},
+	}
+	for _, tc := range tests {
+		if tc.name != tc.want {
+			t.Errorf("constant value = %q, want %q", tc.name, tc.want)
+		}
+	}
+}
+
+// TestToParameters_IncludesPage verifies that ToParameters includes the C#
+// canonical "Page" entry.
+func TestToParameters_IncludesPage(t *testing.T) {
+	sv := data.NewSystemVariables()
+	sv.PageNumber = 5
+	params := sv.ToParameters()
+	found := false
+	for _, p := range params {
+		if p.Name == data.SysVarPage && p.Value == 5 {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("ToParameters should include SysVarPage (\"Page\") with the page number")
+	}
+}
+
+// TestSystemVariables_SetHierarchyLevel verifies HierarchyLevel Set/Get round-trip.
+func TestSystemVariables_SetHierarchyLevel(t *testing.T) {
+	sv := data.NewSystemVariables()
+	sv.Set(data.SysVarHierarchyLevel, 3)
+	if sv.HierarchyLevel != 3 {
+		t.Errorf("HierarchyLevel after Set = %d, want 3", sv.HierarchyLevel)
+	}
+	if v := sv.Get(data.SysVarHierarchyLevel); v != 3 {
+		t.Errorf("Get(SysVarHierarchyLevel) = %v, want 3", v)
+	}
+}

@@ -76,6 +76,29 @@ func (f *DateFormat) FormatValue(v any) string {
 	return fmt.Sprint(v)
 }
 
+// Clone returns a deep copy of this DateFormat.
+// Mirrors C# DateFormat.Clone().
+func (f *DateFormat) Clone() Format {
+	return &DateFormat{
+		Format:            f.Format,
+		UseLocaleSettings: f.UseLocaleSettings,
+	}
+}
+
+// Equals reports whether f and other represent the same format configuration.
+// Mirrors C# DateFormat.Equals().
+func (f *DateFormat) Equals(other Format) bool {
+	o, ok := other.(*DateFormat)
+	return ok && f.Format == o.Format && f.UseLocaleSettings == o.UseLocaleSettings
+}
+
+// GetSampleValue returns a representative formatted string for UI preview.
+// Mirrors C# DateFormat.GetSampleValue() which uses 2007-11-30 13:30:00.
+func (f *DateFormat) GetSampleValue() string {
+	sample := time.Date(2007, 11, 30, 13, 30, 0, 0, time.UTC)
+	return f.FormatValue(sample)
+}
+
 // toTime converts common date-carrying types to time.Time.
 func toTime(v any) (time.Time, bool) {
 	switch t := v.(type) {

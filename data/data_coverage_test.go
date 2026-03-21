@@ -1053,9 +1053,9 @@ func TestSystemVariables_Set_AbsRow(t *testing.T) {
 
 func TestSystemVariables_Set_HierarchyRow(t *testing.T) {
 	sv := data.NewSystemVariables()
-	sv.Set(data.SysVarHierarchyRow, 5)
-	if sv.HierarchyRow != 5 {
-		t.Errorf("HierarchyRow = %d, want 5", sv.HierarchyRow)
+	sv.Set(data.SysVarHierarchyRow, "1.2")
+	if sv.HierarchyRow != "1.2" {
+		t.Errorf("HierarchyRow = %q, want 1.2", sv.HierarchyRow)
 	}
 }
 
@@ -1078,9 +1078,9 @@ func TestSystemVariables_Get_HierarchyLevel(t *testing.T) {
 
 func TestSystemVariables_Get_HierarchyRow(t *testing.T) {
 	sv := data.NewSystemVariables()
-	sv.HierarchyRow = 8
-	if sv.Get(data.SysVarHierarchyRow) != 8 {
-		t.Error("Get(HierarchyRow) should return 8")
+	sv.HierarchyRow = "2.3.4"
+	if sv.Get(data.SysVarHierarchyRow) != "2.3.4" {
+		t.Errorf("Get(HierarchyRow) = %v, want 2.3.4", sv.Get(data.SysVarHierarchyRow))
 	}
 }
 

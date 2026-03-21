@@ -355,3 +355,117 @@ func TestResetGroupTotals_WithNilDictInReport(t *testing.T) {
 	// Should not panic even though e.report.Dictionary() is nil.
 	e.resetGroupTotals()
 }
+
+// ── HierarchyLevel / HierarchyRow# syncing ────────────────────────────────────
+
+// TestSyncSystemVariables_SetsHierarchyLevel verifies that syncSystemVariables
+// propagates HierarchyLevel and HierarchyRow# into the dictionary.
+// C# ref: SystemVariables.cs — HierarchyLevelVariable, HierarchyRowNoVariable.
+func TestSyncSystemVariables_SetsHierarchyLevel(t *testing.T) {
+	e := engineWithDict(t)
+	if err := e.Run(DefaultRunOptions()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	// Simulate being inside a hierarchical level.
+	e.hierarchyLevel = 2
+	e.hierarchyRowNo = "1.2"
+	e.syncSystemVariables()
+
+	d := e.report.Dictionary()
+	var levelVal, rowVal any
+	for _, sv := range d.SystemVariables() {
+		switch sv.Name {
+		case "HierarchyLevel":
+			levelVal = sv.Value
+		case "HierarchyRow#":
+			rowVal = sv.Value
+		}
+	}
+	if levelVal != 2 {
+		t.Errorf("HierarchyLevel in dict = %v, want 2", levelVal)
+	}
+	if rowVal != "1.2" {
+		t.Errorf("HierarchyRow# in dict = %v, want \"1.2\"", rowVal)
+	}
+}
+
+// TestSyncPageVariables_SetsHierarchyLevel verifies that syncPageVariables also
+// propagates the hierarchy variables.
+func TestSyncPageVariables_SetsHierarchyLevel(t *testing.T) {
+	e := engineWithDict(t)
+	if err := e.Run(DefaultRunOptions()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	e.hierarchyLevel = 3
+	e.hierarchyRowNo = "2.1.4"
+	e.date = e.date // ensure non-zero
+	e.syncPageVariables()
+
+	d := e.report.Dictionary()
+	var levelVal any
+	for _, sv := range d.SystemVariables() {
+		if sv.Name == "HierarchyLevel" {
+			levelVal = sv.Value
+			break
+		}
+	}
+	if levelVal != 3 {
+		t.Errorf("HierarchyLevel after syncPageVariables = %v, want 3", levelVal)
+	}
+}
+
+// TestEnsureSystemVariables_SetsPageAlias verifies that ensureSystemVariables
+// populates both "Page" (C# canonical) and "PageNumber" (Go alias).
+// C# ref: PageVariable.Name = "Page" (SystemVariables.cs:92).
+func TestEnsureSystemVariables_SetsPageAlias(t *testing.T) {
+	e := engineWithDict(t)
+	e.date = e.date // ensure non-zero date
+	e.ensureSystemVariables()
+
+	d := e.report.Dictionary()
+	var pageFound, pageNumberFound bool
+	for _, sv := range d.SystemVariables() {
+		switch sv.Name {
+		case "Page":
+			pageFound = true
+		case "PageNumber":
+			pageNumberFound = true
+		}
+	}
+	if !pageFound {
+		t.Error("ensureSystemVariables should register \"Page\" system variable (C# canonical)")
+	}
+	if !pageNumberFound {
+		t.Error("ensureSystemVariables should register \"PageNumber\" system variable (Go alias)")
+	}
+}
+
+// TestSyncSystemVariables_SetsPageAlias verifies that syncSystemVariables keeps
+// both "Page" and "PageNumber" in sync.
+func TestSyncSystemVariables_SetsPageAlias(t *testing.T) {
+	e := engineWithDict(t)
+	if err := e.Run(DefaultRunOptions()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	e.pageNo = 4
+	e.syncSystemVariables()
+
+	d := e.report.Dictionary()
+	var pageVal, pageNumberVal any
+	for _, sv := range d.SystemVariables() {
+		switch sv.Name {
+		case "Page":
+			pageVal = sv.Value
+		case "PageNumber":
+			pageNumberVal = sv.Value
+		}
+	}
+	if pageVal != 4 {
+		t.Errorf("\"Page\" in dict = %v, want 4", pageVal)
+	}
+	if pageNumberVal != 4 {
+		t.Errorf("\"PageNumber\" in dict = %v, want 4", pageNumberVal)
+	}
+}

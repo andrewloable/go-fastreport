@@ -30,3 +30,22 @@ func (f *CustomFormat) FormatValue(v any) string {
 	}
 	return fmt.Sprintf(layout, v)
 }
+
+// Clone returns a deep copy of this CustomFormat.
+// Mirrors C# CustomFormat.Clone().
+func (f *CustomFormat) Clone() Format {
+	return &CustomFormat{Format: f.Format}
+}
+
+// Equals reports whether f and other represent the same format configuration.
+// Mirrors C# CustomFormat.Equals().
+func (f *CustomFormat) Equals(other Format) bool {
+	o, ok := other.(*CustomFormat)
+	return ok && f.Format == o.Format
+}
+
+// GetSampleValue returns a representative formatted string for UI preview.
+// Mirrors C# CustomFormat.GetSampleValue() which returns "".
+func (f *CustomFormat) GetSampleValue() string {
+	return ""
+}

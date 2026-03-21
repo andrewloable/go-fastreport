@@ -18,17 +18,26 @@ type StyleEntry struct {
 	// Border holds the border overrides to apply when ApplyBorder is true.
 	Border Border
 
-	// ApplyFill controls whether the Fill colour is applied to the object.
+	// ApplyFill controls whether the Fill is applied to the object.
 	// Defaults to true.
 	ApplyFill bool
-	// FillColor is the solid fill colour override when ApplyFill is true.
-	// For compatibility only — full fill support uses the Fill interface.
+	// Fill is the fill override when ApplyFill is true.
+	// When non-nil it takes precedence over the legacy FillColor field.
+	// It is the Go equivalent of FastReport.StyleBase.Fill (FillBase interface).
+	Fill Fill
+	// FillColor is the solid fill colour override when ApplyFill is true and
+	// Fill is nil. Kept for backward compatibility with existing serialisation code.
 	FillColor color.RGBA
 
 	// ApplyTextFill controls whether the text fill is applied to the object.
 	// Defaults to true.
 	ApplyTextFill bool
-	// TextColor is the text fill colour override when ApplyTextFill is true.
+	// TextFill is the text fill override when ApplyTextFill is true.
+	// When non-nil it takes precedence over the legacy TextColor field.
+	// It is the Go equivalent of FastReport.StyleBase.TextFill (FillBase interface).
+	TextFill Fill
+	// TextColor is the text fill colour override when ApplyTextFill is true and
+	// TextFill is nil. Kept for backward compatibility with existing serialisation code.
 	TextColor color.RGBA
 
 	// ApplyFont controls whether the Font is applied to the object.
@@ -45,6 +54,86 @@ type StyleEntry struct {
 	BorderColorChanged bool
 	// BorderColor overrides all border-line colours (legacy; prefer Border).
 	BorderColor color.RGBA
+}
+
+// Assign copies all fields from src into e, performing deep copies of
+// Border, Fill, and TextFill. It is the Go equivalent of
+// FastReport.StyleBase.Assign(StyleBase source).
+func (e *StyleEntry) Assign(src *StyleEntry) {
+	if src == nil {
+		return
+	}
+	e.Name = src.Name
+	e.ApplyBorder = src.ApplyBorder
+	e.Border = src.Border // Border is a value type with a pointer slice; use Clone below
+	if src.Border.Lines[0] != nil {
+		cloned := *NewBorder()
+		for i := range src.Border.Lines {
+			if src.Border.Lines[i] != nil {
+				*cloned.Lines[i] = *src.Border.Lines[i]
+			}
+		}
+		cloned.VisibleLines = src.Border.VisibleLines
+		cloned.Shadow = src.Border.Shadow
+		e.Border = cloned
+	}
+	e.ApplyFill = src.ApplyFill
+	if src.Fill != nil {
+		e.Fill = src.Fill.Clone()
+	} else {
+		e.Fill = nil
+	}
+	e.FillColor = src.FillColor
+	e.ApplyTextFill = src.ApplyTextFill
+	if src.TextFill != nil {
+		e.TextFill = src.TextFill.Clone()
+	} else {
+		e.TextFill = nil
+	}
+	e.TextColor = src.TextColor
+	e.ApplyFont = src.ApplyFont
+	e.Font = src.Font
+	e.FontChanged = src.FontChanged
+	e.TextColorChanged = src.TextColorChanged
+	e.FillColorChanged = src.FillColorChanged
+	e.BorderColorChanged = src.BorderColorChanged
+	e.BorderColor = src.BorderColor
+}
+
+// Clone returns a deep copy of e. It is the Go equivalent of
+// FastReport.Style.Clone().
+func (e *StyleEntry) Clone() *StyleEntry {
+	result := &StyleEntry{}
+	result.Assign(e)
+	return result
+}
+
+// EffectiveFill returns the fill to use when applying this style entry.
+// If the Fill interface field is set it is returned; otherwise a SolidFill
+// wrapping FillColor is returned. Returns nil when ApplyFill is false.
+// This is a helper for ReportComponentBase.ApplyStyle.
+func (e *StyleEntry) EffectiveFill() Fill {
+	if !e.ApplyFill && !e.FillColorChanged {
+		return nil
+	}
+	if e.Fill != nil {
+		return e.Fill
+	}
+	return &SolidFill{Color: e.FillColor}
+}
+
+// EffectiveTextFill returns the text fill to use when applying this style
+// entry. If the TextFill interface field is set it is returned; otherwise a
+// SolidFill wrapping TextColor is returned. Returns nil when ApplyTextFill
+// is false.
+func (e *StyleEntry) EffectiveTextFill() Fill {
+	if !e.ApplyTextFill && !e.TextColorChanged {
+		return nil
+	}
+	if e.TextFill != nil {
+		return e.TextFill
+	}
+	return &SolidFill{Color: e.TextColor}
 }
 
 // StyleSheet is a named-style registry. It maps style names to StyleEntry

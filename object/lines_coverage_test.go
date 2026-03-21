@@ -396,3 +396,377 @@ func TestLineObject_Serialize_DefaultCaps_NoAttributes(t *testing.T) {
 		t.Errorf("should NOT write EndCap attributes for default caps:\n%s", xml)
 	}
 }
+
+// ── LineObject: DashPattern serialize / deserialize round-trip ────────────────
+// C# LineObject.Serialize() (LineObject.cs:274-275): writes DashPattern only
+// when Count > 0.
+
+func TestLineObject_DashPattern_RoundTrip(t *testing.T) {
+	orig := object.NewLineObject()
+	orig.SetDashPattern([]float32{4, 2, 1, 2})
+
+	var buf bytes.Buffer
+	w := serial.NewWriter(&buf)
+	if err := w.WriteObjectNamed("LineObject", orig); err != nil {
+		t.Fatalf("Serialize: %v", err)
+	}
+	w.Flush() //nolint:errcheck
+
+	xml := buf.String()
+	if !strings.Contains(xml, `DashPattern=`) {
+		t.Errorf("expected DashPattern attribute in XML:\n%s", xml)
+	}
+
+	r := serial.NewReader(bytes.NewReader(buf.Bytes()))
+	_, ok := r.ReadObjectHeader()
+	if !ok {
+		t.Fatal("ReadObjectHeader failed")
+	}
+	got := object.NewLineObject()
+	if err := got.Deserialize(r); err != nil {
+		t.Fatalf("Deserialize: %v", err)
+	}
+	dp := got.DashPattern()
+	if len(dp) != 4 {
+		t.Fatalf("DashPattern: got %d elements, want 4", len(dp))
+	}
+	for i, want := range []float32{4, 2, 1, 2} {
+		if dp[i] != want {
+			t.Errorf("DashPattern[%d] = %v, want %v", i, dp[i], want)
+		}
+	}
+}
+
+func TestLineObject_DashPattern_Empty_NotWritten(t *testing.T) {
+	// When DashPattern is empty, the attribute must NOT be written.
+	orig := object.NewLineObject()
+	// dashPattern is nil by default — confirm nothing written.
+
+	var buf bytes.Buffer
+	w := serial.NewWriter(&buf)
+	if err := w.WriteObjectNamed("LineObject", orig); err != nil {
+		t.Fatalf("Serialize: %v", err)
+	}
+	w.Flush() //nolint:errcheck
+
+	if strings.Contains(buf.String(), "DashPattern") {
+		t.Errorf("DashPattern should NOT be written when empty:\n%s", buf.String())
+	}
+}
+
+// ── PolyLineObject: Serialize / Deserialize (PolyPoints_v2) ──────────────────
+// C# PolyLineObject.Serialize() writes PolyPoints_v2, CenterX, CenterY, and
+// DashPattern (PolyLineObject.cs lines 496-517).
+
+func TestPolyLineObject_Serialize_TwoPoints(t *testing.T) {
+	orig := object.NewPolyLineObject()
+	orig.Points().Add(&object.PolyPoint{X: 0, Y: 0})
+	orig.Points().Add(&object.PolyPoint{X: 100, Y: 50})
+	orig.SetCenterX(10)
+	orig.SetCenterY(20)
+
+	var buf bytes.Buffer
+	w := serial.NewWriter(&buf)
+	if err := w.WriteObjectNamed("PolyLineObject", orig); err != nil {
+		t.Fatalf("Serialize: %v", err)
+	}
+	w.Flush() //nolint:errcheck
+
+	xml := buf.String()
+	if !strings.Contains(xml, "PolyPoints_v2=") {
+		t.Errorf("expected PolyPoints_v2 in XML:\n%s", xml)
+	}
+	if !strings.Contains(xml, "CenterX=") {
+		t.Errorf("expected CenterX in XML:\n%s", xml)
+	}
+	if !strings.Contains(xml, "CenterY=") {
+		t.Errorf("expected CenterY in XML:\n%s", xml)
+	}
+
+	r := serial.NewReader(bytes.NewReader(buf.Bytes()))
+	_, ok := r.ReadObjectHeader()
+	if !ok {
+		t.Fatal("ReadObjectHeader failed")
+	}
+	got := object.NewPolyLineObject()
+	if err := got.Deserialize(r); err != nil {
+		t.Fatalf("Deserialize: %v", err)
+	}
+	if got.Points().Len() != 2 {
+		t.Fatalf("Points().Len() = %d, want 2", got.Points().Len())
+	}
+	if got.Points().Get(0).X != 0 || got.Points().Get(0).Y != 0 {
+		t.Errorf("Point[0]: got (%v,%v), want (0,0)", got.Points().Get(0).X, got.Points().Get(0).Y)
+	}
+	if got.Points().Get(1).X != 100 || got.Points().Get(1).Y != 50 {
+		t.Errorf("Point[1]: got (%v,%v), want (100,50)", got.Points().Get(1).X, got.Points().Get(1).Y)
+	}
+	if got.CenterX() != 10 {
+		t.Errorf("CenterX: got %v, want 10", got.CenterX())
+	}
+	if got.CenterY() != 20 {
+		t.Errorf("CenterY: got %v, want 20", got.CenterY())
+	}
+}
+
+func TestPolyLineObject_Serialize_DashPattern(t *testing.T) {
+	orig := object.NewPolyLineObject()
+	orig.SetDashPattern([]float32{6, 3})
+	orig.Points().Add(&object.PolyPoint{X: 0, Y: 0})
+
+	var buf bytes.Buffer
+	w := serial.NewWriter(&buf)
+	if err := w.WriteObjectNamed("PolyLineObject", orig); err != nil {
+		t.Fatalf("Serialize: %v", err)
+	}
+	w.Flush() //nolint:errcheck
+
+	if !strings.Contains(buf.String(), "DashPattern=") {
+		t.Errorf("expected DashPattern in XML:\n%s", buf.String())
+	}
+
+	r := serial.NewReader(bytes.NewReader(buf.Bytes()))
+	_, ok := r.ReadObjectHeader()
+	if !ok {
+		t.Fatal("ReadObjectHeader failed")
+	}
+	got := object.NewPolyLineObject()
+	if err := got.Deserialize(r); err != nil {
+		t.Fatalf("Deserialize: %v", err)
+	}
+	dp := got.DashPattern()
+	if len(dp) != 2 || dp[0] != 6 || dp[1] != 3 {
+		t.Errorf("DashPattern: got %v, want [6 3]", dp)
+	}
+}
+
+// ── PolyLineObject: Deserialize legacy PolyPoints v1 format ──────────────────
+// FRX files older than PolyPoints_v2 (e.g. Box.frx) use the format
+// "X\Y\type|X\Y\type|…" where type is ignored.
+// C# PolyLineObject.Deserialize() handles this as the "PolyPoints" branch
+// (PolyLineObject.cs lines 155-168).
+
+func TestPolyLineObject_Deserialize_LegacyPolyPointsV1(t *testing.T) {
+	// Real example from test-reports/Box.frx (Polygon11).
+	xmlStr := `<PolyLineObject PolyPoints="0\0\0|378\0\1|378\491.4\1|0\491.4\1" CenterX="0" CenterY="0"/>`
+
+	r := serial.NewReader(strings.NewReader(xmlStr))
+	_, ok := r.ReadObjectHeader()
+	if !ok {
+		t.Fatal("ReadObjectHeader failed")
+	}
+	got := object.NewPolyLineObject()
+	if err := got.Deserialize(r); err != nil {
+		t.Fatalf("Deserialize: %v", err)
+	}
+	if got.Points().Len() != 4 {
+		t.Fatalf("Points().Len() = %d, want 4", got.Points().Len())
+	}
+	// First point: (0, 0)
+	p0 := got.Points().Get(0)
+	if p0.X != 0 || p0.Y != 0 {
+		t.Errorf("Point[0]: got (%v,%v), want (0,0)", p0.X, p0.Y)
+	}
+	// Second point: (378, 0)
+	p1 := got.Points().Get(1)
+	if p1.X != 378 || p1.Y != 0 {
+		t.Errorf("Point[1]: got (%v,%v), want (378,0)", p1.X, p1.Y)
+	}
+	// Fourth point: (0, 491.4)
+	p3 := got.Points().Get(3)
+	if p3.X != 0 || p3.Y != 491.4 {
+		t.Errorf("Point[3]: got (%v,%v), want (0,491.4)", p3.X, p3.Y)
+	}
+	if got.CenterX() != 0 || got.CenterY() != 0 {
+		t.Errorf("Center: got (%v,%v), want (0,0)", got.CenterX(), got.CenterY())
+	}
+}
+
+// ── PolyLineObject: Deserialize PolyPoints_v2 with bezier L/R curves ─────────
+// C# PolyPoint.Serialize(StringBuilder) and Deserialize(string) use
+// "X/Y[/L/lx/ly][/R/rx/ry]" format.
+
+func TestPolyLineObject_Deserialize_V2_WithBezierCurves(t *testing.T) {
+	// Construct a PolyPoints_v2 string with a point that has both L and R curves.
+	xmlStr := `<PolyLineObject PolyPoints_v2="0/0|50/100/L/-10/-5/R/10/5|100/0" CenterX="5" CenterY="3"/>`
+
+	r := serial.NewReader(strings.NewReader(xmlStr))
+	_, ok := r.ReadObjectHeader()
+	if !ok {
+		t.Fatal("ReadObjectHeader failed")
+	}
+	got := object.NewPolyLineObject()
+	if err := got.Deserialize(r); err != nil {
+		t.Fatalf("Deserialize: %v", err)
+	}
+	if got.Points().Len() != 3 {
+		t.Fatalf("Points().Len() = %d, want 3", got.Points().Len())
+	}
+	// Middle point should have Left and Right bezier control points.
+	mid := got.Points().Get(1)
+	if mid.X != 50 || mid.Y != 100 {
+		t.Errorf("mid: got (%v,%v), want (50,100)", mid.X, mid.Y)
+	}
+	if mid.Left == nil {
+		t.Fatal("mid.Left should not be nil")
+	}
+	if mid.Left.X != -10 || mid.Left.Y != -5 {
+		t.Errorf("mid.Left: got (%v,%v), want (-10,-5)", mid.Left.X, mid.Left.Y)
+	}
+	if mid.Right == nil {
+		t.Fatal("mid.Right should not be nil")
+	}
+	if mid.Right.X != 10 || mid.Right.Y != 5 {
+		t.Errorf("mid.Right: got (%v,%v), want (10,5)", mid.Right.X, mid.Right.Y)
+	}
+	if got.CenterX() != 5 || got.CenterY() != 3 {
+		t.Errorf("Center: got (%v,%v), want (5,3)", got.CenterX(), got.CenterY())
+	}
+}
+
+// ── PolyLineObject: bezier L/R round-trip via Serialize/Deserialize ──────────
+
+func TestPolyLineObject_BezierRoundTrip(t *testing.T) {
+	orig := object.NewPolyLineObject()
+	p0 := &object.PolyPoint{X: 0, Y: 0}
+	p1 := &object.PolyPoint{
+		X:     50,
+		Y:     100,
+		Left:  &object.PolyPoint{X: -10, Y: -5},
+		Right: &object.PolyPoint{X: 10, Y: 5},
+	}
+	p2 := &object.PolyPoint{X: 100, Y: 0}
+	orig.Points().Add(p0)
+	orig.Points().Add(p1)
+	orig.Points().Add(p2)
+
+	var buf bytes.Buffer
+	w := serial.NewWriter(&buf)
+	if err := w.WriteObjectNamed("PolyLineObject", orig); err != nil {
+		t.Fatalf("Serialize: %v", err)
+	}
+	w.Flush() //nolint:errcheck
+
+	r := serial.NewReader(bytes.NewReader(buf.Bytes()))
+	_, ok := r.ReadObjectHeader()
+	if !ok {
+		t.Fatal("ReadObjectHeader failed")
+	}
+	got := object.NewPolyLineObject()
+	if err := got.Deserialize(r); err != nil {
+		t.Fatalf("Deserialize: %v", err)
+	}
+	if got.Points().Len() != 3 {
+		t.Fatalf("Points().Len() = %d, want 3", got.Points().Len())
+	}
+	mid := got.Points().Get(1)
+	if mid.Left == nil || mid.Right == nil {
+		t.Fatal("bezier control points lost after round-trip")
+	}
+	if mid.Left.X != -10 || mid.Left.Y != -5 {
+		t.Errorf("mid.Left after round-trip: got (%v,%v), want (-10,-5)", mid.Left.X, mid.Left.Y)
+	}
+	if mid.Right.X != 10 || mid.Right.Y != 5 {
+		t.Errorf("mid.Right after round-trip: got (%v,%v), want (10,5)", mid.Right.X, mid.Right.Y)
+	}
+}
+
+// ── PolygonObject: Serialize / Deserialize ────────────────────────────────────
+// C# PolygonObject.Serialize() calls base.Serialize() (PolygonObject.cs:76-77),
+// so PolyPoints_v2 + CenterX/Y are written by PolyLineObject.Serialize().
+
+func TestPolygonObject_Serialize_Deserialize_RoundTrip(t *testing.T) {
+	orig := object.NewPolygonObject()
+	orig.Points().Add(&object.PolyPoint{X: 0, Y: 0})
+	orig.Points().Add(&object.PolyPoint{X: 200, Y: 0})
+	orig.Points().Add(&object.PolyPoint{X: 100, Y: 150})
+	orig.SetCenterX(0)
+	orig.SetCenterY(0)
+
+	var buf bytes.Buffer
+	w := serial.NewWriter(&buf)
+	if err := w.WriteObjectNamed("PolygonObject", orig); err != nil {
+		t.Fatalf("Serialize: %v", err)
+	}
+	w.Flush() //nolint:errcheck
+
+	xml := buf.String()
+	if !strings.Contains(xml, "PolyPoints_v2=") {
+		t.Errorf("expected PolyPoints_v2 in PolygonObject XML:\n%s", xml)
+	}
+
+	r := serial.NewReader(bytes.NewReader(buf.Bytes()))
+	_, ok := r.ReadObjectHeader()
+	if !ok {
+		t.Fatal("ReadObjectHeader failed")
+	}
+	got := object.NewPolygonObject()
+	if err := got.Deserialize(r); err != nil {
+		t.Fatalf("Deserialize: %v", err)
+	}
+	if got.Points().Len() != 3 {
+		t.Fatalf("Points().Len() = %d, want 3", got.Points().Len())
+	}
+	if got.Points().Get(1).X != 200 || got.Points().Get(1).Y != 0 {
+		t.Errorf("Point[1]: got (%v,%v), want (200,0)",
+			got.Points().Get(1).X, got.Points().Get(1).Y)
+	}
+}
+
+// ── PolygonObject: Deserialize legacy PolyPoints v1 from Box.frx ─────────────
+
+func TestPolygonObject_Deserialize_LegacyPolyPointsV1(t *testing.T) {
+	// Taken verbatim from test-reports/Box.frx (Polygon8).
+	xmlStr := `<PolygonObject Name="Polygon8" Left="66.15" Top="633.15" Width="378" Height="75.6" Fill.Color="Orange" PolyPoints="0\0\0|0\-75.6\1|378\-75.6\1|378\0\1" CenterX="0" CenterY="75.6"/>`
+
+	r := serial.NewReader(strings.NewReader(xmlStr))
+	_, ok := r.ReadObjectHeader()
+	if !ok {
+		t.Fatal("ReadObjectHeader failed")
+	}
+	got := object.NewPolygonObject()
+	if err := got.Deserialize(r); err != nil {
+		t.Fatalf("Deserialize: %v", err)
+	}
+	if got.Points().Len() != 4 {
+		t.Fatalf("Points().Len() = %d, want 4", got.Points().Len())
+	}
+	// Point[1] should be (0, -75.6)
+	p1 := got.Points().Get(1)
+	if p1.X != 0 {
+		t.Errorf("Point[1].X: got %v, want 0", p1.X)
+	}
+	if p1.Y != -75.6 {
+		t.Errorf("Point[1].Y: got %v, want -75.6", p1.Y)
+	}
+	if got.CenterY() != 75.6 {
+		t.Errorf("CenterY: got %v, want 75.6", got.CenterY())
+	}
+}
+
+// ── PolyLineObject: empty points list serializes/deserializes cleanly ─────────
+
+func TestPolyLineObject_Serialize_EmptyPoints(t *testing.T) {
+	orig := object.NewPolyLineObject()
+	// No points added — PolyPoints_v2 should be an empty string.
+
+	var buf bytes.Buffer
+	w := serial.NewWriter(&buf)
+	if err := w.WriteObjectNamed("PolyLineObject", orig); err != nil {
+		t.Fatalf("Serialize: %v", err)
+	}
+	w.Flush() //nolint:errcheck
+
+	r := serial.NewReader(bytes.NewReader(buf.Bytes()))
+	_, ok := r.ReadObjectHeader()
+	if !ok {
+		t.Fatal("ReadObjectHeader failed")
+	}
+	got := object.NewPolyLineObject()
+	if err := got.Deserialize(r); err != nil {
+		t.Fatalf("Deserialize: %v", err)
+	}
+	if got.Points().Len() != 0 {
+		t.Errorf("Points().Len() = %d, want 0", got.Points().Len())
+	}
+}

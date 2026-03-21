@@ -1578,6 +1578,63 @@ func TestDeserializeParameter_DescriptionAndAsString(t *testing.T) {
 	}
 }
 
+// TestDeserializeTotal_ResetAfterPrint_DefaultTrue verifies that when
+// ResetAfterPrint is absent from the FRX, it defaults to true (matching the
+// C# Total constructor which sets resetAfterPrint = true).
+// C# ref: FastReport.Data.Total constructor (Total.cs:466-475).
+func TestDeserializeTotal_ResetAfterPrint_DefaultTrue(t *testing.T) {
+	frx := `<?xml version="1.0" encoding="utf-8"?><Report>
+		<Dictionary>
+			<Total Name="T1" Expression="[Amount]" TotalType="Sum"/>
+		</Dictionary>
+		<ReportPage Name="Page1"/>
+	</Report>`
+	r := NewReport()
+	if err := r.LoadFromString(frx); err != nil {
+		t.Fatalf("LoadFromString: %v", err)
+	}
+	totals := r.Dictionary().Totals()
+	if len(totals) != 1 {
+		t.Fatalf("expected 1 total, got %d", len(totals))
+	}
+	t1 := totals[0]
+	// When ResetAfterPrint is absent from FRX, the C# default is true.
+	if !t1.ResetAfterPrint {
+		t.Error("ResetAfterPrint should be true when absent from FRX (matches C# default)")
+	}
+	// ResetOnReprint defaults to true as well.
+	if !t1.ResetOnReprint {
+		t.Error("ResetOnReprint should be true when absent from FRX (matches C# default)")
+	}
+}
+
+// TestDeserializeTotal_ResetAfterPrint_ExplicitFalse verifies that
+// ResetAfterPrint=false is correctly loaded when explicitly present.
+func TestDeserializeTotal_ResetAfterPrint_ExplicitFalse(t *testing.T) {
+	frx := `<?xml version="1.0" encoding="utf-8"?><Report>
+		<Dictionary>
+			<Total Name="T1" Expression="[Amount]" TotalType="Sum"
+				ResetAfterPrint="false" ResetOnReprint="false"/>
+		</Dictionary>
+		<ReportPage Name="Page1"/>
+	</Report>`
+	r := NewReport()
+	if err := r.LoadFromString(frx); err != nil {
+		t.Fatalf("LoadFromString: %v", err)
+	}
+	totals := r.Dictionary().Totals()
+	if len(totals) != 1 {
+		t.Fatalf("expected 1 total, got %d", len(totals))
+	}
+	t1 := totals[0]
+	if t1.ResetAfterPrint {
+		t.Error("ResetAfterPrint should be false when explicitly set to false in FRX")
+	}
+	if t1.ResetOnReprint {
+		t.Error("ResetOnReprint should be false when explicitly set to false in FRX")
+	}
+}
+
 // TestSerializeParameter_DescriptionAndValue verifies that Description and
 // AsString (from Value) are written to FRX when non-empty.
 func TestSerializeParameter_DescriptionAndValue(t *testing.T) {

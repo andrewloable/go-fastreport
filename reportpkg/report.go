@@ -8,8 +8,127 @@ import (
 	"github.com/andrewloable/go-fastreport/style"
 )
 
+// SaveMode specifies the save permissions for a designed report.
+// C# ref: FastReport.Base/ReportInfo.cs enum SaveMode.
+type SaveMode int
+
+const (
+	// SaveModeAll allows saving to all locations (default).
+	SaveModeAll SaveMode = iota
+	// SaveModeOriginal allows saving only to the original location.
+	SaveModeOriginal
+	// SaveModeUser allows saving for the current user.
+	SaveModeUser
+	// SaveModeRole allows saving for the current role/group.
+	SaveModeRole
+	// SaveModeSecurity allows saving with other security permissions.
+	SaveModeSecurity
+	// SaveModeDeny prohibits saving.
+	SaveModeDeny
+	// SaveModeCustom uses custom saving rules.
+	SaveModeCustom
+)
+
+// String returns the C#-compatible enum name used in FRX serialization.
+func (s SaveMode) String() string {
+	switch s {
+	case SaveModeAll:
+		return "All"
+	case SaveModeOriginal:
+		return "Original"
+	case SaveModeUser:
+		return "User"
+	case SaveModeRole:
+		return "Role"
+	case SaveModeSecurity:
+		return "Security"
+	case SaveModeDeny:
+		return "Deny"
+	case SaveModeCustom:
+		return "Custom"
+	default:
+		return "All"
+	}
+}
+
+// parseSaveMode converts a C# enum name string to a SaveMode value.
+func parseSaveMode(s string) SaveMode {
+	switch s {
+	case "Original":
+		return SaveModeOriginal
+	case "User":
+		return SaveModeUser
+	case "Role":
+		return SaveModeRole
+	case "Security":
+		return SaveModeSecurity
+	case "Deny":
+		return SaveModeDeny
+	case "Custom":
+		return SaveModeCustom
+	default:
+		return SaveModeAll
+	}
+}
+
+// TextQuality specifies the quality of text rendering.
+// C# ref: FastReport.Base/Report.cs enum TextQuality.
+type TextQuality int
+
+const (
+	// TextQualityDefault uses system default text rendering.
+	TextQualityDefault TextQuality = iota
+	// TextQualityRegular uses regular quality.
+	TextQualityRegular
+	// TextQualityClearType uses ClearType rendering.
+	TextQualityClearType
+	// TextQualityAntiAlias uses anti-alias rendering (WYSIWYG).
+	TextQualityAntiAlias
+	// TextQualitySingleBPP uses single-bit-per-pixel rendering.
+	TextQualitySingleBPP
+	// TextQualitySingleBPPGridFit uses single-bit-per-pixel with grid fit.
+	TextQualitySingleBPPGridFit
+)
+
+// String returns the C#-compatible enum name for FRX serialization.
+func (t TextQuality) String() string {
+	switch t {
+	case TextQualityRegular:
+		return "Regular"
+	case TextQualityClearType:
+		return "ClearType"
+	case TextQualityAntiAlias:
+		return "AntiAlias"
+	case TextQualitySingleBPP:
+		return "SingleBPP"
+	case TextQualitySingleBPPGridFit:
+		return "SingleBPPGridFit"
+	default:
+		return "Default"
+	}
+}
+
+// parseTextQuality converts a C# enum name string to a TextQuality value.
+func parseTextQuality(s string) TextQuality {
+	switch s {
+	case "Regular":
+		return TextQualityRegular
+	case "ClearType":
+		return TextQualityClearType
+	case "AntiAlias":
+		return TextQualityAntiAlias
+	case "SingleBPP":
+		return TextQualitySingleBPP
+	case "SingleBPPGridFit":
+		return TextQualitySingleBPPGridFit
+	default:
+		return TextQualityDefault
+	}
+}
+
 // ReportInfo holds descriptive metadata about a report.
 // It is the Go equivalent of FastReport.ReportInfo embedded in ReportSettings.
+// C# ref: FastReport.Base/ReportInfo.cs.
 type ReportInfo struct {
 	// Name is the display name of the report.
 	Name string
@@ -19,6 +138,9 @@ type ReportInfo struct {
 	Description string
 	// Version is the report version string (free-form, e.g. "1.0").
 	Version string
+	// Tag is an arbitrary string tag associated with the report.
+	// C# ref: ReportInfo.Tag property.
+	Tag string
 	// Created is the ISO-8601 creation timestamp stored in the FRX.
 	Created string
 	// Modified is the ISO-8601 last-modified timestamp stored in the FRX.
@@ -27,6 +149,13 @@ type ReportInfo struct {
 	CreatorVersion string
 	// SavePreviewPicture indicates the FRX should embed a preview thumbnail.
 	SavePreviewPicture bool
+	// PreviewPictureRatio is the scale ratio used when generating the preview picture.
+	// Values <= 0 are clamped to 0.05. Default is 0.1.
+	// C# ref: ReportInfo.PreviewPictureRatio property.
+	PreviewPictureRatio float32
+	// SaveMode controls who is allowed to save the report.
+	// C# ref: ReportInfo.SaveMode property.
+	SaveMode SaveMode
 	// Picture holds the raw bytes of the embedded preview image (PNG/JPEG).
 	Picture []byte
 }
@@ -52,8 +181,24 @@ type Report struct {
 	// Script settings.
 	ScriptText string
 
+	// ScriptLanguage records the script language stored in the FRX attribute.
+	// The Go port does not execute C# or VB scripts; this field is preserved
+	// for round-trip fidelity only.
+	// C# ref: FastReport.Base/Report.cs ScriptLanguage property.
+	ScriptLanguage string
+
 	// Serialization options.
 	Compressed bool
+
+	// TextQuality specifies the text rendering quality hint stored in the FRX.
+	// Affects on-screen preview only; PDF/image export uses its own rendering.
+	// C# ref: FastReport.Base/Report.cs TextQuality property.
+	TextQuality TextQuality
+
+	// SmoothGraphics indicates whether graphic objects (bitmaps, shapes) should
+	// be displayed smoothly. Stored in FRX for round-trip fidelity.
+	// C# ref: FastReport.Base/Report.cs SmoothGraphics property.
+	SmoothGraphics bool
 
 	// Behaviour flags.
 	ConvertNulls bool
@@ -119,7 +264,8 @@ type Report struct {
 	customFunctions map[string]func(args []any) (any, error)
 }
 
-// NewReport creates a Report with defaults.
+// NewReport creates a Report with defaults matching C# ClearReportProperties().
+// C# ref: FastReport.Base/Report.cs ClearReportProperties() (~line 1115).
 func NewReport() *Report {
 	return &Report{
 		BaseObject:        *report.NewBaseObject(),
@@ -127,7 +273,12 @@ func NewReport() *Report {
 		styles:            style.NewStyleSheet(),
 		Settings:          NewReportSettings(),
 		InitialPageNumber: 1,
-		ExportsOptions:    export.NewExportsOptions(),
+		// ConvertNulls default is true — matches C# ClearReportProperties().
+		ConvertNulls:   true,
+		ExportsOptions: export.NewExportsOptions(),
+		Info: ReportInfo{
+			PreviewPictureRatio: 0.1,
+		},
 	}
 }
 
@@ -209,33 +360,20 @@ func (r *Report) RemovePage(p *ReportPage) {
 // --- Serialization ---
 
 // Serialize writes Report properties that differ from defaults.
+// Attribute names match C# FastReport serialization:
+//   - ReportInfo.* dot-qualified form for metadata fields
+//   - ScriptLanguage, TextQuality, SmoothGraphics for rendering hints
+//
+// C# ref: FastReport.Base/Report.cs Report.Serialize() (~line 1872)
+// C# ref: FastReport.Base/ReportInfo.cs ReportInfo.Serialize() (~line 219)
 func (r *Report) Serialize(w report.Writer) error {
 	if err := r.BaseObject.Serialize(w); err != nil {
 		return err
 	}
-	if r.Info.Name != "" {
-		w.WriteStr("ReportName", r.Info.Name)
-	}
-	if r.Info.Author != "" {
-		w.WriteStr("ReportAuthor", r.Info.Author)
-	}
-	if r.Info.Description != "" {
-		w.WriteStr("ReportDescription", r.Info.Description)
-	}
-	if r.Info.Version != "" {
-		w.WriteStr("ReportVersion", r.Info.Version)
-	}
-	if r.Info.Created != "" {
-		w.WriteStr("Created", r.Info.Created)
-	}
-	if r.Info.Modified != "" {
-		w.WriteStr("Modified", r.Info.Modified)
-	}
-	if r.Info.CreatorVersion != "" {
-		w.WriteStr("CreatorVersion", r.Info.CreatorVersion)
-	}
-	if r.Info.SavePreviewPicture {
-		w.WriteBool("SavePreviewPicture", true)
+	// ScriptLanguage is always written (C# always serializes it).
+	// C# ref: Report.cs line 1887 — "always serialize ScriptLanguage"
+	if r.ScriptLanguage != "" {
+		w.WriteStr("ScriptLanguage", r.ScriptLanguage)
 	}
 	if r.Compressed {
 		w.WriteBool("Compressed", true)
@@ -245,6 +383,12 @@ func (r *Report) Serialize(w report.Writer) error {
 	}
 	if r.DoublePass {
 		w.WriteBool("DoublePass", true)
+	}
+	if r.TextQuality != TextQualityDefault {
+		w.WriteStr("TextQuality", r.TextQuality.String())
+	}
+	if r.SmoothGraphics {
+		w.WriteBool("SmoothGraphics", true)
 	}
 	if r.InitialPageNumber != 1 {
 		w.WriteInt("InitialPageNumber", r.InitialPageNumber)
@@ -257,6 +401,41 @@ func (r *Report) Serialize(w report.Writer) error {
 	}
 	if r.FinishReportEvent != "" {
 		w.WriteStr("FinishReportEvent", r.FinishReportEvent)
+	}
+	// ReportInfo fields — written with C# dot-qualified attribute names.
+	// C# ref: ReportInfo.cs Serialize() method (~line 219).
+	if r.Info.Name != "" {
+		w.WriteStr("ReportInfo.Name", r.Info.Name)
+	}
+	if r.Info.Author != "" {
+		w.WriteStr("ReportInfo.Author", r.Info.Author)
+	}
+	if r.Info.Description != "" {
+		w.WriteStr("ReportInfo.Description", r.Info.Description)
+	}
+	if r.Info.Version != "" {
+		w.WriteStr("ReportInfo.Version", r.Info.Version)
+	}
+	if r.Info.Tag != "" {
+		w.WriteStr("ReportInfo.Tag", r.Info.Tag)
+	}
+	if r.Info.Created != "" {
+		w.WriteStr("ReportInfo.Created", r.Info.Created)
+	}
+	if r.Info.Modified != "" {
+		w.WriteStr("ReportInfo.Modified", r.Info.Modified)
+	}
+	if r.Info.CreatorVersion != "" {
+		w.WriteStr("ReportInfo.CreatorVersion", r.Info.CreatorVersion)
+	}
+	if r.Info.SavePreviewPicture {
+		w.WriteBool("ReportInfo.SavePreviewPicture", true)
+	}
+	if r.Info.PreviewPictureRatio != 0 && r.Info.PreviewPictureRatio != 0.1 {
+		w.WriteFloat("ReportInfo.PreviewPictureRatio", r.Info.PreviewPictureRatio)
+	}
+	if r.Info.SaveMode != SaveModeAll {
+		w.WriteStr("ReportInfo.SaveMode", r.Info.SaveMode.String())
 	}
 	// Write Styles child element when the stylesheet has entries.
 	if r.styles.Len() > 0 {
@@ -282,44 +461,72 @@ func (r *Report) Serialize(w report.Writer) error {
 }
 
 // Deserialize reads Report properties.
+// Reads both C# dot-qualified "ReportInfo.*" form and legacy short-form
+// attributes for backwards compatibility.
+// C# ref: FastReport.Base/Report.cs Report.Deserialize() (~line 1929)
 func (r *Report) Deserialize(rd report.Reader) error {
 	if err := r.BaseObject.Deserialize(rd); err != nil {
 		return err
 	}
-	r.Info.Name = rd.ReadStr("ReportName", "")
-	r.Info.Author = rd.ReadStr("ReportAuthor", "")
-	r.Info.Description = rd.ReadStr("ReportDescription", "")
-	r.Info.Version = rd.ReadStr("ReportVersion", "")
-	r.Info.Created = rd.ReadStr("Created", "")
-	r.Info.Modified = rd.ReadStr("Modified", "")
-	// FRX .NET uses dot-qualified attribute names (e.g. "ReportInfo.Description").
-	// Read these as fallbacks when the short forms are empty.
-	if r.Info.Name == "" {
-		r.Info.Name = rd.ReadStr("ReportInfo.Name", "")
-	}
-	if r.Info.Author == "" {
-		r.Info.Author = rd.ReadStr("ReportInfo.Author", "")
-	}
-	if r.Info.Description == "" {
-		r.Info.Description = rd.ReadStr("ReportInfo.Description", "")
-	}
-	if r.Info.Version == "" {
-		r.Info.Version = rd.ReadStr("ReportInfo.Version", "")
-	}
-	if r.Info.Created == "" {
-		r.Info.Created = rd.ReadStr("ReportInfo.Created", "")
-	}
-	if r.Info.Modified == "" {
-		r.Info.Modified = rd.ReadStr("ReportInfo.Modified", "")
-	}
-	r.Info.CreatorVersion = rd.ReadStr("CreatorVersion", "")
-	r.Info.SavePreviewPicture = rd.ReadBool("SavePreviewPicture", false)
+	// ScriptLanguage — preserved for round-trip only; Go does not execute scripts.
+	r.ScriptLanguage = rd.ReadStr("ScriptLanguage", "")
+	// Core report flags.
 	r.Compressed = rd.ReadBool("Compressed", false)
-	r.ConvertNulls = rd.ReadBool("ConvertNulls", false)
+	// ConvertNulls default is true in C# (ClearReportProperties sets true).
+	// C# ref: Report.cs line 1132.
+	r.ConvertNulls = rd.ReadBool("ConvertNulls", true)
 	r.DoublePass = rd.ReadBool("DoublePass", false)
+	// TextQuality and SmoothGraphics — rendering hints, preserved for round-trip.
+	r.TextQuality = parseTextQuality(rd.ReadStr("TextQuality", "Default"))
+	r.SmoothGraphics = rd.ReadBool("SmoothGraphics", false)
 	r.InitialPageNumber = rd.ReadInt("InitialPageNumber", 1)
 	r.MaxPages = rd.ReadInt("MaxPages", 0)
 	r.StartReportEvent = rd.ReadStr("StartReportEvent", "")
 	r.FinishReportEvent = rd.ReadStr("FinishReportEvent", "")
+
+	// ReportInfo fields — read C# dot-qualified form first, then fall back to
+	// legacy short-form names used by older Go-generated FRX files.
+	// C# ref: ReportInfo.cs Serialize() writes "ReportInfo.*" attribute names.
+	r.Info.Name = rd.ReadStr("ReportInfo.Name", "")
+	if r.Info.Name == "" {
+		r.Info.Name = rd.ReadStr("ReportName", "")
+	}
+	r.Info.Author = rd.ReadStr("ReportInfo.Author", "")
+	if r.Info.Author == "" {
+		r.Info.Author = rd.ReadStr("ReportAuthor", "")
+	}
+	r.Info.Description = rd.ReadStr("ReportInfo.Description", "")
+	if r.Info.Description == "" {
+		r.Info.Description = rd.ReadStr("ReportDescription", "")
+	}
+	r.Info.Version = rd.ReadStr("ReportInfo.Version", "")
+	if r.Info.Version == "" {
+		r.Info.Version = rd.ReadStr("ReportVersion", "")
+	}
+	r.Info.Tag = rd.ReadStr("ReportInfo.Tag", "")
+	r.Info.Created = rd.ReadStr("ReportInfo.Created", "")
+	if r.Info.Created == "" {
+		r.Info.Created = rd.ReadStr("Created", "")
+	}
+	r.Info.Modified = rd.ReadStr("ReportInfo.Modified", "")
+	if r.Info.Modified == "" {
+		r.Info.Modified = rd.ReadStr("Modified", "")
+	}
+	// CreatorVersion: read both "ReportInfo.CreatorVersion" (C# form) and
+	// legacy "CreatorVersion" (old Go-generated form).
+	r.Info.CreatorVersion = rd.ReadStr("ReportInfo.CreatorVersion", "")
+	if r.Info.CreatorVersion == "" {
+		r.Info.CreatorVersion = rd.ReadStr("CreatorVersion", "")
+	}
+	r.Info.SavePreviewPicture = rd.ReadBool("ReportInfo.SavePreviewPicture", false)
+	if !r.Info.SavePreviewPicture {
+		r.Info.SavePreviewPicture = rd.ReadBool("SavePreviewPicture", false)
+	}
+	r.Info.PreviewPictureRatio = rd.ReadFloat("ReportInfo.PreviewPictureRatio", 0.1)
+	// Clamp invalid values per C# ReportInfo.PreviewPictureRatio setter.
+	if r.Info.PreviewPictureRatio <= 0 {
+		r.Info.PreviewPictureRatio = 0.05
+	}
+	r.Info.SaveMode = parseSaveMode(rd.ReadStr("ReportInfo.SaveMode", "All"))
 	return nil
 }

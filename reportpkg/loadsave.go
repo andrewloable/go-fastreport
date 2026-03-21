@@ -866,14 +866,18 @@ func deserializeRelation(rdr *serial.Reader) *data.Relation {
 
 // deserializeTotal reads a single <Total> element.
 func deserializeTotal(rdr *serial.Reader) *data.Total {
+	// C# Total constructor: resetAfterPrint = true (Total.cs constructor).
+	// C# Serialize only writes "ResetAfterPrint" when it differs from the default (true).
+	// Therefore: absent attribute → true; "ResetAfterPrint=false" → false.
+	// ResetOnReprint default is also true; only written when false.
 	t := &data.Total{
 		Name:                 rdr.ReadStr("Name", ""),
 		Expression:           rdr.ReadStr("Expression", ""),
 		TotalType:            parseTotalType(rdr.ReadStr("TotalType", "Sum")),
 		Evaluator:            rdr.ReadStr("Evaluator", ""),
 		PrintOn:              rdr.ReadStr("PrintOn", ""),
-		ResetAfterPrint:      rdr.ReadBool("ResetAfterPrint", false),
-		ResetOnReprint:       rdr.ReadBool("ResetOnReprint", true), // C# default is true
+		ResetAfterPrint:      rdr.ReadBool("ResetAfterPrint", true),  // C# default is true
+		ResetOnReprint:       rdr.ReadBool("ResetOnReprint", true),   // C# default is true
 		EvaluateCondition:    rdr.ReadStr("EvaluateCondition", ""),
 		IncludeInvisibleRows: rdr.ReadBool("IncludeInvisibleRows", false),
 	}

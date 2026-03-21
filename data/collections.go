@@ -194,6 +194,17 @@ func (c *TotalCollection) CreateUniqueName(name string) string {
 	return name
 }
 
+// Contains reports whether the given Total pointer is already in the collection.
+// C# ref: FastReport.Data.TotalCollection.Contains (via FRCollectionBase)
+func (c *TotalCollection) Contains(t *Total) bool {
+	for _, v := range c.items {
+		if v == t {
+			return true
+		}
+	}
+	return false
+}
+
 // GetValue returns the current value of the named total.
 // Returns an error when the total is not found.
 // C# ref: FastReport.Data.TotalCollection.GetValue (internal)
@@ -203,6 +214,14 @@ func (c *TotalCollection) GetValue(name string) (any, error) {
 		return nil, fmt.Errorf("TotalCollection: total %q not found", name)
 	}
 	return t.Value, nil
+}
+
+// ClearValues resets the accumulated Value on all totals in the collection.
+// C# ref: FastReport.Data.TotalCollection.ClearValues (internal)
+func (c *TotalCollection) ClearValues() {
+	for _, t := range c.items {
+		t.Value = nil
+	}
 }
 
 // ──────────────────────────────────────────────────────────────────────────────

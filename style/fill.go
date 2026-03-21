@@ -14,6 +14,10 @@ const (
 	FillTypeGlass FillType = "Glass"
 	// FillTypeHatch is a hatch-pattern fill.
 	FillTypeHatch FillType = "Hatch"
+	// FillTypePathGradient is a radial/path gradient fill.
+	FillTypePathGradient FillType = "PathGradient"
+	// FillTypeTexture is an image-tiled texture fill.
+	FillTypeTexture FillType = "Texture"
 	// FillTypeNone represents no fill (fully transparent).
 	FillTypeNone FillType = "None"
 )
@@ -195,6 +199,123 @@ func (f *HatchFill) Clone() Fill {
 func (f *HatchFill) IsTransparent() bool {
 	return f.ForeColor.A == 0 && f.BackColor.A == 0
 }
+
+// ---------------------------------------------------------------------------
+// PathGradientStyle
+// ---------------------------------------------------------------------------
+
+// PathGradientStyle selects the shape of the path gradient.
+// It mirrors FastReport.PathGradientStyle.
+type PathGradientStyle int
+
+const (
+	// PathGradientElliptic uses an ellipse centred on the bounding box.
+	PathGradientElliptic PathGradientStyle = iota
+	// PathGradientRectangular uses the bounding rectangle directly.
+	PathGradientRectangular
+)
+
+// ---------------------------------------------------------------------------
+// PathGradientFill
+// ---------------------------------------------------------------------------
+
+// PathGradientFill fills a region with a radial (path) gradient that blends
+// from a center colour outward to an edge colour.
+// It is the Go equivalent of FastReport.PathGradientFill.
+// Draw() is handled by exporters — only serialization data is stored here.
+type PathGradientFill struct {
+	// CenterColor is the colour at the centre of the gradient.
+	CenterColor color.RGBA
+	// EdgeColor is the colour at the edges of the gradient.
+	EdgeColor color.RGBA
+	// Style selects the gradient shape (Elliptic or Rectangular).
+	Style PathGradientStyle
+}
+
+// NewPathGradientFill returns a PathGradientFill with the given colours and
+// style, matching FastReport.PathGradientFill(CenterColor, EdgeColor, Style).
+func NewPathGradientFill(center, edge color.RGBA, style PathGradientStyle) *PathGradientFill {
+	return &PathGradientFill{CenterColor: center, EdgeColor: edge, Style: style}
+}
+
+// FillType implements Fill.
+func (f *PathGradientFill) FillType() FillType { return FillTypePathGradient }
+
+// Clone implements Fill.
+func (f *PathGradientFill) Clone() Fill {
+	c := *f
+	return &c
+}
+
+// IsTransparent implements Fill; transparent only when both colours have alpha == 0,
+// matching FastReport.PathGradientFill.IsTransparent.
+func (f *PathGradientFill) IsTransparent() bool {
+	return f.CenterColor.A == 0 && f.EdgeColor.A == 0
+}
+
+// ---------------------------------------------------------------------------
+// WrapMode (texture fill tiling)
+// ---------------------------------------------------------------------------
+
+// WrapMode controls how a TextureFill tiles its image.
+// It mirrors System.Drawing.Drawing2D.WrapMode.
+type WrapMode int
+
+const (
+	// WrapModeTile tiles the image.
+	WrapModeTile WrapMode = iota
+	// WrapModeTileFlipX tiles the image, flipping horizontally on alternate columns.
+	WrapModeTileFlipX
+	// WrapModeTileFlipY tiles the image, flipping vertically on alternate rows.
+	WrapModeTileFlipY
+	// WrapModeTileFlipXY tiles the image, flipping both axes.
+	WrapModeTileFlipXY
+	// WrapModeClamp clamps the image without tiling.
+	WrapModeClamp
+)
+
+// ---------------------------------------------------------------------------
+// TextureFill
+// ---------------------------------------------------------------------------
+
+// TextureFill fills a region by tiling an embedded image.
+// It is the Go equivalent of FastReport.TextureFill.
+// Draw() is handled by exporters — only the serialization fields are stored.
+// The image data is stored as a raw base-64-decoded byte slice matching the
+// FRX Fill.ImageData attribute.
+type TextureFill struct {
+	// ImageData holds the raw image bytes (PNG/JPEG etc.) as decoded from
+	// the FRX Fill.ImageData base-64 attribute.
+	ImageData []byte
+	// ImageWidth is the display width in pixels (0 = natural width).
+	ImageWidth int
+	// ImageHeight is the display height in pixels (0 = natural height).
+	ImageHeight int
+	// PreserveAspectRatio keeps the aspect ratio when one dimension is set.
+	PreserveAspectRatio bool
+	// WrapMode controls tiling behaviour. Default is WrapModeTile.
+	WrapMode WrapMode
+	// ImageOffsetX is the horizontal offset of the tile origin in pixels.
+	ImageOffsetX int
+	// ImageOffsetY is the vertical offset of the tile origin in pixels.
+	ImageOffsetY int
+}
+
+// FillType implements Fill.
+func (f *TextureFill) FillType() FillType { return FillTypeTexture }
+
+// Clone implements Fill.
+func (f *TextureFill) Clone() Fill {
+	c := *f
+	if f.ImageData != nil {
+		c.ImageData = make([]byte, len(f.ImageData))
+		copy(c.ImageData, f.ImageData)
+	}
+	return &c
+}
+
+// IsTransparent implements Fill; always false (matches FastReport.TextureFill.IsTransparent).
+func (f *TextureFill) IsTransparent() bool { return false }
 
 // ---------------------------------------------------------------------------
 // NoneFill

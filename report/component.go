@@ -1,6 +1,9 @@
 package report
 
-import "math"
+import (
+	"math"
+	"strings"
+)
 
 // AnchorStyle specifies which edges of the parent an object is anchored to.
 type AnchorStyle int
@@ -71,6 +74,12 @@ type ComponentBase struct {
 	printable           bool
 	printableExpression string
 	groupIndex          int
+
+	// tag is the string-typed Tag field from C# ComponentBase.Tag.
+	// It is distinct from BaseObject.tag (type any, runtime-only, never serialized).
+	// C# reference: ComponentBase.cs field "private string tag" and
+	// Serialize() "if (Tag != c.Tag) writer.WriteStr("Tag", Tag)".
+	tag string
 }
 
 // NewComponentBase creates a ComponentBase with default values:
@@ -157,6 +166,13 @@ func (c *ComponentBase) AbsRight() float32 { return c.AbsLeft() + c.width }
 // AbsBottom returns AbsTop + Height.
 func (c *ComponentBase) AbsBottom() float32 { return c.AbsTop() + c.height }
 
+// AbsBounds returns the absolute bounding rectangle of the component.
+// It accumulates Left/Top coordinates from all ancestor components.
+// C# reference: ComponentBase.cs "public RectangleF AbsBounds" (line 48-51).
+func (c *ComponentBase) AbsBounds() Rect {
+	return Rect{Left: c.AbsLeft(), Top: c.AbsTop(), Width: c.width, Height: c.height}
+}
+
 // Visible returns whether the component is visible.
 func (c *ComponentBase) Visible() bool { return c.visible }
 
@@ -199,6 +215,95 @@ func (c *ComponentBase) GroupIndex() int { return c.groupIndex }
 // SetGroupIndex sets the group index.
 func (c *ComponentBase) SetGroupIndex(idx int) { c.groupIndex = idx }
 
+// TagStr returns the string tag associated with this component.
+// This is the Go equivalent of C# ComponentBase.Tag (a string-typed field
+// initialized to "", serialised as "Tag" in the FRX stream).
+// It is distinct from BaseObject.Tag() which holds an arbitrary runtime value.
+// C# reference: ComponentBase.cs "private string tag" / "public string Tag".
+func (c *ComponentBase) TagStr() string { return c.tag }
+
+// SetTagStr sets the string tag.
+func (c *ComponentBase) SetTagStr(s string) { c.tag = s }
+
+// Assign copies all ComponentBase fields from src into c.
+// It is the Go equivalent of C# ComponentBase.Assign(Base source).
+// C# reference: ComponentBase.cs lines 437-453.
+func (c *ComponentBase) Assign(src *ComponentBase) {
+	if src == nil {
+		return
+	}
+	c.left = src.left
+	c.top = src.top
+	c.width = src.width
+	c.height = src.height
+	c.anchor = src.anchor
+	c.dock = src.dock
+	c.visible = src.visible
+	c.visibleExpression = src.visibleExpression
+	c.printable = src.printable
+	c.printableExpression = src.printableExpression
+	c.groupIndex = src.groupIndex
+	c.tag = src.tag
+}
+
+// GetExpressions returns the list of expression strings defined on this
+// component. It is the Go equivalent of C# ComponentBase.GetExpressions().
+//
+// Bracket-delimited references of the form [expr] are stripped of their
+// brackets so the expression engine can evaluate them directly.
+// The special literals "true" and "false" are normalised to lower-case.
+//
+// C# reference: ComponentBase.cs lines 498-529.
+func (c *ComponentBase) GetExpressions() []string {
+	var exprs []string
+	if c.visibleExpression != "" {
+		exprs = append(exprs, fixExpressionBrackets(c.visibleExpression))
+	}
+	if c.printableExpression != "" {
+		exprs = append(exprs, fixExpressionBrackets(c.printableExpression))
+	}
+	return exprs
+}
+
+// fixExpressionBrackets strips enclosing square brackets from an expression
+// and normalises the literals "true"/"false" to lower-case.
+// C# equivalent: Code.CodeUtils.FixExpressionWithBrackets (ComponentBase.cs line 510).
+func fixExpressionBrackets(expr string) string {
+	expr = strings.TrimSpace(expr)
+	if strings.HasPrefix(expr, "[") && strings.HasSuffix(expr, "]") {
+		expr = expr[1 : len(expr)-1]
+	}
+	lower := strings.ToLower(expr)
+	if lower == "true" || lower == "false" {
+		return lower
+	}
+	return expr
+}
+
+// CalcVisibleExpression evaluates expression using the provided calc function
+// and returns the boolean result. It is the Go equivalent of C#
+// ComponentBase.CalcVisibleExpression(string expression).
+//
+// The calc function receives the bracket-fixed expression and should return
+// (value, error). A nil result or a non-bool result causes the method to
+// return true (show component by default).
+//
+// C# reference: ComponentBase.cs lines 536-563.
+func (c *ComponentBase) CalcVisibleExpression(expression string, calc func(string) (any, error)) bool {
+	if expression == "" {
+		return true
+	}
+	fixed := fixExpressionBrackets(expression)
+	val, err := calc(fixed)
+	if err != nil || val == nil {
+		return true
+	}
+	if b, ok := val.(bool); ok {
+		return b
+	}
+	return true
+}
+
 // Serialize writes ComponentBase properties that differ from defaults.
 func (c *ComponentBase) Serialize(w Writer) error {
 	if err := c.BaseObject.Serialize(w); err != nil {
@@ -237,6 +342,9 @@ func (c *ComponentBase) Serialize(w Writer) error {
 	if c.groupIndex != 0 {
 		w.WriteInt("GroupIndex", c.groupIndex)
 	}
+	if c.tag != "" {
+		w.WriteStr("Tag", c.tag)
+	}
 	return nil
 }
 
@@ -256,6 +364,7 @@ func (c *ComponentBase) Deserialize(r Reader) error {
 	c.anchor = AnchorStyle(r.ReadInt("Anchor", int(AnchorDefault)))
 	c.dock = DockStyle(r.ReadInt("Dock", int(DockNone)))
 	c.groupIndex = r.ReadInt("GroupIndex", 0)
+	c.tag = r.ReadStr("Tag", "")
 	return nil
 }
 

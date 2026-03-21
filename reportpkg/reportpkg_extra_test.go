@@ -668,14 +668,14 @@ func TestReport_Serialize_AllInfoFields(t *testing.T) {
 	}
 
 	for _, want := range []string{
-		`ReportName="MyReport"`,
-		`ReportAuthor="Alice"`,
-		`ReportDescription="Test report"`,
-		`ReportVersion="2.0"`,
-		`Created="2024-01-01"`,
-		`Modified="2024-06-15"`,
-		`CreatorVersion="2023.1"`,
-		`SavePreviewPicture="true"`,
+		`ReportInfo.Name="MyReport"`,
+		`ReportInfo.Author="Alice"`,
+		`ReportInfo.Description="Test report"`,
+		`ReportInfo.Version="2.0"`,
+		`ReportInfo.Created="2024-01-01"`,
+		`ReportInfo.Modified="2024-06-15"`,
+		`ReportInfo.CreatorVersion="2023.1"`,
+		`ReportInfo.SavePreviewPicture="true"`,
 		`ConvertNulls="true"`,
 		`DoublePass="true"`,
 		`InitialPageNumber="3"`,

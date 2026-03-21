@@ -18,7 +18,12 @@ func NewObjectCollection() *ObjectCollection {
 }
 
 // Add appends obj to the end of the collection.
+// If obj is nil the call is a no-op, matching C# FRCollectionBase.Add nil guard
+// (FRCollectionBase.cs).
 func (c *ObjectCollection) Add(obj Base) {
+	if obj == nil {
+		return
+	}
 	c.items = append(c.items, obj)
 }
 
@@ -28,8 +33,13 @@ func (c *ObjectCollection) AddRange(objs []Base) {
 }
 
 // Insert inserts obj at the given index, shifting subsequent elements right.
+// If obj is nil the call is a no-op, matching the C# FRCollectionBase.Insert nil
+// guard (FRCollectionBase.cs).
 // Panics if index is out of range [0, Len()].
 func (c *ObjectCollection) Insert(index int, obj Base) {
+	if obj == nil {
+		return
+	}
 	c.items = append(c.items, nil)
 	copy(c.items[index+1:], c.items[index:])
 	c.items[index] = obj
@@ -134,6 +144,43 @@ func (c *ObjectCollection) SortByTop() []Base {
 		return topI < topJ
 	})
 	return out
+}
+
+// AddRangeCollection appends all elements of other to the collection.
+// It is the ObjectCollection-overload of AddRange, matching C#
+// FRCollectionBase.AddRange(ObjectCollection) (FRCollectionBase.cs).
+func (c *ObjectCollection) AddRangeCollection(other *ObjectCollection) {
+	if other == nil {
+		return
+	}
+	c.items = append(c.items, other.items...)
+}
+
+// Equals reports whether c and other contain the same elements in the same
+// order.  It is the Go equivalent of FRCollectionBase.Equals (FRCollectionBase.cs).
+func (c *ObjectCollection) Equals(other *ObjectCollection) bool {
+	if other == nil {
+		return false
+	}
+	if len(c.items) != len(other.items) {
+		return false
+	}
+	for i := range c.items {
+		if c.items[i] != other.items[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// CopyTo replaces the contents of dst with a shallow copy of c.
+// It is the Go equivalent of FRCollectionBase.CopyTo (FRCollectionBase.cs).
+func (c *ObjectCollection) CopyTo(dst *ObjectCollection) {
+	if dst == nil {
+		return
+	}
+	dst.items = dst.items[:0]
+	dst.items = append(dst.items, c.items...)
 }
 
 // TypedCollection is a generic typed collection whose element type T must

@@ -362,14 +362,14 @@ func TestReport_Serialize_AllNonDefaultAttributes(t *testing.T) {
 	}
 
 	for _, want := range []string{
-		`ReportName="SerializeAllRpt"`,
-		`ReportAuthor="Tester"`,
-		`ReportDescription="Full coverage report"`,
-		`ReportVersion="9.9"`,
-		`Created="2025-01-01"`,
-		`Modified="2025-06-15"`,
-		`CreatorVersion="2024.2"`,
-		`SavePreviewPicture="true"`,
+		`ReportInfo.Name="SerializeAllRpt"`,
+		`ReportInfo.Author="Tester"`,
+		`ReportInfo.Description="Full coverage report"`,
+		`ReportInfo.Version="9.9"`,
+		`ReportInfo.Created="2025-01-01"`,
+		`ReportInfo.Modified="2025-06-15"`,
+		`ReportInfo.CreatorVersion="2024.2"`,
+		`ReportInfo.SavePreviewPicture="true"`,
 		`ConvertNulls="true"`,
 		`DoublePass="true"`,
 		`InitialPageNumber="3"`,

@@ -59,6 +59,20 @@ func (bc *BreakableComponent) CalcHeight() float32 {
 	return bc.Height()
 }
 
+// Assign copies all BreakableComponent properties from src into this component.
+// Note: the breakTo reference is copied as a pointer (shallow). Callers that
+// need lifetime-independent copies must clear BreakTo separately.
+//
+// Mirrors C# BreakableComponent.Assign(Base source) (BreakableComponent.cs line 64-71).
+func (bc *BreakableComponent) Assign(src *BreakableComponent) {
+	if src == nil {
+		return
+	}
+	bc.ReportComponentBase = src.ReportComponentBase
+	bc.canBreak = src.canBreak
+	bc.breakTo = src.breakTo
+}
+
 // Serialize writes BreakableComponent properties that differ from defaults.
 func (bc *BreakableComponent) Serialize(w Writer) error {
 	if err := bc.ReportComponentBase.Serialize(w); err != nil {

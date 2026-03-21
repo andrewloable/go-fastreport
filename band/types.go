@@ -121,7 +121,9 @@ type ReportSummaryBand struct{ HeaderFooterBandBase }
 
 // NewReportSummaryBand creates a ReportSummaryBand with defaults.
 func NewReportSummaryBand() *ReportSummaryBand {
-	return &ReportSummaryBand{HeaderFooterBandBase: *NewHeaderFooterBandBase()}
+	hf := NewHeaderFooterBandBase()
+	hf.FlagIsColumnDependent = true // C# BandBase.IsColumnDependentBand (BandBase.cs line 589)
+	return &ReportSummaryBand{HeaderFooterBandBase: *hf}
 }
 
 // TypeName returns the FRX element name for this band.
@@ -169,6 +171,7 @@ type ColumnHeaderBand struct{ BandBase }
 func NewColumnHeaderBand() *ColumnHeaderBand {
 	b := NewBandBase()
 	b.FlagUseStartNewPage = false
+	b.FlagIsColumnDependent = true // C# BandBase.IsColumnDependentBand (BandBase.cs line 590)
 	return &ColumnHeaderBand{BandBase: *b}
 }
 
@@ -185,6 +188,7 @@ type ColumnFooterBand struct{ BandBase }
 func NewColumnFooterBand() *ColumnFooterBand {
 	b := NewBandBase()
 	b.FlagUseStartNewPage = false
+	b.FlagIsColumnDependent = true // C# BandBase.IsColumnDependentBand (BandBase.cs line 590)
 	return &ColumnFooterBand{BandBase: *b}
 }
 
@@ -197,7 +201,9 @@ type DataHeaderBand struct{ HeaderFooterBandBase }
 
 // NewDataHeaderBand creates a DataHeaderBand with defaults.
 func NewDataHeaderBand() *DataHeaderBand {
-	return &DataHeaderBand{HeaderFooterBandBase: *NewHeaderFooterBandBase()}
+	hf := NewHeaderFooterBandBase()
+	hf.FlagIsColumnDependent = true // C# BandBase.IsColumnDependentBand (BandBase.cs line 589)
+	return &DataHeaderBand{HeaderFooterBandBase: *hf}
 }
 
 // TypeName returns the FRX element name for this band.
@@ -209,7 +215,9 @@ type DataFooterBand struct{ HeaderFooterBandBase }
 
 // NewDataFooterBand creates a DataFooterBand with defaults.
 func NewDataFooterBand() *DataFooterBand {
-	return &DataFooterBand{HeaderFooterBandBase: *NewHeaderFooterBandBase()}
+	hf := NewHeaderFooterBandBase()
+	hf.FlagIsColumnDependent = true // C# BandBase.IsColumnDependentBand (BandBase.cs line 589)
+	return &DataFooterBand{HeaderFooterBandBase: *hf}
 }
 
 // TypeName returns the FRX element name for this band.
@@ -221,7 +229,9 @@ type GroupFooterBand struct{ HeaderFooterBandBase }
 
 // NewGroupFooterBand creates a GroupFooterBand with defaults.
 func NewGroupFooterBand() *GroupFooterBand {
-	return &GroupFooterBand{HeaderFooterBandBase: *NewHeaderFooterBandBase()}
+	hf := NewHeaderFooterBandBase()
+	hf.FlagIsColumnDependent = true // C# BandBase.IsColumnDependentBand (BandBase.cs line 589)
+	return &GroupFooterBand{HeaderFooterBandBase: *hf}
 }
 
 // TypeName returns the FRX element name for this band.
@@ -302,16 +312,25 @@ type GroupHeaderBand struct {
 	nestedGroup     *GroupHeaderBand
 	data            *DataBand
 	groupFooter     *GroupFooterBand
+	// header/footer are data-level header/footer bands attached to this group.
+	// Mirrors C# GroupHeaderBand fields header/footer (GroupHeaderBand.cs lines 80-81).
+	header          *DataHeaderBand
+	footer          *DataFooterBand
 	condition       string
 	sortOrder       SortOrder // default SortOrderAscending
 	keepTogether    bool
 	resetPageNumber bool
+	// groupValue holds the last evaluated condition value.
+	// Used by ResetGroupValue and GroupValueChanged (GroupHeaderBand.cs lines 415-445).
+	groupValue any
 }
 
 // NewGroupHeaderBand creates a GroupHeaderBand with defaults.
 func NewGroupHeaderBand() *GroupHeaderBand {
+	hf := NewHeaderFooterBandBase()
+	hf.FlagIsColumnDependent = true // C# BandBase.IsColumnDependentBand (BandBase.cs line 589)
 	return &GroupHeaderBand{
-		HeaderFooterBandBase: *NewHeaderFooterBandBase(),
+		HeaderFooterBandBase: *hf,
 		sortOrder:            SortOrderAscending,
 	}
 }
@@ -361,6 +380,115 @@ func (g *GroupHeaderBand) ResetPageNumber() bool { return g.resetPageNumber }
 // SetResetPageNumber sets the reset-page-number flag.
 func (g *GroupHeaderBand) SetResetPageNumber(v bool) { g.resetPageNumber = v }
 
+// Header returns the DataHeaderBand attached to this group.
+// Mirrors C# GroupHeaderBand.Header property (GroupHeaderBand.cs lines 163-172).
+func (g *GroupHeaderBand) Header() *DataHeaderBand { return g.header }
+
+// SetHeader sets the DataHeaderBand for this group.
+func (g *GroupHeaderBand) SetHeader(h *DataHeaderBand) { g.header = h }
+
+// Footer returns the DataFooterBand attached to this group.
+// Mirrors C# GroupHeaderBand.Footer property (GroupHeaderBand.cs lines 180-189).
+func (g *GroupHeaderBand) Footer() *DataFooterBand { return g.footer }
+
+// SetFooter sets the DataFooterBand for this group.
+func (g *GroupHeaderBand) SetFooter(f *DataFooterBand) { g.footer = f }
+
+// GroupDataBand traverses nested groups to find the DataBand.
+// Only the last nested group may have a Data band; this method walks the
+// chain g → g.NestedGroup → ... until it finds a non-nil Data.
+// Mirrors C# GroupHeaderBand.GroupDataBand (GroupHeaderBand.cs lines 254-267).
+func (g *GroupHeaderBand) GroupDataBand() *DataBand {
+	group := g
+	for group != nil {
+		if group.data != nil {
+			return group.data
+		}
+		group = group.nestedGroup
+	}
+	return nil
+}
+
+// DataSource returns the DataSource from the associated DataBand.
+// Returns nil when GroupDataBand returns nil or the band has no data source set.
+// Mirrors C# GroupHeaderBand.DataSource (GroupHeaderBand.cs lines 245-252).
+func (g *GroupHeaderBand) DataSource() DataSource {
+	db := g.GroupDataBand()
+	if db == nil {
+		return nil
+	}
+	return db.dataSource
+}
+
+// ResetGroupValue evaluates the group Condition and stores the result as the
+// current group value baseline.  The caller supplies a calc function because
+// GroupHeaderBand has no direct reference to the Report object.
+// Mirrors C# GroupHeaderBand.ResetGroupValue (GroupHeaderBand.cs lines 415-425).
+func (g *GroupHeaderBand) ResetGroupValue(calc func(string) (any, error)) error {
+	if g.condition == "" {
+		return nil
+	}
+	v, err := calc(g.condition)
+	if err != nil {
+		return err
+	}
+	g.groupValue = v
+	return nil
+}
+
+// GroupValueChanged evaluates the group Condition and returns true when the
+// result differs from the stored baseline.  It does NOT update the baseline —
+// call ResetGroupValue to record the new value.
+// Mirrors C# GroupHeaderBand.GroupValueChanged (GroupHeaderBand.cs lines 427-445).
+func (g *GroupHeaderBand) GroupValueChanged(calc func(string) (any, error)) (bool, error) {
+	if g.condition == "" {
+		return false, nil
+	}
+	v, err := calc(g.condition)
+	if err != nil {
+		return false, err
+	}
+	if g.groupValue == nil {
+		return v != nil, nil
+	}
+	return !objectsEqual(g.groupValue, v), nil
+}
+
+// objectsEqual performs a value-equality check equivalent to C# object.Equals.
+// For comparable types the == operator is used; non-comparable types fall back
+// to a pointer-identity check.
+func objectsEqual(a, b any) bool {
+	if a == nil && b == nil {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	defer func() { recover() }() // guard non-comparable types
+	return a == b
+}
+
+// GetExpressions returns the group condition expression for use by the
+// expression validator / walker.
+// Mirrors C# GroupHeaderBand.GetExpressions (GroupHeaderBand.cs lines 369-371).
+func (g *GroupHeaderBand) GetExpressions() []string {
+	return []string{g.condition}
+}
+
+// Assign copies all GroupHeaderBand properties from src into g.
+// Child band references (nestedGroup, data, groupFooter, header, footer) are
+// NOT copied because they are structural, not property-level.
+// Mirrors C# GroupHeaderBand.Assign (GroupHeaderBand.cs lines 339-348).
+func (g *GroupHeaderBand) Assign(src *GroupHeaderBand) {
+	if src == nil {
+		return
+	}
+	g.condition = src.condition
+	g.sortOrder = src.sortOrder
+	g.keepTogether = src.keepTogether
+	g.resetPageNumber = src.resetPageNumber
+}
+
 // Serialize writes GroupHeaderBand properties that differ from defaults.
 // Attributes are written before child objects.
 func (g *GroupHeaderBand) Serialize(w report.Writer) error {
@@ -386,6 +514,11 @@ func (g *GroupHeaderBand) Serialize(w report.Writer) error {
 	}
 	// Write special child bands not in the objects collection.
 	// Mirrors C# GroupHeaderBand.GetChildObjects (GroupHeaderBand.cs:272).
+	if g.header != nil {
+		if err := w.WriteObject(g.header); err != nil {
+			return err
+		}
+	}
 	if g.nestedGroup != nil {
 		if err := w.WriteObject(g.nestedGroup); err != nil {
 			return err
@@ -398,6 +531,11 @@ func (g *GroupHeaderBand) Serialize(w report.Writer) error {
 	}
 	if g.groupFooter != nil {
 		if err := w.WriteObject(g.groupFooter); err != nil {
+			return err
+		}
+	}
+	if g.footer != nil {
+		if err := w.WriteObject(g.footer); err != nil {
 			return err
 		}
 	}
@@ -416,6 +554,12 @@ func (g *GroupHeaderBand) AddChild(child report.Base) {
 		c.SetParent(g)
 	case *GroupFooterBand:
 		g.groupFooter = c
+		c.SetParent(g)
+	case *DataHeaderBand:
+		g.header = c
+		c.SetParent(g)
+	case *DataFooterBand:
+		g.footer = c
 		c.SetParent(g)
 	default:
 		g.BandBase.AddChild(child)
@@ -486,8 +630,9 @@ type DataBand struct {
 // NewDataBand creates a DataBand with defaults.
 func NewDataBand() *DataBand {
 	b := NewBandBase()
-	b.FlagCheckFreeSpace = true // DataBands respect page free-space by default.
-	b.FlagIsDataBand = true     // Used by engine child-band filtering (C# "band is DataBand").
+	b.FlagCheckFreeSpace = true     // DataBands respect page free-space by default.
+	b.FlagIsDataBand = true         // Used by engine child-band filtering (C# "band is DataBand").
+	b.FlagIsColumnDependent = true  // C# BandBase.IsColumnDependentBand (BandBase.cs line 589).
 	return &DataBand{
 		BandBase: *b,
 		columns:  NewBandColumns(),
@@ -631,6 +776,53 @@ func (d *DataBand) IsDeepmostDataBand() bool {
 		}
 	}
 	return true
+}
+
+// GetExpressions returns the expressions used by this DataBand: all Sort
+// expressions followed by the Filter expression.  The caller (expression walker
+// / validator) uses this list to pre-compile or enumerate band expressions.
+// Mirrors C# DataBand.GetExpressions (DataBand.cs lines 542-551).
+func (d *DataBand) GetExpressions() []string {
+	exprs := make([]string, 0, len(d.sort)+1)
+	for _, s := range d.sort {
+		expr := s.Expression
+		if expr == "" {
+			expr = s.Column
+		}
+		if expr != "" {
+			exprs = append(exprs, expr)
+		}
+	}
+	exprs = append(exprs, d.filter)
+	return exprs
+}
+
+// Assign copies all DataBand properties from src into d.
+// Child band references (header, footer) and sub-band collections are NOT
+// copied because they are structural, not property-level.
+// The sort collection is deep-copied so the two bands remain independent.
+// Mirrors C# DataBand.Assign (DataBand.cs lines 462-483).
+func (d *DataBand) Assign(src *DataBand) {
+	if src == nil {
+		return
+	}
+	d.dataSourceAlias = src.dataSourceAlias
+	d.dataSource = src.dataSource
+	d.rowCount = src.rowCount
+	d.maxRows = src.maxRows
+	// Deep-copy sort specs so caller mutations don't affect src.
+	d.sort = make([]SortSpec, len(src.sort))
+	copy(d.sort, src.sort)
+	d.filter = src.filter
+	d.printIfDetailEmpty = src.printIfDetailEmpty
+	d.printIfDSEmpty = src.printIfDSEmpty
+	d.keepTogether = src.keepTogether
+	d.keepDetail = src.keepDetail
+	d.idColumn = src.idColumn
+	d.parentIDColumn = src.parentIDColumn
+	d.indent = src.indent
+	d.collectChildRows = src.collectChildRows
+	d.resetPageNumber = src.resetPageNumber
 }
 
 // Serialize writes DataBand properties that differ from defaults.

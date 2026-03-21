@@ -483,7 +483,7 @@ func TestRoundTrip_OutputContainsExpectedElements(t *testing.T) {
 
 	for _, want := range []string{
 		`<Report`,
-		`ReportName="SalesReport"`,
+		`ReportInfo.Name="SalesReport"`,
 	} {
 		if !strings.Contains(xml, want) {
 			t.Errorf("XML missing %q in:\n%s", want, xml)

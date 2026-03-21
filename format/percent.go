@@ -86,6 +86,40 @@ func (f *PercentFormat) FormatValue(v any) string {
 	return applyPercentNegativePattern(n, sym, f.NegativePattern)
 }
 
+// Clone returns a deep copy of this PercentFormat.
+// Mirrors C# PercentFormat.Clone().
+func (f *PercentFormat) Clone() Format {
+	return &PercentFormat{
+		UseLocaleSettings: f.UseLocaleSettings,
+		DecimalDigits:     f.DecimalDigits,
+		DecimalSeparator:  f.DecimalSeparator,
+		GroupSeparator:    f.GroupSeparator,
+		PercentSymbol:     f.PercentSymbol,
+		PositivePattern:   f.PositivePattern,
+		NegativePattern:   f.NegativePattern,
+	}
+}
+
+// Equals reports whether f and other represent the same format configuration.
+// Mirrors C# PercentFormat.Equals().
+func (f *PercentFormat) Equals(other Format) bool {
+	o, ok := other.(*PercentFormat)
+	return ok &&
+		f.UseLocaleSettings == o.UseLocaleSettings &&
+		f.DecimalDigits == o.DecimalDigits &&
+		f.DecimalSeparator == o.DecimalSeparator &&
+		f.GroupSeparator == o.GroupSeparator &&
+		f.PercentSymbol == o.PercentSymbol &&
+		f.PositivePattern == o.PositivePattern &&
+		f.NegativePattern == o.NegativePattern
+}
+
+// GetSampleValue returns a representative formatted string for UI preview.
+// Mirrors C# PercentFormat.GetSampleValue() which calls FormatValue(1.23f).
+func (f *PercentFormat) GetSampleValue() string {
+	return f.FormatValue(1.23)
+}
+
 func applyPercentPositivePattern(n, sym string, pattern int) string {
 	switch pattern {
 	case 0:

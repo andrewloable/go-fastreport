@@ -679,3 +679,273 @@ func TestSerializeFill_LinearGradient_FocusContrast(t *testing.T) {
 	}
 	_ = strings.Contains // suppress import warning
 }
+
+// ── PathGradientFill serialize / deserialize ──────────────────────────────────
+
+func TestSerializeFill_PathGradient(t *testing.T) {
+	f := style.NewPathGradientFill(
+		color.RGBA{R: 0, G: 0, B: 0, A: 255},   // CenterColor: black
+		color.RGBA{R: 255, G: 255, B: 255, A: 255}, // EdgeColor: white
+		style.PathGradientElliptic,
+	)
+	w := newTestWriter()
+	serializeFill(w, f)
+	if v, ok := w.data["Fill"]; !ok || v != "PathGradient" {
+		t.Errorf("Fill = %v, want PathGradient", v)
+	}
+	if _, ok := w.data["Fill.CenterColor"]; !ok {
+		t.Error("Fill.CenterColor should be written")
+	}
+	if _, ok := w.data["Fill.EdgeColor"]; !ok {
+		t.Error("Fill.EdgeColor should be written")
+	}
+	// Elliptic is the default — should not be written.
+	if _, ok := w.data["Fill.Style"]; ok {
+		t.Error("Fill.Style should not be written for default Elliptic")
+	}
+}
+
+func TestSerializeFill_PathGradient_Rectangular(t *testing.T) {
+	f := style.NewPathGradientFill(
+		color.RGBA{R: 100, G: 100, B: 100, A: 255},
+		color.RGBA{R: 200, G: 200, B: 200, A: 255},
+		style.PathGradientRectangular,
+	)
+	w := newTestWriter()
+	serializeFill(w, f)
+	if v, ok := w.data["Fill.Style"]; !ok || v != "Rectangular" {
+		t.Errorf("Fill.Style = %v, want Rectangular", v)
+	}
+}
+
+func TestDeserializeFill_PathGradientRoundTrip(t *testing.T) {
+	orig := style.NewPathGradientFill(
+		color.RGBA{R: 10, G: 20, B: 30, A: 255},
+		color.RGBA{R: 200, G: 210, B: 220, A: 255},
+		style.PathGradientRectangular,
+	)
+	w := newTestWriter()
+	serializeFill(w, orig)
+	r := newTestReader(w.data)
+	got := deserializeFill(r, &style.SolidFill{})
+	pg, ok := got.(*style.PathGradientFill)
+	if !ok {
+		t.Fatalf("got fill type %T, want *style.PathGradientFill", got)
+	}
+	if pg.CenterColor != orig.CenterColor {
+		t.Errorf("CenterColor = %v, want %v", pg.CenterColor, orig.CenterColor)
+	}
+	if pg.EdgeColor != orig.EdgeColor {
+		t.Errorf("EdgeColor = %v, want %v", pg.EdgeColor, orig.EdgeColor)
+	}
+	if pg.Style != orig.Style {
+		t.Errorf("Style = %v, want %v", pg.Style, orig.Style)
+	}
+}
+
+func TestDeserializeFill_PathGradient_NamedColors(t *testing.T) {
+	// Matches real FRX: Fill="PathGradient" Fill.CenterColor="Black" Fill.EdgeColor="White" Fill.Style="Elliptic"
+	r := newTestReader(map[string]any{
+		"Fill":            "PathGradient",
+		"Fill.CenterColor": "Black",
+		"Fill.EdgeColor":   "White",
+		"Fill.Style":       "Elliptic",
+	})
+	got := deserializeFill(r, &style.SolidFill{})
+	pg, ok := got.(*style.PathGradientFill)
+	if !ok {
+		t.Fatalf("got fill type %T, want *style.PathGradientFill", got)
+	}
+	wantCenter := color.RGBA{R: 0, G: 0, B: 0, A: 255}
+	if pg.CenterColor != wantCenter {
+		t.Errorf("CenterColor = %v, want Black %v", pg.CenterColor, wantCenter)
+	}
+	wantEdge := color.RGBA{R: 255, G: 255, B: 255, A: 255}
+	if pg.EdgeColor != wantEdge {
+		t.Errorf("EdgeColor = %v, want White %v", pg.EdgeColor, wantEdge)
+	}
+	if pg.Style != style.PathGradientElliptic {
+		t.Errorf("Style = %v, want Elliptic", pg.Style)
+	}
+}
+
+// ── TextureFill serialize / deserialize ───────────────────────────────────────
+
+func TestSerializeFill_Texture(t *testing.T) {
+	f := &style.TextureFill{
+		ImageData:           []byte{0x89, 0x50, 0x4e, 0x47}, // PNG magic bytes
+		ImageWidth:          140,
+		ImageHeight:         170,
+		PreserveAspectRatio: true,
+		WrapMode:            style.WrapModeClamp,
+		ImageOffsetX:        20,
+		ImageOffsetY:        0,
+	}
+	w := newTestWriter()
+	serializeFill(w, f)
+	if v, ok := w.data["Fill"]; !ok || v != "Texture" {
+		t.Errorf("Fill = %v, want Texture", v)
+	}
+	if v, ok := w.data["Fill.ImageWidth"]; !ok || v != 140 {
+		t.Errorf("Fill.ImageWidth = %v, want 140", v)
+	}
+	if v, ok := w.data["Fill.ImageHeight"]; !ok || v != 170 {
+		t.Errorf("Fill.ImageHeight = %v, want 170", v)
+	}
+	if v, ok := w.data["Fill.PreserveAspectRatio"]; !ok || v != true {
+		t.Errorf("Fill.PreserveAspectRatio = %v, want true", v)
+	}
+	if v, ok := w.data["Fill.WrapMode"]; !ok || v != "Clamp" {
+		t.Errorf("Fill.WrapMode = %v, want Clamp", v)
+	}
+	if v, ok := w.data["Fill.ImageOffsetX"]; !ok || v != 20 {
+		t.Errorf("Fill.ImageOffsetX = %v, want 20", v)
+	}
+	// ImageOffsetY is 0 — should not be written.
+	if _, ok := w.data["Fill.ImageOffsetY"]; ok {
+		t.Error("Fill.ImageOffsetY should not be written when 0")
+	}
+	if _, ok := w.data["Fill.ImageData"]; !ok {
+		t.Error("Fill.ImageData should be written")
+	}
+}
+
+func TestDeserializeFill_TextureRoundTrip(t *testing.T) {
+	orig := &style.TextureFill{
+		ImageData:           []byte{1, 2, 3, 4, 5},
+		ImageWidth:          100,
+		ImageHeight:         80,
+		PreserveAspectRatio: true,
+		WrapMode:            style.WrapModeTileFlipX,
+		ImageOffsetX:        5,
+		ImageOffsetY:        10,
+	}
+	w := newTestWriter()
+	serializeFill(w, orig)
+	r := newTestReader(w.data)
+	got := deserializeFill(r, &style.SolidFill{})
+	tf, ok := got.(*style.TextureFill)
+	if !ok {
+		t.Fatalf("got fill type %T, want *style.TextureFill", got)
+	}
+	if tf.ImageWidth != orig.ImageWidth {
+		t.Errorf("ImageWidth = %d, want %d", tf.ImageWidth, orig.ImageWidth)
+	}
+	if tf.ImageHeight != orig.ImageHeight {
+		t.Errorf("ImageHeight = %d, want %d", tf.ImageHeight, orig.ImageHeight)
+	}
+	if tf.PreserveAspectRatio != orig.PreserveAspectRatio {
+		t.Errorf("PreserveAspectRatio = %v, want %v", tf.PreserveAspectRatio, orig.PreserveAspectRatio)
+	}
+	if tf.WrapMode != orig.WrapMode {
+		t.Errorf("WrapMode = %v, want %v", tf.WrapMode, orig.WrapMode)
+	}
+	if tf.ImageOffsetX != orig.ImageOffsetX {
+		t.Errorf("ImageOffsetX = %d, want %d", tf.ImageOffsetX, orig.ImageOffsetX)
+	}
+	if tf.ImageOffsetY != orig.ImageOffsetY {
+		t.Errorf("ImageOffsetY = %d, want %d", tf.ImageOffsetY, orig.ImageOffsetY)
+	}
+	if len(tf.ImageData) != len(orig.ImageData) {
+		t.Errorf("ImageData length = %d, want %d", len(tf.ImageData), len(orig.ImageData))
+	}
+}
+
+func TestDeserializeFill_Texture_DefaultWrapMode(t *testing.T) {
+	// No Fill.WrapMode → defaults to Tile.
+	r := newTestReader(map[string]any{
+		"Fill": "Texture",
+	})
+	got := deserializeFill(r, &style.SolidFill{})
+	tf, ok := got.(*style.TextureFill)
+	if !ok {
+		t.Fatalf("got fill type %T, want *style.TextureFill", got)
+	}
+	if tf.WrapMode != style.WrapModeTile {
+		t.Errorf("WrapMode = %v, want WrapModeTile", tf.WrapMode)
+	}
+}
+
+func TestDeserializeFill_Texture_NoPanic_NoImageData(t *testing.T) {
+	// Loading a Texture fill with no image data should not panic (stub/graceful load).
+	r := newTestReader(map[string]any{
+		"Fill":            "Texture",
+		"Fill.ImageWidth": 140,
+		"Fill.ImageHeight": 170,
+		"Fill.PreserveAspectRatio": true,
+		"Fill.WrapMode":   "Clamp",
+		"Fill.ImageOffsetX": 20,
+		"Fill.ImageOffsetY": 0,
+	})
+	got := deserializeFill(r, &style.SolidFill{})
+	if _, ok := got.(*style.TextureFill); !ok {
+		t.Fatalf("got fill type %T, want *style.TextureFill", got)
+	}
+	// No panic — pass.
+}
+
+// ── parseLineStyle "Custom" ───────────────────────────────────────────────────
+
+func TestParseLineStyle_Custom(t *testing.T) {
+	// LineStyle.Custom is a GDI+ rendering concept only; we map it to Solid
+	// since no FRX DashPattern attribute is serialized.
+	got := parseLineStyle("Custom")
+	if got != style.LineStyleSolid {
+		t.Errorf("parseLineStyle(Custom) = %v, want Solid", got)
+	}
+}
+
+// ── formatPathGradientStyle / parsePathGradientStyle ─────────────────────────
+
+func TestFormatParsePathGradientStyle(t *testing.T) {
+	cases := []struct {
+		s     style.PathGradientStyle
+		name  string
+	}{
+		{style.PathGradientElliptic, "Elliptic"},
+		{style.PathGradientRectangular, "Rectangular"},
+	}
+	for _, tc := range cases {
+		got := formatPathGradientStyle(tc.s)
+		if got != tc.name {
+			t.Errorf("formatPathGradientStyle(%v) = %q, want %q", tc.s, got, tc.name)
+		}
+		back := parsePathGradientStyle(tc.name)
+		if back != tc.s {
+			t.Errorf("parsePathGradientStyle(%q) = %v, want %v", tc.name, back, tc.s)
+		}
+	}
+	// Unknown defaults to Elliptic.
+	if parsePathGradientStyle("unknown") != style.PathGradientElliptic {
+		t.Error("unknown pathGradient style should default to Elliptic")
+	}
+}
+
+// ── formatWrapMode / parseWrapMode ────────────────────────────────────────────
+
+func TestFormatParseWrapMode(t *testing.T) {
+	cases := []struct {
+		w    style.WrapMode
+		name string
+	}{
+		{style.WrapModeTile, "Tile"},
+		{style.WrapModeTileFlipX, "TileFlipX"},
+		{style.WrapModeTileFlipY, "TileFlipY"},
+		{style.WrapModeTileFlipXY, "TileFlipXY"},
+		{style.WrapModeClamp, "Clamp"},
+	}
+	for _, tc := range cases {
+		got := formatWrapMode(tc.w)
+		if got != tc.name {
+			t.Errorf("formatWrapMode(%v) = %q, want %q", tc.w, got, tc.name)
+		}
+		back := parseWrapMode(tc.name)
+		if back != tc.w {
+			t.Errorf("parseWrapMode(%q) = %v, want %v", tc.name, back, tc.w)
+		}
+	}
+	// Unknown defaults to Tile.
+	if parseWrapMode("unknown") != style.WrapModeTile {
+		t.Error("unknown WrapMode should default to Tile")
+	}
+}

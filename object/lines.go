@@ -1,7 +1,12 @@
 package object
 
 import (
+	"fmt"
+	"strconv"
+	"strings"
+
 	"github.com/andrewloable/go-fastreport/report"
+	"github.com/andrewloable/go-fastreport/utils"
 )
 
 // -----------------------------------------------------------------------
@@ -172,6 +177,7 @@ func (l *LineObject) SetDashPattern(dp []float32) { l.dashPattern = dp }
 // Follows LineObject.cs Serialize(): writes Diagonal, then delegates to
 // CapSettings.Serialize("StartCap", …) and CapSettings.Serialize("EndCap", …)
 // which produce dot-qualified attributes (e.g. StartCap.Style="Arrow").
+// Also writes DashPattern when non-empty (LineObject.cs line 274-275).
 func (l *LineObject) Serialize(w report.Writer) error {
 	if err := l.ReportComponentBase.Serialize(w); err != nil {
 		return err
@@ -182,12 +188,17 @@ func (l *LineObject) Serialize(w report.Writer) error {
 	def := DefaultCapSettings()
 	SerializeCap("StartCap", w, l.StartCap, def)
 	SerializeCap("EndCap", w, l.EndCap, def)
+	// DashPattern — only written when non-empty (LineObject.cs:274).
+	if len(l.dashPattern) > 0 {
+		w.WriteStr("DashPattern", utils.FloatCollection(l.dashPattern).String())
+	}
 	return nil
 }
 
 // Deserialize reads LineObject properties.
 // Cap attributes are read as dot-qualified names matching the FRX format
 // produced by C# CapSettings.Serialize() (e.g. StartCap.Style="Arrow").
+// DashPattern is read when present (LineObject.cs line 274).
 func (l *LineObject) Deserialize(r report.Reader) error {
 	if err := l.ReportComponentBase.Deserialize(r); err != nil {
 		return err
@@ -196,6 +207,12 @@ func (l *LineObject) Deserialize(r report.Reader) error {
 	def := DefaultCapSettings()
 	l.StartCap = DeserializeCap("StartCap", r, def)
 	l.EndCap = DeserializeCap("EndCap", r, def)
+	if s := r.ReadStr("DashPattern", ""); s != "" {
+		fc, err := utils.ParseFloatCollection(s)
+		if err == nil {
+			l.dashPattern = []float32(fc)
+		}
+	}
 	return nil
 }
 
@@ -392,14 +409,147 @@ func (p *PolyLineObject) DashPattern() []float32 { return p.dashPattern }
 // SetDashPattern sets the dash pattern.
 func (p *PolyLineObject) SetDashPattern(dp []float32) { p.dashPattern = dp }
 
+// serializePolyPoint converts a PolyPoint to the PolyPoints_v2 token format.
+// Format: "X/Y" with optional "/L/LX/LY" and/or "/R/RX/RY" suffixes.
+// Matches C# PolyPoint.Serialize(StringBuilder) in PolyLineObject.cs.
+func serializePolyPoint(pp *PolyPoint) string {
+	round := func(v float32) string {
+		s := strconv.FormatFloat(float64(v), 'f', 4, 32)
+		// Trim trailing zeros after decimal point to match C# Math.Round(v, 4).
+		if strings.Contains(s, ".") {
+			s = strings.TrimRight(s, "0")
+			s = strings.TrimRight(s, ".")
+		}
+		return s
+	}
+	var sb strings.Builder
+	sb.WriteString(round(pp.X))
+	sb.WriteByte('/')
+	sb.WriteString(round(pp.Y))
+	if pp.Left != nil {
+		sb.WriteString("/L/")
+		sb.WriteString(round(pp.Left.X))
+		sb.WriteByte('/')
+		sb.WriteString(round(pp.Left.Y))
+	}
+	if pp.Right != nil {
+		sb.WriteString("/R/")
+		sb.WriteString(round(pp.Right.X))
+		sb.WriteByte('/')
+		sb.WriteString(round(pp.Right.Y))
+	}
+	return sb.String()
+}
+
+// deserializePolyPointV2 parses a single PolyPoints_v2 token ("X/Y[/L/lx/ly][/R/rx/ry]").
+// Matches C# PolyPoint.Deserialize(string) in PolyLineObject.cs.
+func deserializePolyPointV2(s string) (*PolyPoint, error) {
+	parts := strings.Split(s, "/")
+	if len(parts) < 2 {
+		return nil, fmt.Errorf("invalid PolyPoint token: %q", s)
+	}
+	parseF := func(tok string) (float32, error) {
+		v, err := strconv.ParseFloat(strings.TrimSpace(tok), 32)
+		return float32(v), err
+	}
+	x, err := parseF(parts[0])
+	if err != nil {
+		return nil, err
+	}
+	y, err := parseF(parts[1])
+	if err != nil {
+		return nil, err
+	}
+	pp := &PolyPoint{X: x, Y: y}
+	for i := 2; i < len(parts); {
+		marker := parts[i]
+		i++
+		if (marker == "L" || marker == "R") && i+1 < len(parts) {
+			cx, err := parseF(parts[i])
+			if err != nil {
+				break
+			}
+			cy, err := parseF(parts[i+1])
+			if err != nil {
+				break
+			}
+			cp := &PolyPoint{X: cx, Y: cy}
+			if marker == "L" {
+				pp.Left = cp
+			} else {
+				pp.Right = cp
+			}
+			i += 2
+		}
+	}
+	return pp, nil
+}
+
 // Serialize writes PolyLineObject properties.
+// Matches C# PolyLineObject.Serialize(): writes PolyPoints_v2, CenterX, CenterY,
+// and DashPattern when non-empty (PolyLineObject.cs lines 496-517).
 func (p *PolyLineObject) Serialize(w report.Writer) error {
-	return p.ReportComponentBase.Serialize(w)
+	if err := p.ReportComponentBase.Serialize(w); err != nil {
+		return err
+	}
+	// Build PolyPoints_v2 string: "X/Y[/L/…][/R/…]" per point, separated by "|".
+	var parts []string
+	for i := 0; i < p.points.Len(); i++ {
+		parts = append(parts, serializePolyPoint(p.points.Get(i)))
+	}
+	w.WriteStr("PolyPoints_v2", strings.Join(parts, "|"))
+	w.WriteFloat("CenterX", p.centerX)
+	w.WriteFloat("CenterY", p.centerY)
+	if len(p.dashPattern) > 0 {
+		w.WriteStr("DashPattern", utils.FloatCollection(p.dashPattern).String())
+	}
+	return nil
 }
 
 // Deserialize reads PolyLineObject properties.
+// Handles both legacy PolyPoints format ("X\Y\type" separated by "|") and
+// the current PolyPoints_v2 format ("X/Y[/L/…][/R/…]" separated by "|").
+// Also reads CenterX, CenterY, and DashPattern.
+// Matches C# PolyLineObject.Deserialize() (PolyLineObject.cs lines 151-184).
 func (p *PolyLineObject) Deserialize(r report.Reader) error {
-	return p.ReportComponentBase.Deserialize(r)
+	if err := p.ReportComponentBase.Deserialize(r); err != nil {
+		return err
+	}
+	p.points.Clear()
+	if s := r.ReadStr("PolyPoints_v2", ""); s != "" {
+		// PolyPoints_v2: each token is "X/Y[/L/lx/ly][/R/rx/ry]".
+		for _, tok := range strings.Split(s, "|") {
+			if tok == "" {
+				continue
+			}
+			pp, err := deserializePolyPointV2(tok)
+			if err == nil {
+				p.points.Add(pp)
+			}
+		}
+	} else if s := r.ReadStr("PolyPoints", ""); s != "" {
+		// Legacy PolyPoints (v1): each token is "X\Y\type" (type is ignored).
+		for _, tok := range strings.Split(s, "|") {
+			parts := strings.Split(tok, `\`)
+			if len(parts) < 2 {
+				continue
+			}
+			x, err1 := strconv.ParseFloat(strings.TrimSpace(strings.ReplaceAll(parts[0], ",", ".")), 32)
+			y, err2 := strconv.ParseFloat(strings.TrimSpace(strings.ReplaceAll(parts[1], ",", ".")), 32)
+			if err1 == nil && err2 == nil {
+				p.points.Add(&PolyPoint{X: float32(x), Y: float32(y)})
+			}
+		}
+	}
+	p.centerX = r.ReadFloat("CenterX", 0)
+	p.centerY = r.ReadFloat("CenterY", 0)
+	if s := r.ReadStr("DashPattern", ""); s != "" {
+		fc, err := utils.ParseFloatCollection(s)
+		if err == nil {
+			p.dashPattern = []float32(fc)
+		}
+	}
+	return nil
 }
 
 // -----------------------------------------------------------------------
@@ -413,6 +563,24 @@ type PolygonObject struct {
 }
 
 // NewPolygonObject creates a PolygonObject with defaults.
+// C# PolygonObject() sets FlagUseFill = true (PolygonObject.cs:88), meaning
+// it participates in fill serialization. In Go, fill is always available via
+// ReportComponentBase.Fill — no separate flag is needed.
 func NewPolygonObject() *PolygonObject {
 	return &PolygonObject{PolyLineObject: *NewPolyLineObject()}
+}
+
+// Serialize writes PolygonObject properties.
+// C# PolygonObject.Serialize() (PolygonObject.cs:73-78) only sets
+// Border.SimpleBorder = true and calls base.Serialize(), which handles
+// PolyPoints_v2, CenterX, CenterY, and DashPattern.
+func (pg *PolygonObject) Serialize(w report.Writer) error {
+	return pg.PolyLineObject.Serialize(w)
+}
+
+// Deserialize reads PolygonObject properties.
+// Delegates entirely to PolyLineObject.Deserialize; PolygonObject has no
+// additional serialized fields.
+func (pg *PolygonObject) Deserialize(r report.Reader) error {
+	return pg.PolyLineObject.Deserialize(r)
 }

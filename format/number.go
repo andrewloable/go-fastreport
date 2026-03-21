@@ -138,6 +138,36 @@ func applyNegativePattern(n string, pattern int) string {
 	}
 }
 
+// Clone returns a deep copy of this NumberFormat.
+// Mirrors C# NumberFormat.Clone().
+func (f *NumberFormat) Clone() Format {
+	return &NumberFormat{
+		UseLocaleSettings: f.UseLocaleSettings,
+		DecimalDigits:     f.DecimalDigits,
+		DecimalSeparator:  f.DecimalSeparator,
+		GroupSeparator:    f.GroupSeparator,
+		NegativePattern:   f.NegativePattern,
+	}
+}
+
+// Equals reports whether f and other represent the same format configuration.
+// Mirrors C# NumberFormat.Equals().
+func (f *NumberFormat) Equals(other Format) bool {
+	o, ok := other.(*NumberFormat)
+	return ok &&
+		f.UseLocaleSettings == o.UseLocaleSettings &&
+		f.DecimalDigits == o.DecimalDigits &&
+		f.DecimalSeparator == o.DecimalSeparator &&
+		f.GroupSeparator == o.GroupSeparator &&
+		f.NegativePattern == o.NegativePattern
+}
+
+// GetSampleValue returns a representative formatted string for UI preview.
+// Mirrors C# NumberFormat.GetSampleValue() which calls FormatValue(-12345.678).
+func (f *NumberFormat) GetSampleValue() string {
+	return f.FormatValue(-12345.678)
+}
+
 // toFloat64 attempts to convert common numeric types to float64.
 func toFloat64(v any) (float64, bool) {
 	switch t := v.(type) {

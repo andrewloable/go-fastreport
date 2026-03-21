@@ -4,6 +4,7 @@ package reportpkg
 //
 // C# source: original-dotnet/FastReport.Base/PageBase.cs
 // C# source: original-dotnet/FastReport.Base/ReportPage.cs
+// C# source: original-dotnet/FastReport.Base/PageColumns.cs
 //
 // PageBase provides:
 //   - PageName() — preview-navigator display name (falls back to Name())
@@ -20,12 +21,15 @@ package reportpkg
 //   - UnlimitedWidth / UnlimitedHeightValue / UnlimitedWidthValue
 //   - FirstPageSource / OtherPagesSource / LastPageSource
 //   - Duplex
+//   - HeightInPixels() / WidthInPixels() — computed pixel dimensions
+//   - PageColumns serialization round-trip (Columns.Count/Width/Positions)
 
 import (
 	"strings"
 	"testing"
 
 	"github.com/andrewloable/go-fastreport/serial"
+	"github.com/andrewloable/go-fastreport/units"
 )
 
 // ── PageBase.PageName ─────────────────────────────────────────────────────────
@@ -363,5 +367,224 @@ func TestRoundTrip_NewFields(t *testing.T) {
 	}
 	if pg2.Duplex != "Horizontal" {
 		t.Errorf("Duplex = %q, want Horizontal", pg2.Duplex)
+	}
+}
+
+// ── HeightInPixels / WidthInPixels ────────────────────────────────────────────
+
+// TestHeightInPixels_Normal verifies that HeightInPixels returns PaperHeight*Millimeters
+// when UnlimitedHeight is false.
+// C# source: original-dotnet/FastReport.Base/ReportPage.cs:374-379.
+func TestHeightInPixels_Normal(t *testing.T) {
+	pg := NewReportPage() // PaperHeight=297 by default
+	want := float32(297) * units.Millimeters
+	if got := pg.HeightInPixels(); got != want {
+		t.Errorf("HeightInPixels() = %v, want %v", got, want)
+	}
+}
+
+// TestHeightInPixels_Unlimited verifies that HeightInPixels returns UnlimitedHeightValue
+// when UnlimitedHeight is true.
+// C# source: original-dotnet/FastReport.Base/ReportPage.cs:377.
+func TestHeightInPixels_Unlimited(t *testing.T) {
+	pg := NewReportPage()
+	pg.UnlimitedHeight = true
+	pg.UnlimitedHeightValue = 1500
+	if got := pg.HeightInPixels(); got != 1500 {
+		t.Errorf("HeightInPixels() = %v, want 1500", got)
+	}
+}
+
+// TestHeightInPixels_UnlimitedZeroValue verifies that HeightInPixels returns 0
+// when UnlimitedHeight is true but UnlimitedHeightValue has not yet been set.
+func TestHeightInPixels_UnlimitedZeroValue(t *testing.T) {
+	pg := NewReportPage()
+	pg.UnlimitedHeight = true
+	// UnlimitedHeightValue is 0 (engine hasn't run yet).
+	if got := pg.HeightInPixels(); got != 0 {
+		t.Errorf("HeightInPixels() = %v, want 0 (engine not yet run)", got)
+	}
+}
+
+// TestWidthInPixels_Normal verifies that WidthInPixels returns PaperWidth*Millimeters
+// when UnlimitedWidth is false.
+// C# source: original-dotnet/FastReport.Base/ReportPage.cs:385-398.
+func TestWidthInPixels_Normal(t *testing.T) {
+	pg := NewReportPage() // PaperWidth=210 by default
+	want := float32(210) * units.Millimeters
+	if got := pg.WidthInPixels(); got != want {
+		t.Errorf("WidthInPixels() = %v, want %v", got, want)
+	}
+}
+
+// TestWidthInPixels_UnlimitedWithValue verifies that WidthInPixels returns
+// UnlimitedWidthValue when UnlimitedWidth is true and the value has been set.
+// C#: !IsDesigning path returns UnlimitedWidthValue (ReportPage.cs:390-393).
+func TestWidthInPixels_UnlimitedWithValue(t *testing.T) {
+	pg := NewReportPage()
+	pg.UnlimitedWidth = true
+	pg.UnlimitedWidthValue = 2000
+	if got := pg.WidthInPixels(); got != 2000 {
+		t.Errorf("WidthInPixels() = %v, want 2000", got)
+	}
+}
+
+// TestWidthInPixels_UnlimitedZeroValue verifies that WidthInPixels falls back to
+// PaperWidth*Millimeters when UnlimitedWidth is true but UnlimitedWidthValue is 0.
+// This handles the "before engine run" case.
+func TestWidthInPixels_UnlimitedZeroValue(t *testing.T) {
+	pg := NewReportPage() // PaperWidth=210
+	pg.UnlimitedWidth = true
+	// UnlimitedWidthValue is 0 — fall back to paper width.
+	want := float32(210) * units.Millimeters
+	if got := pg.WidthInPixels(); got != want {
+		t.Errorf("WidthInPixels() = %v, want %v (paper fallback when value=0)", got, want)
+	}
+}
+
+// TestWidthInPixels_CustomPaperSize verifies that WidthInPixels uses the actual
+// PaperWidth field when it differs from the A4 default.
+func TestWidthInPixels_CustomPaperSize(t *testing.T) {
+	pg := NewReportPage()
+	pg.PaperWidth = 420 // A3 width
+	want := float32(420) * units.Millimeters
+	if got := pg.WidthInPixels(); got != want {
+		t.Errorf("WidthInPixels() = %v, want %v (A3 width)", got, want)
+	}
+}
+
+// ── PageColumns serialization round-trip ─────────────────────────────────────
+
+// TestPageColumns_SerializeWritesAttributes verifies that Columns.Count > 1
+// causes Columns.Count, Columns.Width, and Columns.Positions to be written
+// to the FRX XML output.
+// C# source: original-dotnet/FastReport.Base/PageColumns.cs:101-111.
+func TestPageColumns_SerializeWritesAttributes(t *testing.T) {
+	pg := NewReportPage()
+	pg.SetName("ColPage")
+	pg.Columns.Count = 2
+	pg.Columns.Width = 90
+	pg.Columns.Positions = []float32{0, 90}
+
+	r := NewReport()
+	r.AddPage(pg)
+	xml, err := r.SaveToString()
+	if err != nil {
+		t.Fatalf("SaveToString: %v", err)
+	}
+
+	for _, want := range []string{
+		`Columns.Count="2"`,
+		`Columns.Width="90"`,
+		`Columns.Positions="0,90"`,
+	} {
+		if !strings.Contains(xml, want) {
+			t.Errorf("expected %s in XML output\nfull XML:\n%s", want, xml)
+		}
+	}
+}
+
+// TestPageColumns_SingleColumn_NotSerialized verifies that the default single-column
+// configuration (Count=0 or 1) is omitted from the FRX XML.
+// Mirrors PageColumns.Serialize skipping when Count<=1.
+func TestPageColumns_SingleColumn_NotSerialized(t *testing.T) {
+	pg := NewReportPage()
+	pg.SetName("SingleColPage")
+	// Columns.Count defaults to 0 (single column) — nothing to serialize.
+
+	r := NewReport()
+	r.AddPage(pg)
+	xml, err := r.SaveToString()
+	if err != nil {
+		t.Fatalf("SaveToString: %v", err)
+	}
+
+	for _, absent := range []string{"Columns.Count", "Columns.Width", "Columns.Positions"} {
+		if strings.Contains(xml, absent) {
+			t.Errorf("field %s should be omitted when Count<=1\nfull XML:\n%s", absent, xml)
+		}
+	}
+}
+
+// TestPageColumns_RoundTrip verifies that a page with multi-column settings
+// round-trips correctly through serialize → deserialize (save/load cycle).
+// This covers the porting gap where PageColumns serialization was missing.
+func TestPageColumns_RoundTrip(t *testing.T) {
+	r1 := NewReport()
+	pg := NewReportPage()
+	pg.SetName("ColRTPg")
+	pg.Columns.Count = 3
+	pg.Columns.Width = 60
+	pg.Columns.Positions = []float32{0, 60, 120}
+	r1.AddPage(pg)
+
+	xml, err := r1.SaveToString()
+	if err != nil {
+		t.Fatalf("SaveToString: %v", err)
+	}
+
+	r2 := NewReport()
+	if err := r2.LoadFromString(xml); err != nil {
+		t.Fatalf("LoadFromString: %v", err)
+	}
+	if r2.PageCount() == 0 {
+		t.Fatal("no pages after round-trip")
+	}
+	pg2 := r2.Page(0)
+	if pg2.Columns.Count != 3 {
+		t.Errorf("Columns.Count = %d, want 3", pg2.Columns.Count)
+	}
+	if pg2.Columns.Width != 60 {
+		t.Errorf("Columns.Width = %v, want 60", pg2.Columns.Width)
+	}
+	if len(pg2.Columns.Positions) != 3 {
+		t.Fatalf("Columns.Positions length = %d, want 3", len(pg2.Columns.Positions))
+	}
+	if pg2.Columns.Positions[0] != 0 || pg2.Columns.Positions[1] != 60 || pg2.Columns.Positions[2] != 120 {
+		t.Errorf("Columns.Positions = %v, want [0 60 120]", pg2.Columns.Positions)
+	}
+}
+
+// TestPageColumns_BadgesStyleRoundTrip verifies the column config seen in
+// Badges.frx: 2 columns, width 90, positions "0,90". This matches the actual
+// FRX attribute pattern from test-reports/Badges.frx.
+func TestPageColumns_BadgesStyleRoundTrip(t *testing.T) {
+	// Deserialize from the exact FRX attribute pattern from Badges.frx.
+	xmlDoc := `<ReportPage Name="Page1" RawPaperSize="9" Columns.Count="2" Columns.Width="90" Columns.Positions="0,90"/>`
+
+	rdr := serial.NewReader(strings.NewReader(xmlDoc))
+	_, ok := rdr.ReadObjectHeader()
+	if !ok {
+		t.Fatal("ReadObjectHeader failed")
+	}
+
+	pg := NewReportPage()
+	if err := pg.Deserialize(rdr); err != nil {
+		t.Fatalf("Deserialize: %v", err)
+	}
+	if pg.Columns.Count != 2 {
+		t.Errorf("Columns.Count = %d, want 2", pg.Columns.Count)
+	}
+	if pg.Columns.Width != 90 {
+		t.Errorf("Columns.Width = %v, want 90", pg.Columns.Width)
+	}
+	if len(pg.Columns.Positions) != 2 {
+		t.Fatalf("Columns.Positions length = %d, want 2", len(pg.Columns.Positions))
+	}
+	if pg.Columns.Positions[0] != 0 || pg.Columns.Positions[1] != 90 {
+		t.Errorf("Columns.Positions = %v, want [0 90]", pg.Columns.Positions)
+	}
+
+	// Re-serialize and verify attributes are preserved.
+	r := NewReport()
+	r.AddPage(pg)
+	xml, err := r.SaveToString()
+	if err != nil {
+		t.Fatalf("SaveToString: %v", err)
+	}
+	for _, want := range []string{`Columns.Count="2"`, `Columns.Width="90"`, `Columns.Positions="0,90"`} {
+		if !strings.Contains(xml, want) {
+			t.Errorf("expected %s in re-serialized XML\nfull XML:\n%s", want, xml)
+		}
 	}
 }

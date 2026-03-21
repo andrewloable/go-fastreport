@@ -1,8 +1,6 @@
 package report
 
 import (
-	"image/color"
-
 	"github.com/andrewloable/go-fastreport/style"
 )
 
@@ -38,6 +36,28 @@ const (
 	PrintOnSinglePage PrintOn = 32
 )
 
+// StylePriority controls which properties of an even-row style are applied.
+// It is the Go equivalent of FastReport.StylePriority.
+type StylePriority int
+
+const (
+	// StylePriorityUseFill applies only the fill from the even style.
+	// This is the default, matching FastReport C# default.
+	StylePriorityUseFill StylePriority = iota
+	// StylePriorityUseAll applies all style properties (border, fill, font,
+	// text fill) from the even style.
+	StylePriorityUseAll
+)
+
+// StyleLookup is a minimal interface that lets ReportComponentBase look up a
+// named StyleEntry without importing the reportpkg package (which would create
+// a cycle). The *reportpkg.Report struct satisfies this interface by delegating
+// to its embedded *style.StyleSheet.
+type StyleLookup interface {
+	// FindStyle returns the StyleEntry registered under the given name, or nil.
+	FindStyle(name string) *style.StyleEntry
+}
+
 // Hyperlink holds hyperlink properties for a report component.
 type Hyperlink struct {
 	// Kind is the hyperlink kind (e.g. "URL", "Bookmark", "DetailReport", "DetailPage").
@@ -72,9 +92,10 @@ type ReportComponentBase struct {
 	fill   style.Fill
 
 	// Style references.
-	styleName      string
-	evenStyleName  string
-	hoverStyleName string
+	styleName         string
+	evenStyleName     string
+	hoverStyleName    string
+	evenStylePriority StylePriority
 
 	// Export control.
 	exportable           bool
@@ -99,17 +120,38 @@ type ReportComponentBase struct {
 	OnAfterPrint  EventHandler
 	OnAfterData   EventHandler
 	OnClick       EventHandler
+
+	// savedState holds the pre-print snapshot used by SaveState/RestoreState.
+	// The engine calls SaveState before processing an object and RestoreState
+	// after, so that style application and expression evaluation do not
+	// permanently mutate design-time properties.
+	// Mirrors C# ReportComponentBase private saved* fields (savedBounds,
+	// savedVisible, savedBookmark, savedBorder, savedFill).
+	savedState *savedComponentState
+}
+
+// savedComponentState holds a snapshot of the mutable properties saved by
+// SaveState. This mirrors the C# ReportComponentBase private saved* fields.
+type savedComponentState struct {
+	bounds   Rect
+	visible  bool
+	bookmark string
+	border   style.Border
+	fill     style.Fill
 }
 
 // NewReportComponentBase creates a ReportComponentBase with defaults:
-// exportable=true, PrintOn=PrintOnAllPages, solid white fill.
+// exportable=true, PrintOn=PrintOnAllPages, solid transparent fill,
+// evenStylePriority=StylePriorityUseFill.
+// Matches C# ReportComponentBase constructor defaults.
 func NewReportComponentBase() *ReportComponentBase {
 	rc := &ReportComponentBase{
-		ComponentBase: *NewComponentBase(),
-		border:        *style.NewBorder(),
-		exportable:    true,
-		printOn:       PrintOnAllPages,
-		fill:          &style.SolidFill{Color: color.RGBA{R: 0, G: 0, B: 0, A: 0}}, // C# default: Color.Transparent
+		ComponentBase:     *NewComponentBase(),
+		border:            *style.NewBorder(),
+		exportable:        true,
+		printOn:           PrintOnAllPages,
+		fill:              style.NewSolidFill(style.ColorTransparent), // C# default: Color.Transparent
+		evenStylePriority: StylePriorityUseFill,                       // C# default: StylePriority.UseFill
 	}
 	return rc
 }
@@ -143,6 +185,10 @@ func (rc *ReportComponentBase) SetStyleName(s string) { rc.styleName = s }
 // honoured; a property is applied when either the new flag or its legacy
 // equivalent is true.
 //
+// The fill is applied via entry.EffectiveFill() so that gradient and hatch fills
+// stored in entry.Fill are used when present, falling back to entry.FillColor
+// for the common solid-fill case. This matches C# StyleBase.Fill as FillBase.
+//
 // Subclasses (e.g. TextObject) should call this method first and then apply
 // their own font/text-color overrides, since ReportComponentBase does not hold
 // a font field directly.
@@ -152,17 +198,36 @@ func (rc *ReportComponentBase) ApplyStyle(entry *style.StyleEntry) {
 	if entry == nil {
 		return
 	}
-	// Fill: apply when ApplyFill or the legacy FillColorChanged is true.
-	if entry.ApplyFill || entry.FillColorChanged {
-		rc.fill = &style.SolidFill{Color: entry.FillColor}
+	// Fill: use EffectiveFill to support gradient/hatch fills in addition to solid.
+	if f := entry.EffectiveFill(); f != nil {
+		rc.fill = f
 	}
-	// Border colour: apply when ApplyBorder or the legacy BorderColorChanged is true.
+	// Border: apply when ApplyBorder or the legacy BorderColorChanged is true.
+	// When the entry carries a full Border (lines[0] non-nil), replace the
+	// component's border entirely. Otherwise only update the colour on existing
+	// lines, matching C# ApplyStyle which calls Border = style.Border.Clone().
 	if entry.ApplyBorder || entry.BorderColorChanged {
-		b := rc.border
-		for i := range b.Lines {
-			b.Lines[i].Color = entry.BorderColor
+		if entry.Border.Lines[0] != nil {
+			// Full Border override from FRX-deserialized style.
+			cloned := *style.NewBorder()
+			for i := range entry.Border.Lines {
+				if entry.Border.Lines[i] != nil {
+					*cloned.Lines[i] = *entry.Border.Lines[i]
+				}
+			}
+			cloned.VisibleLines = entry.Border.VisibleLines
+			cloned.Shadow = entry.Border.Shadow
+			rc.border = cloned
+		} else {
+			// Legacy colour-only override (border colour without line config).
+			b := rc.border
+			for i := range b.Lines {
+				if b.Lines[i] != nil {
+					b.Lines[i].Color = entry.BorderColor
+				}
+			}
+			rc.border = b
 		}
-		rc.border = b
 	}
 }
 
@@ -172,11 +237,80 @@ func (rc *ReportComponentBase) EvenStyleName() string { return rc.evenStyleName 
 // SetEvenStyleName sets the even-row style name.
 func (rc *ReportComponentBase) SetEvenStyleName(s string) { rc.evenStyleName = s }
 
+// EvenStylePriority returns which properties of the even style are applied.
+// Defaults to StylePriorityUseFill, matching C# EvenStylePriority default.
+func (rc *ReportComponentBase) EvenStylePriority() StylePriority { return rc.evenStylePriority }
+
+// SetEvenStylePriority sets the even-style priority.
+func (rc *ReportComponentBase) SetEvenStylePriority(p StylePriority) { rc.evenStylePriority = p }
+
+// ApplyEvenStyle looks up EvenStyleName in ss and applies it to this component.
+// When EvenStylePriority is StylePriorityUseFill only the fill is applied;
+// when StylePriorityUseAll the full style is applied.
+//
+// This mirrors C# ReportComponentBase.ApplyEvenStyle()
+// (FastReport.Base/ReportComponentBase.cs line 734–748).
+// The engine should call this on every other data row for banded DataBands.
+func (rc *ReportComponentBase) ApplyEvenStyle(ss StyleLookup) {
+	if rc.evenStyleName == "" || ss == nil {
+		return
+	}
+	entry := ss.FindStyle(rc.evenStyleName)
+	if entry == nil {
+		return
+	}
+	if rc.evenStylePriority == StylePriorityUseFill {
+		// Apply only fill — mirrors: Fill = style.Fill.Clone()
+		if f := entry.EffectiveFill(); f != nil {
+			rc.fill = f.Clone()
+		}
+	} else {
+		rc.ApplyStyle(entry)
+	}
+}
+
 // HoverStyleName returns the style applied on hover (web export).
 func (rc *ReportComponentBase) HoverStyleName() string { return rc.hoverStyleName }
 
 // SetHoverStyleName sets the hover style name.
 func (rc *ReportComponentBase) SetHoverStyleName(s string) { rc.hoverStyleName = s }
+
+// --- Save / Restore State ---
+
+// SaveState saves the current Bounds, Visible, Bookmark, Border, and Fill so
+// they can be restored after the engine has applied dynamic overrides.
+// This mirrors C# ReportComponentBase.SaveState()
+// (FastReport.Base/ReportComponentBase.cs line 957–965).
+func (rc *ReportComponentBase) SaveState() {
+	var savedFill style.Fill
+	if rc.fill != nil {
+		savedFill = rc.fill.Clone()
+	}
+	rc.savedState = &savedComponentState{
+		bounds:   rc.ComponentBase.Bounds(),
+		visible:  rc.ComponentBase.Visible(),
+		bookmark: rc.bookmark,
+		border:   rc.border,
+		fill:     savedFill,
+	}
+}
+
+// RestoreState restores Bounds, Visible, Bookmark, Border, and Fill to the
+// values saved by the last SaveState call. It is a no-op when SaveState has not
+// been called.
+// This mirrors C# ReportComponentBase.RestoreState()
+// (FastReport.Base/ReportComponentBase.cs line 975–983).
+func (rc *ReportComponentBase) RestoreState() {
+	if rc.savedState == nil {
+		return
+	}
+	rc.ComponentBase.SetBounds(rc.savedState.bounds)
+	rc.ComponentBase.SetVisible(rc.savedState.visible)
+	rc.bookmark = rc.savedState.bookmark
+	rc.border = rc.savedState.border
+	rc.fill = rc.savedState.fill
+	rc.savedState = nil
+}
 
 // --- Export ---
 
@@ -318,6 +452,9 @@ func (rc *ReportComponentBase) Serialize(w Writer) error {
 	if rc.evenStyleName != "" {
 		w.WriteStr("EvenStyle", rc.evenStyleName)
 	}
+	if rc.evenStylePriority != StylePriorityUseFill {
+		w.WriteInt("EvenStylePriority", int(rc.evenStylePriority))
+	}
 	if rc.hoverStyleName != "" {
 		w.WriteStr("HoverStyle", rc.hoverStyleName)
 	}
@@ -368,6 +505,7 @@ func (rc *ReportComponentBase) Deserialize(r Reader) error {
 	rc.pageBreak = r.ReadBool("PageBreak", false)
 	rc.styleName = r.ReadStr("Style", "")
 	rc.evenStyleName = r.ReadStr("EvenStyle", "")
+	rc.evenStylePriority = StylePriority(r.ReadInt("EvenStylePriority", int(StylePriorityUseFill)))
 	rc.hoverStyleName = r.ReadStr("HoverStyle", "")
 	rc.bookmark = r.ReadStr("Bookmark", "")
 	// Hyperlink dot-notation attributes.

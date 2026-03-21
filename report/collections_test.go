@@ -315,6 +315,161 @@ func TestObjectCollection_FindByName_FirstMatch(t *testing.T) {
 	}
 }
 
+// --- nil guards ---
+
+func TestObjectCollection_Add_Nil(t *testing.T) {
+	c := report.NewObjectCollection()
+	c.Add(nil) // must not panic
+	if c.Len() != 0 {
+		t.Fatalf("Add(nil) should not increase Len, got %d", c.Len())
+	}
+}
+
+func TestObjectCollection_Insert_Nil(t *testing.T) {
+	c := report.NewObjectCollection()
+	c.Add(newSO("a"))
+	c.Insert(0, nil) // must not panic
+	if c.Len() != 1 {
+		t.Fatalf("Insert(0, nil) should not increase Len, got %d", c.Len())
+	}
+}
+
+// --- AddRangeCollection ---
+
+func TestObjectCollection_AddRangeCollection_Basic(t *testing.T) {
+	src := report.NewObjectCollection()
+	a, b := newSO("a"), newSO("b")
+	src.Add(a)
+	src.Add(b)
+
+	dst := report.NewObjectCollection()
+	dst.AddRangeCollection(src)
+	if dst.Len() != 2 {
+		t.Fatalf("AddRangeCollection: Len() = %d, want 2", dst.Len())
+	}
+	if dst.Get(0) != a || dst.Get(1) != b {
+		t.Error("AddRangeCollection: element mismatch")
+	}
+}
+
+func TestObjectCollection_AddRangeCollection_Nil(t *testing.T) {
+	dst := report.NewObjectCollection()
+	dst.AddRangeCollection(nil) // must not panic
+	if dst.Len() != 0 {
+		t.Fatalf("AddRangeCollection(nil) should leave collection empty, got %d", dst.Len())
+	}
+}
+
+func TestObjectCollection_AddRangeCollection_Appends(t *testing.T) {
+	first := report.NewObjectCollection()
+	first.Add(newSO("x"))
+
+	second := report.NewObjectCollection()
+	second.Add(newSO("y"))
+	second.Add(newSO("z"))
+
+	first.AddRangeCollection(second)
+	if first.Len() != 3 {
+		t.Fatalf("after AddRangeCollection: Len() = %d, want 3", first.Len())
+	}
+}
+
+// --- Equals ---
+
+func TestObjectCollection_Equals_Equal(t *testing.T) {
+	a, b := newSO("a"), newSO("b")
+	c1 := report.NewObjectCollection()
+	c1.Add(a)
+	c1.Add(b)
+
+	c2 := report.NewObjectCollection()
+	c2.Add(a)
+	c2.Add(b)
+
+	if !c1.Equals(c2) {
+		t.Error("Equals should return true for collections with same elements in same order")
+	}
+}
+
+func TestObjectCollection_Equals_DifferentOrder(t *testing.T) {
+	a, b := newSO("a"), newSO("b")
+	c1 := report.NewObjectCollection()
+	c1.Add(a)
+	c1.Add(b)
+
+	c2 := report.NewObjectCollection()
+	c2.Add(b)
+	c2.Add(a)
+
+	if c1.Equals(c2) {
+		t.Error("Equals should return false for different element order")
+	}
+}
+
+func TestObjectCollection_Equals_DifferentLength(t *testing.T) {
+	c1 := report.NewObjectCollection()
+	c1.Add(newSO("a"))
+
+	c2 := report.NewObjectCollection()
+	c2.Add(newSO("a"))
+	c2.Add(newSO("b"))
+
+	if c1.Equals(c2) {
+		t.Error("Equals should return false for different lengths")
+	}
+}
+
+func TestObjectCollection_Equals_BothEmpty(t *testing.T) {
+	c1 := report.NewObjectCollection()
+	c2 := report.NewObjectCollection()
+	if !c1.Equals(c2) {
+		t.Error("Equals should return true for two empty collections")
+	}
+}
+
+func TestObjectCollection_Equals_Nil(t *testing.T) {
+	c := report.NewObjectCollection()
+	if c.Equals(nil) {
+		t.Error("Equals(nil) should return false")
+	}
+}
+
+// --- CopyTo ---
+
+func TestObjectCollection_CopyTo_Basic(t *testing.T) {
+	a, b := newSO("a"), newSO("b")
+	src := report.NewObjectCollection()
+	src.Add(a)
+	src.Add(b)
+
+	dst := report.NewObjectCollection()
+	dst.Add(newSO("old")) // will be overwritten
+	src.CopyTo(dst)
+
+	if dst.Len() != 2 {
+		t.Fatalf("CopyTo: dst.Len() = %d, want 2", dst.Len())
+	}
+	if dst.Get(0) != a || dst.Get(1) != b {
+		t.Error("CopyTo: element mismatch")
+	}
+}
+
+func TestObjectCollection_CopyTo_EmptySource(t *testing.T) {
+	src := report.NewObjectCollection()
+	dst := report.NewObjectCollection()
+	dst.Add(newSO("x"))
+	src.CopyTo(dst)
+	if dst.Len() != 0 {
+		t.Fatalf("CopyTo from empty source: dst.Len() = %d, want 0", dst.Len())
+	}
+}
+
+func TestObjectCollection_CopyTo_NilDst(t *testing.T) {
+	src := report.NewObjectCollection()
+	src.Add(newSO("a"))
+	src.CopyTo(nil) // must not panic
+}
+
 // --- TypedCollection ---
 
 func TestTypedCollection_AddAndGet(t *testing.T) {

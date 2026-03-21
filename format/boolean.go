@@ -23,9 +23,14 @@ func NewBooleanFormat() *BooleanFormat {
 func (f *BooleanFormat) FormatType() string { return "Boolean" }
 
 // FormatValue implements Format. If v is a bool, returns TrueText or
-// FalseText. Otherwise returns fmt.Sprint(v). nil returns "".
+// FalseText. Otherwise returns fmt.Sprint(v). nil and typed-nil pointers
+// return "" to match C# BooleanFormat.FormatValue which returns "" for null.
 func (f *BooleanFormat) FormatValue(v any) string {
 	if v == nil {
+		return ""
+	}
+	// Typed nil pointers (e.g. (*string)(nil)) must return "" — same as C# null.
+	if isNilPointer(v) {
 		return ""
 	}
 	if b, ok := v.(bool); ok {

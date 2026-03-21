@@ -441,25 +441,16 @@ func (e *Exporter) renderObject(obj preview.PreparedObject, scale float32) {
 				picCSS.WriteString(fmt.Sprintf("border:none;width:%spx;height:%spx;", pxVal(w), pxVal(h)))
 				// picClass and imgClass are assigned below depending on InlineStyles mode.
 
-				// For barcodes rendered at higher resolution (3x), keep the
-				// high-res image and let the browser downscale via background-size.
-				// For regular pictures, resize to display dimensions matching
-				// C#'s GetLayerPicture behavior.
+				// Resize image to display dimensions for correct rendering in HTML.
 				var imgData []byte
-				bgSize := ""
-				if obj.IsBarcode {
-					imgData = data
-					bgSize = "background-size:100% 100%;"
-				} else {
-					targetW := int(math.Round(float64(w)))
-					targetH := int(math.Round(float64(h)))
-					imgData = resizeImagePNG(data, targetW, targetH)
-				}
+				targetW := int(math.Round(float64(w)))
+				targetH := int(math.Round(float64(h)))
+				imgData = resizeImagePNG(data, targetW, targetH)
 				mime := imageMIMEForCSS(imgData)
 				encoded := base64.StdEncoding.EncodeToString(imgData)
 				imgCSS := fmt.Sprintf(
-					"%sbackground: url('data:%s;base64,%s') no-repeat !important;-webkit-print-color-adjust:exact;",
-					bgSize, mime, encoded,
+					"background: url('data:%s;base64,%s') no-repeat !important;background-size:100%% 100%%;-webkit-print-color-adjust:exact;",
+					mime, encoded,
 				)
 				// Two overlapping divs: background/border div + image overlay div (C# pattern).
 			// In InlineStyles mode, merge all CSS into inline style= attributes.

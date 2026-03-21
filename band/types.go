@@ -132,8 +132,12 @@ func (*ReportSummaryBand) TypeName() string { return "ReportSummary" }
 type PageHeaderBand struct{ BandBase }
 
 // NewPageHeaderBand creates a PageHeaderBand with defaults.
+// C# PageHeaderBand() sets FlagUseStartNewPage=false — page-level bands never
+// trigger StartNewPage logic (PageHeaderBand.cs constructor).
 func NewPageHeaderBand() *PageHeaderBand {
-	return &PageHeaderBand{BandBase: *NewBandBase()}
+	b := NewBandBase()
+	b.FlagUseStartNewPage = false
+	return &PageHeaderBand{BandBase: *b}
 }
 
 // TypeName returns the FRX element name for this band.
@@ -144,8 +148,12 @@ func (*PageHeaderBand) TypeName() string { return "PageHeader" }
 type PageFooterBand struct{ BandBase }
 
 // NewPageFooterBand creates a PageFooterBand with defaults.
+// C# PageFooterBand() sets FlagUseStartNewPage=false — page-level bands never
+// trigger StartNewPage logic (PageFooterBand.cs constructor).
 func NewPageFooterBand() *PageFooterBand {
-	return &PageFooterBand{BandBase: *NewBandBase()}
+	b := NewBandBase()
+	b.FlagUseStartNewPage = false
+	return &PageFooterBand{BandBase: *b}
 }
 
 // TypeName returns the FRX element name for this band.
@@ -156,8 +164,12 @@ func (*PageFooterBand) TypeName() string { return "PageFooter" }
 type ColumnHeaderBand struct{ BandBase }
 
 // NewColumnHeaderBand creates a ColumnHeaderBand with defaults.
+// C# ColumnHeaderBand() sets FlagUseStartNewPage=false — column-level bands
+// never trigger StartNewPage logic (ColumnHeaderBand.cs constructor).
 func NewColumnHeaderBand() *ColumnHeaderBand {
-	return &ColumnHeaderBand{BandBase: *NewBandBase()}
+	b := NewBandBase()
+	b.FlagUseStartNewPage = false
+	return &ColumnHeaderBand{BandBase: *b}
 }
 
 // TypeName returns the FRX element name for this band.
@@ -168,8 +180,12 @@ func (*ColumnHeaderBand) TypeName() string { return "ColumnHeader" }
 type ColumnFooterBand struct{ BandBase }
 
 // NewColumnFooterBand creates a ColumnFooterBand with defaults.
+// C# ColumnFooterBand() sets FlagUseStartNewPage=false — column-level bands
+// never trigger StartNewPage logic (ColumnFooterBand.cs constructor).
 func NewColumnFooterBand() *ColumnFooterBand {
-	return &ColumnFooterBand{BandBase: *NewBandBase()}
+	b := NewBandBase()
+	b.FlagUseStartNewPage = false
+	return &ColumnFooterBand{BandBase: *b}
 }
 
 // TypeName returns the FRX element name for this band.
@@ -216,8 +232,12 @@ func (*GroupFooterBand) TypeName() string { return "GroupFooter" }
 type OverlayBand struct{ BandBase }
 
 // NewOverlayBand creates an OverlayBand with defaults.
+// C# OverlayBand() sets FlagUseStartNewPage=false — overlay bands never
+// trigger StartNewPage logic (OverlayBand.cs constructor).
 func NewOverlayBand() *OverlayBand {
-	return &OverlayBand{BandBase: *NewBandBase()}
+	b := NewBandBase()
+	b.FlagUseStartNewPage = false
+	return &OverlayBand{BandBase: *b}
 }
 
 // TypeName returns the FRX element name for this band.
@@ -232,12 +252,43 @@ type SortOrder int
 
 const (
 	// SortOrderAscending sorts rows in ascending order (default).
+	// Equivalent to FastReport.SortOrder.Ascending.
 	SortOrderAscending SortOrder = iota
 	// SortOrderDescending sorts rows in descending order.
+	// Equivalent to FastReport.SortOrder.Descending.
 	SortOrderDescending
 	// SortOrderNone leaves the row order unchanged.
+	// Equivalent to FastReport.SortOrder.None.
 	SortOrderNone
 )
+
+// sortOrderToString converts a SortOrder to the FRX attribute string name used
+// by C# FastReport (Converter.ToString writes the enum name, e.g. "Ascending").
+// C# SortOrder enum: None=0, Ascending=1, Descending=2.
+// Go uses the same names but different iota values; only names matter for FRX.
+func sortOrderToString(o SortOrder) string {
+	switch o {
+	case SortOrderDescending:
+		return "Descending"
+	case SortOrderNone:
+		return "None"
+	default:
+		return "Ascending"
+	}
+}
+
+// sortOrderFromString parses an FRX SortOrder attribute string name.
+// Returns SortOrderAscending for an unrecognised value (matches C# default).
+func sortOrderFromString(s string) SortOrder {
+	switch s {
+	case "Descending":
+		return SortOrderDescending
+	case "None":
+		return SortOrderNone
+	default:
+		return SortOrderAscending
+	}
+}
 
 // -----------------------------------------------------------------------
 // GroupHeaderBand
@@ -320,7 +371,9 @@ func (g *GroupHeaderBand) Serialize(w report.Writer) error {
 		w.WriteStr("Condition", g.condition)
 	}
 	if g.sortOrder != SortOrderAscending {
-		w.WriteInt("SortOrder", int(g.sortOrder))
+		// C# writes the enum name via Converter.ToString (format "G"), e.g. "None".
+		// GroupHeaderBand.cs:361 — writer.WriteValue("SortOrder", SortOrder)
+		w.WriteStr("SortOrder", sortOrderToString(g.sortOrder))
 	}
 	if g.keepTogether {
 		w.WriteBool("KeepTogether", true)
@@ -337,7 +390,10 @@ func (g *GroupHeaderBand) Deserialize(r report.Reader) error {
 		return err
 	}
 	g.condition = r.ReadStr("Condition", "")
-	g.sortOrder = SortOrder(r.ReadInt("SortOrder", int(SortOrderAscending)))
+	// C# serialises SortOrder as an enum name string ("None", "Ascending", "Descending").
+	// GroupHeaderBand.cs:361 — writer.WriteValue("SortOrder", SortOrder)
+	// where Converter.ToString writes Enum.Format(type, value, "G").
+	g.sortOrder = sortOrderFromString(r.ReadStr("SortOrder", "Ascending"))
 	g.keepTogether = r.ReadBool("KeepTogether", false)
 	g.resetPageNumber = r.ReadBool("ResetPageNumber", false)
 	return nil
@@ -583,6 +639,19 @@ func (d *DataBand) Serialize(w report.Writer) error {
 	if d.rowCount != 1 {
 		w.WriteInt("RowCount", d.rowCount)
 	}
+	// Write BandColumns attributes (matches C# Columns.Serialize).
+	if d.columns.count > 0 {
+		w.WriteInt("Columns.Count", d.columns.count)
+	}
+	if d.columns.Width != 0 {
+		w.WriteFloat("Columns.Width", d.columns.Width)
+	}
+	if d.columns.Layout != ColumnLayoutAcrossThenDown {
+		w.WriteStr("Columns.Layout", formatColumnLayout(d.columns.Layout))
+	}
+	if d.columns.MinRowCount != 0 {
+		w.WriteInt("Columns.MinRowCount", d.columns.MinRowCount)
+	}
 	// Write <Sort> child collection before band object children.
 	if len(d.sort) > 0 {
 		sc := &sortCollection{items: d.sort}
@@ -631,6 +700,8 @@ func (d *DataBand) Deserialize(r report.Reader) error {
 		_ = d.columns.SetCount(n)
 	}
 	d.columns.Width = r.ReadFloat("Columns.Width", 0)
+	d.columns.Layout = parseColumnLayout(r.ReadStr("Columns.Layout", "AcrossThenDown"))
+	d.columns.MinRowCount = r.ReadInt("Columns.MinRowCount", 0)
 	return nil
 }
 

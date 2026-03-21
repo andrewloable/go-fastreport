@@ -172,6 +172,27 @@ func c128CountDigits(code string, idx int) int {
 	return n
 }
 
+// c128IsFourOrMoreDigits mirrors C# Barcode128.IsFourOrMoreDigits.
+// C# requires the first char at index to be a digit AND index+4 < code.Length
+// (i.e. at least 5 chars available from index), then counts contiguous digits.
+// Returns (true, count) when count >= 4, else (false, 0).
+// The strict < (not <=) means exactly 4 digits at end-of-string returns false.
+// Ref: Barcode128.cs:238-249.
+func c128IsFourOrMoreDigits(code string, idx int) (bool, int) {
+	if idx >= len(code) || !c128IsDigit(code[idx]) {
+		return false, 0
+	}
+	// C# condition: index + 4 < code.Length
+	if idx+4 >= len(code) {
+		return false, 0
+	}
+	n := c128CountDigits(code, idx)
+	if n >= 4 {
+		return true, n
+	}
+	return false, 0
+}
+
 // c128StripControlCodes removes &A;, &B;, &C;, &S; tags (and optionally FNC codes).
 func c128StripControlCodes(code string, stripFN bool) string {
 	var b strings.Builder
@@ -248,9 +269,10 @@ func c128NextPortion(code string, idx int, enc c128Encoding) (string, int, c128E
 		firstEnc = c128AorB
 	}
 
-	// 4+ digits → use C encoding
-	numDigits := c128CountDigits(code, idx)
-	if numDigits >= 4 {
+	// 4+ digits → use C encoding.
+	// C# requires index+4 < code.Length (strictly less than), so exactly 4 digits
+	// at end-of-string do NOT select Code C. Ref: Barcode128.cs:241.
+	if ok, numDigits := c128IsFourOrMoreDigits(code, idx); ok {
 		numDigits = (numDigits / 2) * 2
 		result := "&C;" + code[idx:idx+numDigits]
 		return result, idx + numDigits, c128C
@@ -267,7 +289,7 @@ func c128NextPortion(code string, idx int, enc c128Encoding) (string, int, c128E
 		} else if ai != -1 && bi != -1 {
 			nextEnc = c128AorB
 		}
-		if c128CountDigits(code, idx+numChars) >= 4 {
+		if ok, _ := c128IsFourOrMoreDigits(code, idx+numChars); ok {
 			nextEnc = c128C
 		}
 		if nextEnc != c128C && nextEnc != firstEnc {

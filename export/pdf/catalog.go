@@ -25,7 +25,7 @@ func NewCatalog(w *Writer, pages *Pages) *Catalog {
 	dict.Add("MarkInfo", markInfo)
 
 	// Link to the Pages tree using an indirect reference
-	dict.Add("Pages", core.NewName(pages.obj.Reference()))
+	dict.Add("Pages", core.NewRef(pages.obj))
 
 	obj := w.NewObject(dict)
 	w.setCatalog(obj)
@@ -55,11 +55,14 @@ func (c *Catalog) SetAcroForm(acroForm *core.Dictionary) {
 }
 
 // Info holds PDF document metadata stored in the document information dictionary.
+// Matches C# PdfInfo (PDFSimpleExport.Config.cs / PdfInfo.cs).
 type Info struct {
 	obj      *core.IndirectObject
 	dict     *core.Dictionary
 	Title    string
 	Author   string
+	Subject  string
+	Keywords string
 	Creator  string
 	Producer string
 }
@@ -98,6 +101,26 @@ func (info *Info) SetAuthor(author string) {
 		return
 	}
 	info.dict.Add("Author", core.NewHexString(author))
+}
+
+// SetSubject sets the /Subject entry in the info dictionary.
+// Matches C# PdfInfo.Subject (PDFSimpleExport.Config.cs).
+func (info *Info) SetSubject(subject string) {
+	info.Subject = subject
+	if subject == "" {
+		return
+	}
+	info.dict.Add("Subject", core.NewHexString(subject))
+}
+
+// SetKeywords sets the /Keywords entry in the info dictionary.
+// Matches C# PdfInfo.Keywords (PDFSimpleExport.Config.cs).
+func (info *Info) SetKeywords(keywords string) {
+	info.Keywords = keywords
+	if keywords == "" {
+		return
+	}
+	info.dict.Add("Keywords", core.NewHexString(keywords))
 }
 
 // SetCreator sets the /Creator entry in the info dictionary.

@@ -45,6 +45,78 @@ const (
 	ProcessAtCustom
 )
 
+// formatProcessAt converts ProcessAt to its FRX string name.
+func formatProcessAt(p ProcessAt) string {
+	switch p {
+	case ProcessAtReportFinished:
+		return "ReportFinished"
+	case ProcessAtReportPageFinished:
+		return "ReportPageFinished"
+	case ProcessAtPageFinished:
+		return "PageFinished"
+	case ProcessAtColumnFinished:
+		return "ColumnFinished"
+	case ProcessAtDataFinished:
+		return "DataFinished"
+	case ProcessAtGroupFinished:
+		return "GroupFinished"
+	case ProcessAtCustom:
+		return "Custom"
+	default:
+		return "Default"
+	}
+}
+
+// parseProcessAt converts an FRX string to ProcessAt (handles both names and ints).
+func parseProcessAt(s string) ProcessAt {
+	switch s {
+	case "ReportFinished", "1":
+		return ProcessAtReportFinished
+	case "ReportPageFinished", "2":
+		return ProcessAtReportPageFinished
+	case "PageFinished", "3":
+		return ProcessAtPageFinished
+	case "ColumnFinished", "4":
+		return ProcessAtColumnFinished
+	case "DataFinished", "5":
+		return ProcessAtDataFinished
+	case "GroupFinished", "6":
+		return ProcessAtGroupFinished
+	case "Custom", "7":
+		return ProcessAtCustom
+	default:
+		return ProcessAtDefault
+	}
+}
+
+// formatDuplicates converts Duplicates to its FRX string name.
+func formatDuplicates(d Duplicates) string {
+	switch d {
+	case DuplicatesHide:
+		return "Hide"
+	case DuplicatesClear:
+		return "Clear"
+	case DuplicatesMerge:
+		return "Merge"
+	default:
+		return "Show"
+	}
+}
+
+// parseDuplicates converts an FRX string to Duplicates (handles both names and ints).
+func parseDuplicates(s string) Duplicates {
+	switch s {
+	case "Hide", "1":
+		return DuplicatesHide
+	case "Clear", "2":
+		return DuplicatesClear
+	case "Merge", "3":
+		return DuplicatesMerge
+	default:
+		return DuplicatesShow
+	}
+}
+
 // Padding holds interior spacing (left, top, right, bottom) in pixels.
 type Padding struct {
 	Left, Top, Right, Bottom float32
@@ -195,10 +267,10 @@ func (t *TextObjectBase) Serialize(w report.Writer) error {
 		w.WriteStr("NullValue", t.nullValue)
 	}
 	if t.processAt != ProcessAtDefault {
-		w.WriteInt("ProcessAt", int(t.processAt))
+		w.WriteStr("ProcessAt", formatProcessAt(t.processAt))
 	}
 	if t.duplicates != DuplicatesShow {
-		w.WriteInt("Duplicates", int(t.duplicates))
+		w.WriteStr("Duplicates", formatDuplicates(t.duplicates))
 	}
 	if t.editable {
 		w.WriteBool("Editable", true)
@@ -223,8 +295,8 @@ func (t *TextObjectBase) Deserialize(r report.Reader) error {
 	t.hideZeros = r.ReadBool("HideZeros", false)
 	t.hideValue = r.ReadStr("HideValue", "")
 	t.nullValue = r.ReadStr("NullValue", "")
-	t.processAt = ProcessAt(r.ReadInt("ProcessAt", 0))
-	t.duplicates = Duplicates(r.ReadInt("Duplicates", 0))
+	t.processAt = parseProcessAt(r.ReadStr("ProcessAt", "Default"))
+	t.duplicates = parseDuplicates(r.ReadStr("Duplicates", "Show"))
 	t.editable = r.ReadBool("Editable", false)
 	if ft := r.ReadStr("Format", ""); ft != "" {
 		t.format = deserializeTextFormat(ft, r)
@@ -291,6 +363,20 @@ func ParseHorzAlign(s string) HorzAlign {
 	}
 }
 
+// formatHorzAlign converts HorzAlign to its FRX string name.
+func formatHorzAlign(h HorzAlign) string {
+	switch h {
+	case HorzAlignCenter:
+		return "Center"
+	case HorzAlignRight:
+		return "Right"
+	case HorzAlignJustify:
+		return "Justify"
+	default:
+		return "Left"
+	}
+}
+
 // ParseVertAlign parses a vertical alignment value from an FRX attribute.
 // FRX files may store alignment as a string name ("Top", "Center", "Bottom")
 // or as a numeric string ("0", "1", "2").
@@ -305,6 +391,18 @@ func ParseVertAlign(s string) VertAlign {
 	}
 }
 
+// formatVertAlign converts VertAlign to its FRX string name.
+func formatVertAlign(v VertAlign) string {
+	switch v {
+	case VertAlignCenter:
+		return "Center"
+	case VertAlignBottom:
+		return "Bottom"
+	default:
+		return "Top"
+	}
+}
+
 // AutoShrinkMode controls the AutoShrink feature.
 type AutoShrinkMode int
 
@@ -314,6 +412,34 @@ const (
 	AutoShrinkFontWidth
 	AutoShrinkFitText
 )
+
+// formatAutoShrinkMode converts AutoShrinkMode to its FRX string name.
+func formatAutoShrinkMode(m AutoShrinkMode) string {
+	switch m {
+	case AutoShrinkFontSize:
+		return "FontSize"
+	case AutoShrinkFontWidth:
+		return "FontWidth"
+	case AutoShrinkFitText:
+		return "FitText"
+	default:
+		return "None"
+	}
+}
+
+// parseAutoShrinkMode converts an FRX string to AutoShrinkMode (handles both names and ints).
+func parseAutoShrinkMode(s string) AutoShrinkMode {
+	switch s {
+	case "FontSize", "1":
+		return AutoShrinkFontSize
+	case "FontWidth", "2":
+		return AutoShrinkFontWidth
+	case "FitText", "3":
+		return AutoShrinkFitText
+	default:
+		return AutoShrinkNone
+	}
+}
 
 // LineSpacingType controls line-spacing calculation.
 type LineSpacingType int
@@ -342,6 +468,30 @@ const (
 	MergeModeVertical   MergeMode = 2
 )
 
+// formatMergeMode converts MergeMode to its FRX string name.
+func formatMergeMode(m MergeMode) string {
+	switch m {
+	case MergeModeHorizontal:
+		return "Horizontal"
+	case MergeModeVertical:
+		return "Vertical"
+	default:
+		return "None"
+	}
+}
+
+// parseMergeMode converts an FRX string to MergeMode (handles both names and ints).
+func parseMergeMode(s string) MergeMode {
+	switch s {
+	case "Horizontal", "1":
+		return MergeModeHorizontal
+	case "Vertical", "2":
+		return MergeModeVertical
+	default:
+		return MergeModeNone
+	}
+}
+
 // TextRenderType selects the rendering engine.
 type TextRenderType int
 
@@ -351,6 +501,34 @@ const (
 	TextRenderTypeHtmlParagraph
 	TextRenderTypeInline
 )
+
+// formatTextRenderType converts TextRenderType to its FRX string name.
+func formatTextRenderType(t TextRenderType) string {
+	switch t {
+	case TextRenderTypeHtmlTags:
+		return "HtmlTags"
+	case TextRenderTypeHtmlParagraph:
+		return "HtmlParagraph"
+	case TextRenderTypeInline:
+		return "Inline"
+	default:
+		return "Default"
+	}
+}
+
+// parseTextRenderType converts an FRX string to TextRenderType (handles both names and ints).
+func parseTextRenderType(s string) TextRenderType {
+	switch s {
+	case "HtmlTags", "1":
+		return TextRenderTypeHtmlTags
+	case "HtmlParagraph", "2":
+		return TextRenderTypeHtmlParagraph
+	case "Inline", "3":
+		return TextRenderTypeInline
+	default:
+		return TextRenderTypeDefault
+	}
+}
 
 // -----------------------------------------------------------------------
 // TextObject
@@ -675,10 +853,10 @@ func (t *TextObject) Serialize(w report.Writer) error {
 		return err
 	}
 	if t.horzAlign != HorzAlignLeft {
-		w.WriteInt("HorzAlign", int(t.horzAlign))
+		w.WriteStr("HorzAlign", formatHorzAlign(t.horzAlign))
 	}
 	if t.vertAlign != VertAlignTop {
-		w.WriteInt("VertAlign", int(t.vertAlign))
+		w.WriteStr("VertAlign", formatVertAlign(t.vertAlign))
 	}
 	if t.angle != 0 {
 		w.WriteInt("Angle", t.angle)
@@ -717,10 +895,10 @@ func (t *TextObject) Serialize(w report.Writer) error {
 		w.WriteBool("ForceJustify", true)
 	}
 	if t.textRenderType != TextRenderTypeDefault {
-		w.WriteInt("TextRenderType", int(t.textRenderType))
+		w.WriteStr("TextRenderType", formatTextRenderType(t.textRenderType))
 	}
 	if t.autoShrink != AutoShrinkNone {
-		w.WriteInt("AutoShrink", int(t.autoShrink))
+		w.WriteStr("AutoShrink", formatAutoShrinkMode(t.autoShrink))
 	}
 	if t.autoShrinkMinSize != 0 {
 		w.WriteFloat("AutoShrinkMinSize", t.autoShrinkMinSize)
@@ -729,7 +907,7 @@ func (t *TextObject) Serialize(w report.Writer) error {
 		w.WriteFloat("ParagraphOffset", t.paragraphOffset)
 	}
 	if t.mergeMode != MergeModeNone {
-		w.WriteInt("MergeMode", int(t.mergeMode))
+		w.WriteStr("MergeMode", formatMergeMode(t.mergeMode))
 	}
 	if t.autoWidth {
 		w.WriteBool("AutoWidth", true)
@@ -775,11 +953,11 @@ func (t *TextObject) Deserialize(r report.Reader) error {
 	t.wysiwyg = r.ReadBool("Wysiwyg", false)
 	t.lineHeight = r.ReadFloat("LineHeight", 0)
 	t.forceJustify = r.ReadBool("ForceJustify", false)
-	t.textRenderType = TextRenderType(r.ReadInt("TextRenderType", 0))
-	t.autoShrink = AutoShrinkMode(r.ReadInt("AutoShrink", 0))
+	t.textRenderType = parseTextRenderType(r.ReadStr("TextRenderType", "Default"))
+	t.autoShrink = parseAutoShrinkMode(r.ReadStr("AutoShrink", "None"))
 	t.autoShrinkMinSize = r.ReadFloat("AutoShrinkMinSize", 0)
 	t.paragraphOffset = r.ReadFloat("ParagraphOffset", 0)
-	t.mergeMode = MergeMode(r.ReadInt("MergeMode", 0))
+	t.mergeMode = parseMergeMode(r.ReadStr("MergeMode", "None"))
 	t.autoWidth = r.ReadBool("AutoWidth", false)
 	// TextFill.Color — foreground text color (FastReport uses TextFill as a SolidFill).
 	// This attribute is stored directly on the TextObject element, e.g. TextFill.Color="Brown".

@@ -1,6 +1,9 @@
 package style
 
-import "image/color"
+import (
+	"image/color"
+	"strings"
+)
 
 // StyleEntry holds the complete visual properties that a named style
 // can override on a report object. It is the Go equivalent of
@@ -47,9 +50,15 @@ type StyleEntry struct {
 // StyleSheet is a named-style registry. It maps style names to StyleEntry
 // definitions and applies them to objects that implement Styleable.
 // It is the Go equivalent of FastReport's StyleCollection (Report.Styles).
+//
+// Name lookups are case-insensitive to match C# StyleCollection.IndexOf(string)
+// which uses String.Compare(s.Name, value, ignoreCase: true).
 type StyleSheet struct {
+	// entries is keyed by the lower-cased name for case-insensitive lookup.
 	entries map[string]*StyleEntry
-	order   []string
+	// order stores the original (non-lowercased) registration names so that
+	// All() returns entries in insertion order with their original names.
+	order []string
 }
 
 // NewStyleSheet creates an empty StyleSheet.
@@ -59,18 +68,21 @@ func NewStyleSheet() *StyleSheet {
 	}
 }
 
-// Add registers a StyleEntry. If a style with the same name already exists
-// it is replaced.
+// Add registers a StyleEntry. If a style with the same name (case-insensitive)
+// already exists it is replaced in-place, preserving insertion order.
 func (ss *StyleSheet) Add(e *StyleEntry) {
-	if _, exists := ss.entries[e.Name]; !exists {
+	key := strings.ToLower(e.Name)
+	if _, exists := ss.entries[key]; !exists {
 		ss.order = append(ss.order, e.Name)
 	}
-	ss.entries[e.Name] = e
+	ss.entries[key] = e
 }
 
 // Find returns the StyleEntry with the given name, or nil if not registered.
+// The lookup is case-insensitive, matching C# StyleCollection.IndexOf(string)
+// behaviour (String.Compare with ignoreCase=true).
 func (ss *StyleSheet) Find(name string) *StyleEntry {
-	return ss.entries[name]
+	return ss.entries[strings.ToLower(name)]
 }
 
 // Len returns the number of registered styles.
@@ -80,7 +92,7 @@ func (ss *StyleSheet) Len() int { return len(ss.entries) }
 func (ss *StyleSheet) All() []*StyleEntry {
 	result := make([]*StyleEntry, 0, len(ss.order))
 	for _, name := range ss.order {
-		result = append(result, ss.entries[name])
+		result = append(result, ss.entries[strings.ToLower(name)])
 	}
 	return result
 }

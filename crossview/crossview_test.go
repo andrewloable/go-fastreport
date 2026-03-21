@@ -439,3 +439,149 @@ func TestResultGrid_CellOutOfRange(t *testing.T) {
 		t.Error("out-of-range Cell should return zero ResultCell")
 	}
 }
+
+// ── HeaderDescriptor.GetName ──────────────────────────────────────────────────
+
+// TestHeaderDescriptor_GetName verifies the GetName() method against the C#
+// CrossViewHeaderDescriptor.GetName() logic in CrossViewHeaderDescriptor.cs.
+func TestHeaderDescriptor_GetName(t *testing.T) {
+	cases := []struct {
+		desc *crossview.HeaderDescriptor
+		want string
+	}{
+		{
+			desc: &crossview.HeaderDescriptor{IsGrandTotal: true, FieldName: "Category"},
+			want: "GrandTotal",
+		},
+		{
+			desc: &crossview.HeaderDescriptor{IsMeasure: true, MeasureName: "Sales"},
+			want: "Sales",
+		},
+		{
+			desc: &crossview.HeaderDescriptor{IsTotal: true, FieldName: "Region"},
+			want: "Total of Region",
+		},
+		{
+			desc: &crossview.HeaderDescriptor{FieldName: "Product"},
+			want: "Product",
+		},
+	}
+	for _, tc := range cases {
+		got := tc.desc.GetName()
+		if got != tc.want {
+			t.Errorf("GetName() = %q, want %q", got, tc.want)
+		}
+	}
+}
+
+// ── HeaderDescriptor.Assign ───────────────────────────────────────────────────
+
+// TestHeaderDescriptor_Assign verifies field copying against C# Assign().
+func TestHeaderDescriptor_Assign(t *testing.T) {
+	src := &crossview.HeaderDescriptor{
+		FieldName:    "Region",
+		MeasureName:  "Sales",
+		IsGrandTotal: true,
+		IsTotal:      false,
+		IsMeasure:    false,
+		Level:        2,
+		LevelSize:    3,
+		Cell:         5,
+		CellSize:     4,
+	}
+	src.Expression = "[Region]"
+
+	var dst crossview.HeaderDescriptor
+	dst.Assign(src)
+
+	if dst.FieldName != src.FieldName {
+		t.Errorf("FieldName: got %q, want %q", dst.FieldName, src.FieldName)
+	}
+	if dst.MeasureName != src.MeasureName {
+		t.Errorf("MeasureName: got %q, want %q", dst.MeasureName, src.MeasureName)
+	}
+	if dst.IsGrandTotal != src.IsGrandTotal {
+		t.Errorf("IsGrandTotal: got %v, want %v", dst.IsGrandTotal, src.IsGrandTotal)
+	}
+	if dst.Level != src.Level {
+		t.Errorf("Level: got %d, want %d", dst.Level, src.Level)
+	}
+	if dst.LevelSize != src.LevelSize {
+		t.Errorf("LevelSize: got %d, want %d", dst.LevelSize, src.LevelSize)
+	}
+	if dst.Cell != src.Cell {
+		t.Errorf("Cell: got %d, want %d", dst.Cell, src.Cell)
+	}
+	if dst.CellSize != src.CellSize {
+		t.Errorf("CellSize: got %d, want %d", dst.CellSize, src.CellSize)
+	}
+	if dst.Expression != src.Expression {
+		t.Errorf("Expression: got %q, want %q", dst.Expression, src.Expression)
+	}
+}
+
+// TestHeaderDescriptor_Assign_Nil verifies Assign with nil src is a no-op.
+func TestHeaderDescriptor_Assign_Nil(t *testing.T) {
+	var dst crossview.HeaderDescriptor
+	dst.FieldName = "Original"
+	dst.Assign(nil) // should not panic or change dst
+	if dst.FieldName != "Original" {
+		t.Errorf("Assign(nil) changed FieldName to %q", dst.FieldName)
+	}
+}
+
+// ── CellDescriptor.Assign ─────────────────────────────────────────────────────
+
+// TestCellDescriptor_Assign verifies field copying against C# CrossViewCellDescriptor.Assign().
+func TestCellDescriptor_Assign(t *testing.T) {
+	src := &crossview.CellDescriptor{
+		XFieldName:    "Region",
+		YFieldName:    "Product",
+		MeasureName:   "Sales",
+		IsXTotal:      true,
+		IsYTotal:      false,
+		IsXGrandTotal: false,
+		IsYGrandTotal: true,
+		X:             3,
+		Y:             7,
+	}
+	src.Expression = "[Sales]"
+
+	var dst crossview.CellDescriptor
+	dst.Assign(src)
+
+	if dst.XFieldName != src.XFieldName {
+		t.Errorf("XFieldName: got %q, want %q", dst.XFieldName, src.XFieldName)
+	}
+	if dst.YFieldName != src.YFieldName {
+		t.Errorf("YFieldName: got %q, want %q", dst.YFieldName, src.YFieldName)
+	}
+	if dst.MeasureName != src.MeasureName {
+		t.Errorf("MeasureName: got %q, want %q", dst.MeasureName, src.MeasureName)
+	}
+	if dst.IsXTotal != src.IsXTotal {
+		t.Errorf("IsXTotal: got %v, want %v", dst.IsXTotal, src.IsXTotal)
+	}
+	if dst.IsYGrandTotal != src.IsYGrandTotal {
+		t.Errorf("IsYGrandTotal: got %v, want %v", dst.IsYGrandTotal, src.IsYGrandTotal)
+	}
+	if dst.X != src.X {
+		t.Errorf("X: got %d, want %d", dst.X, src.X)
+	}
+	if dst.Y != src.Y {
+		t.Errorf("Y: got %d, want %d", dst.Y, src.Y)
+	}
+	if dst.Expression != src.Expression {
+		t.Errorf("Expression: got %q, want %q", dst.Expression, src.Expression)
+	}
+}
+
+// TestCellDescriptor_Assign_Nil verifies Assign with nil src is a no-op.
+func TestCellDescriptor_Assign_Nil(t *testing.T) {
+	var dst crossview.CellDescriptor
+	dst.XFieldName = "Original"
+	dst.Assign(nil) // should not panic or change dst
+	if dst.XFieldName != "Original" {
+		t.Errorf("Assign(nil) changed XFieldName to %q", dst.XFieldName)
+	}
+}

@@ -1,6 +1,10 @@
 package data
 
-import "github.com/andrewloable/go-fastreport/report"
+import (
+	"strings"
+
+	"github.com/andrewloable/go-fastreport/report"
+)
 
 // DataComponentBase is the base for all data components: connections, data sources,
 // and columns. It is the Go equivalent of FastReport.Data.DataComponentBase.
@@ -35,10 +39,14 @@ func NewDataComponentBase(name string) *DataComponentBase {
 // Name returns the component's internal name.
 func (d *DataComponentBase) Name() string { return d.name }
 
-// SetName sets the internal name. When alias was the same as the old name it
-// is also updated to stay in sync (mirrors C# DataComponentBase.SetName).
+// SetName sets the internal name. When alias was empty or case-insensitively
+// equal to the old name it is also updated to stay in sync, matching the C#
+// behaviour:
+//
+//	bool changeAlias = String.IsNullOrEmpty(Alias) ||
+//	                   String.Compare(Alias, Name, true) == 0;
 func (d *DataComponentBase) SetName(name string) {
-	if d.alias == "" || d.alias == d.name {
+	if d.alias == "" || strings.EqualFold(d.alias, d.name) {
 		d.alias = name
 	}
 	d.name = name

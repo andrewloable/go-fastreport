@@ -937,8 +937,7 @@ func (e *ReportEngine) buildPreparedObject(obj report.Base) *preview.PreparedObj
 				// Update po dimensions to reflect auto-size
 				po.Width = v.Width()
 				po.Height = v.Height()
-				// Render at 3x resolution matching C#'s highQualitySVG zoom=3 mode
-			img, err := renderBarcode(v.Barcode, w*3, h*3)
+				img, err := renderBarcode(v.Barcode, w, h)
 				if err == nil && img != nil && e.preparedPages != nil {
 					var buf bytes.Buffer
 					if encErr := png.Encode(&buf, img); encErr == nil {

@@ -398,7 +398,7 @@ func (rs *qrReedSolomon) encode(toEncode []int, ecBytes int) {
 // qrVersionInfo holds capacity information for one QR version and one EC level.
 type qrVersionInfo struct {
 	totalCodewords int
-	ecCodewords    int // total EC codewords across all blocks
+	ecCodewords    int // EC codewords per block (same for all blocks in a version/level)
 	blocks         []qrBlock
 }
 
@@ -427,12 +427,13 @@ func (v qrVersionInfo) numBlocks() int {
 }
 
 // ecPerBlock returns EC codewords per block.
+// ecCodewords is stored as the per-block value (matching C# ECBlocks.ECCodewordsPerBlock).
+// Returns 0 when blocks is empty (degenerate/uninitialised entry).
 func (v qrVersionInfo) ecPerBlock() int {
-	totalBlocks := v.numBlocks()
-	if totalBlocks == 0 {
+	if len(v.blocks) == 0 {
 		return 0
 	}
-	return v.ecCodewords / totalBlocks
+	return v.ecCodewords
 }
 
 // qrVersionTable[i] is version i+1 info [L, M, Q, H].
@@ -1092,8 +1093,13 @@ func qrPenaltyRule4(m *qrByteMatrix) int {
 			}
 		}
 	}
-	ratio := float64(dark) / float64(total) * 100
-	diff := int(ratio) - 50
+	// Mirror C# MaskUtil.applyMaskPenaltyRule4:
+	//   Math.Abs((int)(darkRatio * 100 - 50)) / 5 * 10
+	// The subtraction happens in floating-point before the truncating cast,
+	// which differs from int(ratio) - 50 when ratio is non-integer.
+	// Reference: MaskUtil.cs:118
+	darkRatio := float64(dark) / float64(total)
+	diff := int(darkRatio*100 - 50)
 	if diff < 0 {
 		diff = -diff
 	}

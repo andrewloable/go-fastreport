@@ -287,3 +287,94 @@ func TestExporter_WatermarkImage_Stretch(t *testing.T) {
 		t.Error("PDF should not be empty")
 	}
 }
+
+// ── Config: ImageDpi / JpegQuality validation (PDFSimpleExport.Config.cs) ─────
+
+// TestExporter_DefaultConfig verifies that NewExporter sets C# default values.
+func TestExporter_DefaultConfig(t *testing.T) {
+	exp := pdf.NewExporter()
+	if exp.ImageDpi != 300 {
+		t.Errorf("ImageDpi default = %d, want 300", exp.ImageDpi)
+	}
+	if exp.JpegQuality != 90 {
+		t.Errorf("JpegQuality default = %d, want 90", exp.JpegQuality)
+	}
+}
+
+// TestExporter_SetImageDpi_Clamp verifies that SetImageDpi clamps to 96–1200.
+// Matches C# PDFSimpleExport.ImageDpi setter (PDFSimpleExport.Config.cs lines 39-44).
+func TestExporter_SetImageDpi_Clamp(t *testing.T) {
+	exp := pdf.NewExporter()
+
+	exp.SetImageDpi(50) // below min → 96
+	if exp.ImageDpi != 96 {
+		t.Errorf("SetImageDpi(50) = %d, want 96", exp.ImageDpi)
+	}
+
+	exp.SetImageDpi(2000) // above max → 1200
+	if exp.ImageDpi != 1200 {
+		t.Errorf("SetImageDpi(2000) = %d, want 1200", exp.ImageDpi)
+	}
+
+	exp.SetImageDpi(150) // valid
+	if exp.ImageDpi != 150 {
+		t.Errorf("SetImageDpi(150) = %d, want 150", exp.ImageDpi)
+	}
+}
+
+// TestExporter_SetJpegQuality_Clamp verifies that SetJpegQuality clamps to 10–100.
+// Matches C# PDFSimpleExport.JpegQuality setter (PDFSimpleExport.Config.cs lines 54-59).
+func TestExporter_SetJpegQuality_Clamp(t *testing.T) {
+	exp := pdf.NewExporter()
+
+	exp.SetJpegQuality(5) // below min → 10
+	if exp.JpegQuality != 10 {
+		t.Errorf("SetJpegQuality(5) = %d, want 10", exp.JpegQuality)
+	}
+
+	exp.SetJpegQuality(200) // above max → 100
+	if exp.JpegQuality != 100 {
+		t.Errorf("SetJpegQuality(200) = %d, want 100", exp.JpegQuality)
+	}
+
+	exp.SetJpegQuality(75) // valid
+	if exp.JpegQuality != 75 {
+		t.Errorf("SetJpegQuality(75) = %d, want 75", exp.JpegQuality)
+	}
+}
+
+// TestExporter_MetadataInPDF verifies that Author, Title, Subject, Keywords
+// values are written into the PDF /Info dictionary.
+// Matches C# PDFSimpleExport.Finish() behaviour (PDFSimpleExport.cs).
+func TestExporter_MetadataInPDF(t *testing.T) {
+	pp := buildTestPages(1, []string{"DataBand"})
+	exp := pdf.NewExporter()
+	exp.Author = "Test Author"
+	exp.Title = "Test Report"
+	exp.Subject = "Financial Summary"
+	exp.Keywords = "finance sales 2024"
+
+	var buf bytes.Buffer
+	if err := exp.Export(pp, &buf); err != nil {
+		t.Fatalf("Export: %v", err)
+	}
+	out := buf.String()
+	// The /Info dictionary should reference the metadata.
+	// Values are stored as PDF hex strings ("<FEFF...>").
+	if !strings.Contains(out, "/Author") {
+		t.Error("PDF output missing /Author metadata entry")
+	}
+	if !strings.Contains(out, "/Title") {
+		t.Error("PDF output missing /Title metadata entry")
+	}
+	if !strings.Contains(out, "/Subject") {
+		t.Error("PDF output missing /Subject metadata entry")
+	}
+	if !strings.Contains(out, "/Keywords") {
+		t.Error("PDF output missing /Keywords metadata entry")
+	}
+	// /Info entry should appear in the PDF trailer section.
+	if !strings.Contains(out, "/Info") {
+		t.Error("PDF output missing /Info reference in trailer")
+	}
+}

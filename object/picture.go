@@ -39,6 +39,91 @@ const (
 	ImageAlignBottomRight
 )
 
+// formatSizeMode converts SizeMode to its FRX string name (PictureBoxSizeMode enum).
+func formatSizeMode(m SizeMode) string {
+	switch m {
+	case SizeModeNormal:
+		return "Normal"
+	case SizeModeStretchImage:
+		return "StretchImage"
+	case SizeModeAutoSize:
+		return "AutoSize"
+	case SizeModeCenterImage:
+		return "CenterImage"
+	default:
+		return "Zoom"
+	}
+}
+
+// parseSizeMode converts an FRX string to SizeMode (handles both names and ints).
+func parseSizeMode(s string) SizeMode {
+	switch s {
+	case "Normal", "0":
+		return SizeModeNormal
+	case "StretchImage", "1":
+		return SizeModeStretchImage
+	case "AutoSize", "2":
+		return SizeModeAutoSize
+	case "CenterImage", "3":
+		return SizeModeCenterImage
+	default:
+		return SizeModeZoom
+	}
+}
+
+// formatImageAlign converts ImageAlign to its FRX string name.
+// C# uses underscore-separated names: Top_Left, Center_Center, etc.
+func formatImageAlign(a ImageAlign) string {
+	switch a {
+	case ImageAlignTopLeft:
+		return "Top_Left"
+	case ImageAlignTopCenter:
+		return "Top_Center"
+	case ImageAlignTopRight:
+		return "Top_Right"
+	case ImageAlignCenterLeft:
+		return "Center_Left"
+	case ImageAlignCenterCenter:
+		return "Center_Center"
+	case ImageAlignCenterRight:
+		return "Center_Right"
+	case ImageAlignBottomLeft:
+		return "Bottom_Left"
+	case ImageAlignBottomCenter:
+		return "Bottom_Center"
+	case ImageAlignBottomRight:
+		return "Bottom_Right"
+	default:
+		return "None"
+	}
+}
+
+// parseImageAlign converts an FRX string to ImageAlign (handles both names and ints).
+func parseImageAlign(s string) ImageAlign {
+	switch s {
+	case "Top_Left", "1":
+		return ImageAlignTopLeft
+	case "Top_Center", "2":
+		return ImageAlignTopCenter
+	case "Top_Right", "3":
+		return ImageAlignTopRight
+	case "Center_Left", "4":
+		return ImageAlignCenterLeft
+	case "Center_Center", "5":
+		return ImageAlignCenterCenter
+	case "Center_Right", "6":
+		return ImageAlignCenterRight
+	case "Bottom_Left", "7":
+		return ImageAlignBottomLeft
+	case "Bottom_Center", "8":
+		return ImageAlignBottomCenter
+	case "Bottom_Right", "9":
+		return ImageAlignBottomRight
+	default:
+		return ImageAlignNone
+	}
+}
+
 // PictureObjectBase is the base for image-displaying report objects.
 // It is the Go equivalent of FastReport.PictureObjectBase.
 type PictureObjectBase struct {
@@ -161,10 +246,10 @@ func (p *PictureObjectBase) Serialize(w report.Writer) error {
 		w.WriteStr("Padding", paddingToStr(p.padding))
 	}
 	if p.sizeMode != SizeModeZoom {
-		w.WriteInt("SizeMode", int(p.sizeMode))
+		w.WriteStr("SizeMode", formatSizeMode(p.sizeMode))
 	}
 	if p.imageAlign != ImageAlignNone {
-		w.WriteInt("ImageAlign", int(p.imageAlign))
+		w.WriteStr("ImageAlign", formatImageAlign(p.imageAlign))
 	}
 	if p.showErrorImage {
 		w.WriteBool("ShowErrorImage", true)
@@ -187,8 +272,8 @@ func (p *PictureObjectBase) Deserialize(r report.Reader) error {
 	if s := r.ReadStr("Padding", ""); s != "" {
 		p.padding = strToPadding(s)
 	}
-	p.sizeMode = SizeMode(r.ReadInt("SizeMode", int(SizeModeZoom)))
-	p.imageAlign = ImageAlign(r.ReadInt("ImageAlign", 0))
+	p.sizeMode = parseSizeMode(r.ReadStr("SizeMode", "Zoom"))
+	p.imageAlign = parseImageAlign(r.ReadStr("ImageAlign", "None"))
 	p.showErrorImage = r.ReadBool("ShowErrorImage", false)
 	return nil
 }

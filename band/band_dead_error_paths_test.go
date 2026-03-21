@@ -661,14 +661,22 @@ func TestGroupHeaderBand_Serialize_ChildrenErrorPath(t *testing.T) {
 type groupHeaderDeserMock struct {
 	*mockReader
 	condition       string
-	sortOrder       int
+	// sortOrder holds the FRX string name ("Ascending", "Descending", "None").
+	// C# serialises SortOrder via Converter.ToString (enum name format "G").
+	sortOrder       string
 	keepTogether    bool
 	resetPageNumber bool
 }
 
 func (m *groupHeaderDeserMock) ReadStr(name, def string) string {
-	if name == "Condition" {
+	switch name {
+	case "Condition":
 		return m.condition
+	case "SortOrder":
+		if m.sortOrder != "" {
+			return m.sortOrder
+		}
+		return def
 	}
 	return def
 }
@@ -689,9 +697,6 @@ func (m *groupHeaderDeserMock) ReadBool(name string, def bool) bool {
 }
 
 func (m *groupHeaderDeserMock) ReadInt(name string, def int) int {
-	if name == "SortOrder" {
-		return m.sortOrder
-	}
 	return def
 }
 
@@ -699,7 +704,7 @@ func TestGroupHeaderBand_Deserialize_AllNonDefaults(t *testing.T) {
 	r := &groupHeaderDeserMock{
 		mockReader:      newMockReader(),
 		condition:       "[Region]",
-		sortOrder:       int(SortOrderDescending),
+		sortOrder:       "Descending",
 		keepTogether:    true,
 		resetPageNumber: true,
 	}
@@ -726,7 +731,7 @@ func TestGroupHeaderBand_Deserialize_Defaults(t *testing.T) {
 	r := &groupHeaderDeserMock{
 		mockReader:      newMockReader(),
 		condition:       "",
-		sortOrder:       int(SortOrderAscending),
+		sortOrder:       "Ascending",
 		keepTogether:    false,
 		resetPageNumber: false,
 	}

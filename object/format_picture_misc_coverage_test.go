@@ -47,7 +47,7 @@ func TestSerializeTextFormat_NumberNonDefaults(t *testing.T) {
 		`Format.DecimalSeparator=`,
 		`Format.GroupSeparator=`,
 		`Format.NegativePattern=`,
-		`Format.UseLocaleSettings="false"`,
+		`Format.UseLocale="false"`,
 	}
 	for _, c := range checks {
 		if !strings.Contains(xml, c) {
@@ -101,9 +101,9 @@ func TestSerializeTextFormat_NumberWithLocale(t *testing.T) {
 	if !strings.Contains(xml, `Format="Number"`) {
 		t.Errorf("expected Format=Number in XML:\n%s", xml)
 	}
-	// When UseLocaleSettings=true, UseLocaleSettings is NOT written (it's the default)
-	if strings.Contains(xml, `Format.UseLocaleSettings="false"`) {
-		t.Errorf("UseLocaleSettings=false should NOT appear when locale is true:\n%s", xml)
+	// When UseLocaleSettings=true, UseLocale="false" is NOT written (it's the default)
+	if strings.Contains(xml, `Format.UseLocale="false"`) {
+		t.Errorf("UseLocale=false should NOT appear when locale is true:\n%s", xml)
 	}
 }
 
@@ -135,7 +135,7 @@ func TestSerializeTextFormat_CurrencyNonDefaults(t *testing.T) {
 		`Format.CurrencySymbol=`,
 		`Format.PositivePattern=`,
 		`Format.NegativePattern=`,
-		`Format.UseLocaleSettings="false"`,
+		`Format.UseLocale="false"`,
 	}
 	for _, c := range checks {
 		if !strings.Contains(xml, c) {
@@ -187,12 +187,12 @@ func TestSerializeTextFormat_CurrencyWithLocale(t *testing.T) {
 }
 
 // TestSerializeTextFormat_DateNonDefaults exercises DateFormat with non-default Format string
-// and UseLocaleSettings=true (which writes the UseLocaleSettings attribute).
+// and UseLocaleSettings=true (which writes the UseLocale attribute, matching C# FRX).
 func TestSerializeTextFormat_DateNonDefaults(t *testing.T) {
 	orig := object.NewTextObject()
 	df := &format.DateFormat{
 		Format:            "dd-MM-yyyy", // non-default
-		UseLocaleSettings: true,         // non-default (default=false), writes UseLocaleSettings=true
+		UseLocaleSettings: true,         // non-default (default=false), writes UseLocale=true
 	}
 	orig.SetFormat(df)
 
@@ -207,7 +207,7 @@ func TestSerializeTextFormat_DateNonDefaults(t *testing.T) {
 	checks := []string{
 		`Format="Date"`,
 		`Format.Format=`,
-		`Format.UseLocaleSettings="true"`,
+		`Format.UseLocale="true"`,
 	}
 	for _, c := range checks {
 		if !strings.Contains(xml, c) {
@@ -237,12 +237,12 @@ func TestSerializeTextFormat_DateNonDefaults(t *testing.T) {
 }
 
 // TestSerializeTextFormat_TimeNonDefaults exercises TimeFormat with non-default Format
-// and UseLocaleSettings=true.
+// and UseLocaleSettings=true (writes UseLocale attribute, matching C# FRX).
 func TestSerializeTextFormat_TimeNonDefaults(t *testing.T) {
 	orig := object.NewTextObject()
 	tf := &format.TimeFormat{
 		Format:            "HH:mm:ss.fff", // non-default
-		UseLocaleSettings: true,           // non-default (writes UseLocaleSettings=true)
+		UseLocaleSettings: true,           // non-default (writes UseLocale=true)
 	}
 	orig.SetFormat(tf)
 
@@ -257,7 +257,7 @@ func TestSerializeTextFormat_TimeNonDefaults(t *testing.T) {
 	checks := []string{
 		`Format="Time"`,
 		`Format.Format=`,
-		`Format.UseLocaleSettings="true"`,
+		`Format.UseLocale="true"`,
 	}
 	for _, c := range checks {
 		if !strings.Contains(xml, c) {
@@ -313,7 +313,7 @@ func TestSerializeTextFormat_PercentNonDefaults(t *testing.T) {
 		`Format.PercentSymbol=`,
 		`Format.PositivePattern=`,
 		`Format.NegativePattern=`,
-		`Format.UseLocaleSettings="false"`,
+		`Format.UseLocale="false"`,
 	}
 	for _, c := range checks {
 		if !strings.Contains(xml, c) {

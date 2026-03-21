@@ -1,6 +1,9 @@
 package object
 
-import "github.com/andrewloable/go-fastreport/report"
+import (
+	"github.com/andrewloable/go-fastreport/report"
+	"github.com/andrewloable/go-fastreport/style"
+)
 
 // CellularTextObject renders text in a grid of fixed-size cells — one character
 // per cell. It is the Go equivalent of FastReport.CellularTextObject.
@@ -22,12 +25,24 @@ type CellularTextObject struct {
 	wordWrap bool
 }
 
-// NewCellularTextObject creates a CellularTextObject with defaults (word wrap on).
+// NewCellularTextObject creates a CellularTextObject with defaults.
+//
+// The C# constructor (CellularTextObject.cs) explicitly sets:
+//   - CanBreak = false  (text cells must not split across pages)
+//   - Border.Lines = BorderLines.All  (all four cell borders visible by default)
+//
+// WordWrap defaults to true (inherited from TextObject).
 func NewCellularTextObject() *CellularTextObject {
 	c := &CellularTextObject{
 		TextObject: *NewTextObject(),
 		wordWrap:   true,
 	}
+	// Match C# CellularTextObject() constructor: CanBreak = false.
+	c.SetCanBreak(false)
+	// Match C# CellularTextObject() constructor: Border.Lines = BorderLines.All.
+	border := c.Border()
+	border.VisibleLines = style.BorderLinesAll
+	c.SetBorder(border)
 	return c
 }
 

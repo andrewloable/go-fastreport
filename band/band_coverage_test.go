@@ -621,7 +621,7 @@ func TestGroupHeaderBand_SerializeDeserialize_RoundTrip(t *testing.T) {
 
 	for _, want := range []string{
 		`Condition="[Orders.CustomerName]"`,
-		`SortOrder="1"`,
+		`SortOrder="Descending"`,
 		`KeepTogether="true"`,
 		`ResetPageNumber="true"`,
 		`KeepWithData="true"`,

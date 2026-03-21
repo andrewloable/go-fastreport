@@ -110,7 +110,7 @@ func TestGroupHeaderBand_Deserialize_SortOrderNone(t *testing.T) {
 	r := &groupHeaderDeserMock{
 		mockReader:      newMockReader(),
 		condition:       "[Val]",
-		sortOrder:       int(SortOrderNone),
+		sortOrder:       "None",
 		keepTogether:    false,
 		resetPageNumber: false,
 	}
@@ -128,7 +128,7 @@ func TestGroupHeaderBand_Deserialize_SortOrderNone(t *testing.T) {
 func TestGroupHeaderBand_Deserialize_KeepTogetherOnly(t *testing.T) {
 	r := &groupHeaderDeserMock{
 		mockReader:      newMockReader(),
-		sortOrder:       int(SortOrderAscending),
+		sortOrder:       "Ascending",
 		keepTogether:    true,
 		resetPageNumber: false,
 	}
@@ -149,7 +149,7 @@ func TestGroupHeaderBand_Deserialize_KeepTogetherOnly(t *testing.T) {
 func TestGroupHeaderBand_Deserialize_ResetPageNumberOnly(t *testing.T) {
 	r := &groupHeaderDeserMock{
 		mockReader:      newMockReader(),
-		sortOrder:       int(SortOrderAscending),
+		sortOrder:       "Ascending",
 		keepTogether:    false,
 		resetPageNumber: true,
 	}
@@ -297,5 +297,113 @@ func TestDataBand_Deserialize_KeepSummaryOnly(t *testing.T) {
 	}
 	if !d.KeepSummary() {
 		t.Error("KeepSummary should be true")
+	}
+}
+
+// ─── sortOrderToString / sortOrderFromString round-trips ──────────────────────
+//
+// C# FastReport serialises GroupHeaderBand.SortOrder as an enum name string
+// ("None", "Ascending", "Descending") via Converter.ToString (format "G").
+// Real FRX files contain e.g. SortOrder="None" — verified in test-reports/.
+// These tests cover every branch of the two helpers and confirm the fix for
+// the previous integer-based serialisation bug.
+
+func TestSortOrderToString_Ascending(t *testing.T) {
+	if got := sortOrderToString(SortOrderAscending); got != "Ascending" {
+		t.Errorf("sortOrderToString(Ascending) = %q, want Ascending", got)
+	}
+}
+
+func TestSortOrderToString_Descending(t *testing.T) {
+	if got := sortOrderToString(SortOrderDescending); got != "Descending" {
+		t.Errorf("sortOrderToString(Descending) = %q, want Descending", got)
+	}
+}
+
+func TestSortOrderToString_None(t *testing.T) {
+	if got := sortOrderToString(SortOrderNone); got != "None" {
+		t.Errorf("sortOrderToString(None) = %q, want None", got)
+	}
+}
+
+func TestSortOrderToString_Unknown_DefaultsToAscending(t *testing.T) {
+	// Any unrecognised value should produce "Ascending" (matches C# default).
+	if got := sortOrderToString(SortOrder(99)); got != "Ascending" {
+		t.Errorf("sortOrderToString(99) = %q, want Ascending", got)
+	}
+}
+
+func TestSortOrderFromString_Ascending(t *testing.T) {
+	if got := sortOrderFromString("Ascending"); got != SortOrderAscending {
+		t.Errorf("sortOrderFromString(Ascending) = %v, want SortOrderAscending", got)
+	}
+}
+
+func TestSortOrderFromString_Descending(t *testing.T) {
+	if got := sortOrderFromString("Descending"); got != SortOrderDescending {
+		t.Errorf("sortOrderFromString(Descending) = %v, want SortOrderDescending", got)
+	}
+}
+
+func TestSortOrderFromString_None(t *testing.T) {
+	if got := sortOrderFromString("None"); got != SortOrderNone {
+		t.Errorf("sortOrderFromString(None) = %v, want SortOrderNone", got)
+	}
+}
+
+func TestSortOrderFromString_Unknown_DefaultsToAscending(t *testing.T) {
+	// An unrecognised string (e.g. old integer "1") defaults to Ascending.
+	for _, s := range []string{"", "1", "2", "bogus"} {
+		if got := sortOrderFromString(s); got != SortOrderAscending {
+			t.Errorf("sortOrderFromString(%q) = %v, want SortOrderAscending", s, got)
+		}
+	}
+}
+
+// TestGroupHeaderBand_Serialize_SortOrderName verifies that GroupHeaderBand
+// serialises SortOrder as a string name ("None"), not an integer, matching
+// the C# FastReport FRX format (GroupHeaderBand.cs:361).
+func TestGroupHeaderBand_Serialize_SortOrderName(t *testing.T) {
+	g := NewGroupHeaderBand()
+	g.SetSortOrder(SortOrderNone)
+
+	w := newMockWriter()
+	if err := g.Serialize(w); err != nil {
+		t.Fatalf("Serialize error: %v", err)
+	}
+	// SortOrder must be written as a string name, not an integer.
+	got, ok := w.written["SortOrder"]
+	if !ok {
+		t.Fatal("SortOrder attribute not written")
+	}
+	if got != "None" {
+		t.Errorf("SortOrder = %q, want None (not an integer)", got)
+	}
+}
+
+// TestGroupHeaderBand_Deserialize_SortOrderFromFRXString verifies that the
+// SortOrder string from real FRX files (e.g. SortOrder="None") is correctly
+// parsed. Previously the code used ReadInt which returned 0 (=Ascending) for
+// any string value, silently misreading "None" as Ascending.
+func TestGroupHeaderBand_Deserialize_SortOrderFromFRXString(t *testing.T) {
+	for _, tc := range []struct {
+		frxValue string
+		want     SortOrder
+	}{
+		{"None", SortOrderNone},
+		{"Ascending", SortOrderAscending},
+		{"Descending", SortOrderDescending},
+	} {
+		r := &groupHeaderDeserMock{
+			mockReader: newMockReader(),
+			sortOrder:  tc.frxValue,
+		}
+		g := NewGroupHeaderBand()
+		if err := g.Deserialize(r); err != nil {
+			t.Fatalf("[%s] Deserialize error: %v", tc.frxValue, err)
+		}
+		if g.SortOrder() != tc.want {
+			t.Errorf("[%s] SortOrder = %v, want %v", tc.frxValue, g.SortOrder(), tc.want)
+		}
 	}
 }

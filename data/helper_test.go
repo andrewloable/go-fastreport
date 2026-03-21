@@ -294,6 +294,180 @@ func TestCreateParameter(t *testing.T) {
 	}
 }
 
+// --- RelationCollection ---
+
+func TestRelationCollection_AddRemoveCount(t *testing.T) {
+	rc := data.NewRelationCollection()
+	if rc.Count() != 0 {
+		t.Fatalf("empty collection Count = %d, want 0", rc.Count())
+	}
+
+	r1 := data.NewRelation()
+	r1.Name = "R1"
+	r2 := data.NewRelation()
+	r2.Name = "R2"
+
+	rc.Add(r1)
+	rc.Add(r2)
+	if rc.Count() != 2 {
+		t.Fatalf("after Add×2 Count = %d, want 2", rc.Count())
+	}
+	if rc.Get(0) != r1 {
+		t.Error("Get(0) should return r1")
+	}
+	if rc.Get(1) != r2 {
+		t.Error("Get(1) should return r2")
+	}
+
+	rc.Remove(r1)
+	if rc.Count() != 1 {
+		t.Fatalf("after Remove Count = %d, want 1", rc.Count())
+	}
+	if rc.Get(0) != r2 {
+		t.Error("after Remove(r1), Get(0) should return r2")
+	}
+}
+
+func TestRelationCollection_Remove_NonExistent(t *testing.T) {
+	rc := data.NewRelationCollection()
+	r := data.NewRelation()
+	// Remove from empty collection — should not panic.
+	rc.Remove(r)
+}
+
+func TestRelationCollection_All(t *testing.T) {
+	rc := data.NewRelationCollection()
+	r1 := &data.Relation{Name: "A"}
+	r2 := &data.Relation{Name: "B"}
+	rc.Add(r1)
+	rc.Add(r2)
+
+	all := rc.All()
+	if len(all) != 2 {
+		t.Fatalf("All len = %d, want 2", len(all))
+	}
+	// Modifying the returned slice should not affect the collection.
+	all[0] = &data.Relation{Name: "Z"}
+	if rc.Get(0) != r1 {
+		t.Error("All returned a non-copy slice")
+	}
+}
+
+func TestRelationCollection_FindByName(t *testing.T) {
+	rc := data.NewRelationCollection()
+	r := &data.Relation{Name: "CustomersOrders"}
+	rc.Add(r)
+
+	got := rc.FindByName("CustomersOrders")
+	if got != r {
+		t.Error("FindByName should return the matching relation by exact name")
+	}
+	if rc.FindByName("missing") != nil {
+		t.Error("FindByName should return nil for unknown name")
+	}
+}
+
+func TestRelationCollection_FindByAlias(t *testing.T) {
+	rc := data.NewRelationCollection()
+	r := &data.Relation{Name: "R", Alias: "Orders → Customers"}
+	rc.Add(r)
+
+	got := rc.FindByAlias("Orders → Customers")
+	if got != r {
+		t.Error("FindByAlias should return the matching relation by exact alias")
+	}
+	if rc.FindByAlias("missing") != nil {
+		t.Error("FindByAlias should return nil for unknown alias")
+	}
+}
+
+func TestRelationCollection_FindEqual(t *testing.T) {
+	parent := data.NewBaseDataSource("Customers")
+	child := data.NewBaseDataSource("Orders")
+
+	rc := data.NewRelationCollection()
+	r := &data.Relation{
+		Name:             "R1",
+		ParentDataSource: parent,
+		ChildDataSource:  child,
+		ParentColumns:    []string{"CustomerID"},
+		ChildColumns:     []string{"CustomerID"},
+	}
+	rc.Add(r)
+
+	// Equal relation (same sources and columns).
+	query := &data.Relation{
+		ParentDataSource: parent,
+		ChildDataSource:  child,
+		ParentColumns:    []string{"CustomerID"},
+		ChildColumns:     []string{"CustomerID"},
+	}
+	got := rc.FindEqual(query)
+	if got != r {
+		t.Error("FindEqual should find a structurally equal relation")
+	}
+
+	// Different columns — should not match.
+	notMatch := &data.Relation{
+		ParentDataSource: parent,
+		ChildDataSource:  child,
+		ParentColumns:    []string{"OtherID"},
+		ChildColumns:     []string{"OtherID"},
+	}
+	if rc.FindEqual(notMatch) != nil {
+		t.Error("FindEqual should return nil when columns differ")
+	}
+}
+
+// --- NewRelation / Relation.Enabled default ---
+
+func TestNewRelation_EnabledDefault(t *testing.T) {
+	r := data.NewRelation()
+	if !r.Enabled {
+		t.Error("NewRelation should have Enabled=true by default (C# Relation constructor sets CanEdit flag)")
+	}
+}
+
+// --- Relation.Equals ---
+
+func TestRelation_Equals_Match(t *testing.T) {
+	parent := data.NewBaseDataSource("P")
+	child := data.NewBaseDataSource("C")
+	r1 := &data.Relation{ParentDataSource: parent, ChildDataSource: child,
+		ParentColumns: []string{"ID"}, ChildColumns: []string{"PID"}}
+	r2 := &data.Relation{ParentDataSource: parent, ChildDataSource: child,
+		ParentColumns: []string{"ID"}, ChildColumns: []string{"PID"}}
+
+	if !r1.Equals(r2) {
+		t.Error("Equals should return true for structurally identical relations")
+	}
+}
+
+func TestRelation_Equals_NoMatch_DiffChild(t *testing.T) {
+	parent := data.NewBaseDataSource("P")
+	child1 := data.NewBaseDataSource("C1")
+	child2 := data.NewBaseDataSource("C2")
+	r1 := &data.Relation{ParentDataSource: parent, ChildDataSource: child1}
+	r2 := &data.Relation{ParentDataSource: parent, ChildDataSource: child2}
+
+	if r1.Equals(r2) {
+		t.Error("Equals should return false when child data sources differ")
+	}
+}
+
+func TestRelation_Equals_NoMatch_DiffColumns(t *testing.T) {
+	parent := data.NewBaseDataSource("P")
+	child := data.NewBaseDataSource("C")
+	r1 := &data.Relation{ParentDataSource: parent, ChildDataSource: child,
+		ParentColumns: []string{"A"}, ChildColumns: []string{"B"}}
+	r2 := &data.Relation{ParentDataSource: parent, ChildDataSource: child,
+		ParentColumns: []string{"X"}, ChildColumns: []string{"Y"}}
+
+	if r1.Equals(r2) {
+		t.Error("Equals should return false when columns differ")
+	}
+}
+
 // --- IsValidTotal ---
 
 func TestIsValidTotal_True(t *testing.T) {

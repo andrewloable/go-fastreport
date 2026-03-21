@@ -36,6 +36,7 @@ type Exporter struct {
 	pp      *preview.PreparedPages // access to blob store for images
 	imgIdx  int                    // counter for unique XObject names
 	fontMgr *pdfFontManager        // document-level TrueType font embedding
+	docInfo *Info                  // /Info dictionary (metadata)
 
 	// UseCMYK controls color space selection.
 	// When true, colors are emitted using DeviceCMYK (k/K operators).
@@ -44,13 +45,63 @@ type Exporter struct {
 
 	// sigFields accumulates /Widget annotation references for the /AcroForm.
 	sigFields []*core.IndirectObject
+
+	// Document metadata — written to the PDF /Info dictionary in Finish().
+	// These match C# PDFSimpleExport.Config.cs properties.
+
+	// ImageDpi controls the bitmap resolution scale for images rendered from
+	// the report engine (range 96–1200; default 300, matching C# default).
+	// For the Go port, this value is stored for compatibility but images are
+	// embedded as-is from the BlobStore without resampling.
+	ImageDpi int
+
+	// JpegQuality controls JPEG compression quality (range 10–100; default 90).
+	// Stored for compatibility; the Go port embeds JPEG images as-is.
+	JpegQuality int
+
+	// Author of the PDF document (/Author info entry).
+	Author string
+
+	// Title of the PDF document (/Title info entry).
+	Title string
+
+	// Subject of the PDF document (/Subject info entry).
+	Subject string
+
+	// Keywords of the PDF document (/Keywords info entry).
+	Keywords string
 }
 
 // NewExporter creates an Exporter with default settings (all pages).
+// ImageDpi defaults to 300, JpegQuality to 90, matching C# PDFSimpleExport defaults.
 func NewExporter() *Exporter {
 	return &Exporter{
-		ExportBase: export.NewExportBase(),
+		ExportBase:  export.NewExportBase(),
+		ImageDpi:    300,
+		JpegQuality: 90,
 	}
+}
+
+// SetImageDpi sets ImageDpi, clamping to the valid range 96–1200.
+// Matches C# PDFSimpleExport.ImageDpi setter (PDFSimpleExport.Config.cs).
+func (e *Exporter) SetImageDpi(dpi int) {
+	if dpi > 1200 {
+		dpi = 1200
+	} else if dpi < 96 {
+		dpi = 96
+	}
+	e.ImageDpi = dpi
+}
+
+// SetJpegQuality sets JpegQuality, clamping to the valid range 10–100.
+// Matches C# PDFSimpleExport.JpegQuality setter (PDFSimpleExport.Config.cs).
+func (e *Exporter) SetJpegQuality(q int) {
+	if q > 100 {
+		q = 100
+	} else if q < 10 {
+		q = 10
+	}
+	e.JpegQuality = q
 }
 
 // Export writes the PreparedPages as a PDF document to w.
@@ -63,12 +114,17 @@ func (e *Exporter) Export(pp *preview.PreparedPages, w io.Writer) error {
 // ── Exporter interface implementation ─────────────────────────────────────────
 
 // Start initialises the PDF writer and document structure.
+// Matches C# PDFSimpleExport.Start() pipeline order (PDFSimpleExport.cs).
 func (e *Exporter) Start() error {
 	e.writer = NewWriter()
 
 	// Build catalog → pages tree.
 	e.pages = NewPages(e.writer)
 	e.catalog = NewCatalog(e.writer, e.pages)
+
+	// Create the /Info metadata dictionary.
+	// Populated with Author/Title/Subject/Keywords in Finish().
+	e.docInfo = NewInfo(e.writer)
 
 	// Create document-level TrueType font manager.
 	e.fontMgr = NewPDFFontManager(e.writer)
@@ -967,6 +1023,8 @@ func (e *Exporter) renderWatermarkText(c *Contents, pg *preview.PreparedPage, wm
 }
 
 // Finish writes the complete PDF document to the output stream.
+// Matches C# PDFSimpleExport.Finish() — writes /Info metadata then flushes.
+// C# reference: PDFSimpleExport.cs Finish() → pdfWriter.Write(info) → pdfWriter.Finish().
 func (e *Exporter) Finish() error {
 	if e.writer == nil {
 		return nil
@@ -976,6 +1034,15 @@ func (e *Exporter) Finish() error {
 		e.writeNamedDests()
 	}
 	e.finalizeAcroForm()
+
+	// Populate /Info metadata fields from the exporter config.
+	// Matches C# PDFSimpleExport.Finish(): info.Title = Title; info.Author = Author; etc.
+	if e.docInfo != nil {
+		e.docInfo.SetTitle(e.Title)
+		e.docInfo.SetAuthor(e.Author)
+		e.docInfo.SetSubject(e.Subject)
+		e.docInfo.SetKeywords(e.Keywords)
+	}
 
 	// Finalize embedded font objects and register them in every page's /Font dict.
 	if e.fontMgr != nil {

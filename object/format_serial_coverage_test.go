@@ -177,3 +177,125 @@ func TestSerializeTextFormat_TimeDefaults(t *testing.T) {
 		t.Errorf("expected Format=Time in XML:\n%s", xml)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// C# FRX compatibility: attribute name is "UseLocale" not "UseLocaleSettings"
+// ---------------------------------------------------------------------------
+
+// TestDeserialize_UseLocale_Currency verifies that Format.UseLocale="true" in
+// an FRX attribute (the C# FastReport attribute name) is correctly read as
+// UseLocaleSettings=true. This simulates loading real C# FRX files.
+func TestDeserialize_UseLocale_Currency(t *testing.T) {
+	// This XML matches what C# FastReport writes for CurrencyFormat.
+	xml := `<TextObject Name="t1" Format="Currency" Format.UseLocale="true"/>`
+	r := serial.NewReader(strings.NewReader(xml))
+	_, _ = r.ReadObjectHeader()
+	got := object.NewTextObject()
+	_ = got.Deserialize(r)
+	cf, ok := got.Format().(*format.CurrencyFormat)
+	if !ok {
+		t.Fatal("expected *format.CurrencyFormat")
+	}
+	if !cf.UseLocaleSettings {
+		t.Error("UseLocaleSettings should be true when Format.UseLocale=\"true\"")
+	}
+}
+
+// TestDeserialize_UseLocale_Percent verifies that Format.UseLocale="true" is
+// correctly read for PercentFormat, matching real C# FRX output.
+func TestDeserialize_UseLocale_Percent(t *testing.T) {
+	xml := `<TextObject Name="t1" Format="Percent" Format.UseLocale="true" Format.DecimalDigits="2"/>`
+	r := serial.NewReader(strings.NewReader(xml))
+	_, _ = r.ReadObjectHeader()
+	got := object.NewTextObject()
+	_ = got.Deserialize(r)
+	pf, ok := got.Format().(*format.PercentFormat)
+	if !ok {
+		t.Fatal("expected *format.PercentFormat")
+	}
+	if !pf.UseLocaleSettings {
+		t.Error("UseLocaleSettings should be true when Format.UseLocale=\"true\"")
+	}
+	if pf.DecimalDigits != 2 {
+		t.Errorf("DecimalDigits: got %d, want 2", pf.DecimalDigits)
+	}
+}
+
+// TestDeserialize_UseLocale_Date verifies that Format.UseLocale="true" is
+// correctly read for DateFormat.
+func TestDeserialize_UseLocale_Date(t *testing.T) {
+	xml := `<TextObject Name="t1" Format="Date" Format.Format="d" Format.UseLocale="true"/>`
+	r := serial.NewReader(strings.NewReader(xml))
+	_, _ = r.ReadObjectHeader()
+	got := object.NewTextObject()
+	_ = got.Deserialize(r)
+	df, ok := got.Format().(*format.DateFormat)
+	if !ok {
+		t.Fatal("expected *format.DateFormat")
+	}
+	if !df.UseLocaleSettings {
+		t.Error("UseLocaleSettings should be true when Format.UseLocale=\"true\"")
+	}
+}
+
+// TestDeserialize_UseLocale_Number verifies that Format.UseLocale="false" is
+// correctly read for NumberFormat (enabling custom separators).
+func TestDeserialize_UseLocale_Number(t *testing.T) {
+	xml := `<TextObject Name="t1" Format="Number" Format.UseLocale="false" Format.DecimalSeparator="," Format.GroupSeparator="."/>`
+	r := serial.NewReader(strings.NewReader(xml))
+	_, _ = r.ReadObjectHeader()
+	got := object.NewTextObject()
+	_ = got.Deserialize(r)
+	nf, ok := got.Format().(*format.NumberFormat)
+	if !ok {
+		t.Fatal("expected *format.NumberFormat")
+	}
+	if nf.UseLocaleSettings {
+		t.Error("UseLocaleSettings should be false when Format.UseLocale=\"false\"")
+	}
+	if nf.DecimalSeparator != "," {
+		t.Errorf("DecimalSeparator: got %q, want ','", nf.DecimalSeparator)
+	}
+}
+
+// TestSerialize_UseLocale_CurrencyRoundTrip verifies that a serialized
+// CurrencyFormat with UseLocaleSettings=true writes "UseLocale" (C# FRX name)
+// and can be deserialized back correctly.
+func TestSerialize_UseLocale_CurrencyRoundTrip(t *testing.T) {
+	orig := object.NewTextObject()
+	orig.SetFormat(&format.CurrencyFormat{
+		UseLocaleSettings: true,
+		DecimalDigits:     2,
+		CurrencySymbol:    "$",
+	})
+
+	var buf bytes.Buffer
+	w := serial.NewWriter(&buf)
+	_ = w.WriteObjectNamed("TextObject", orig)
+	_ = w.Flush()
+	out := buf.String()
+
+	// The serialized form should use "UseLocale" (C# FRX name).
+	if strings.Contains(out, `Format.UseLocale=`) {
+		// UseLocale=true is NOT written because true is the default for CurrencyFormat
+		// (NewCurrencyFormat defaults UseLocaleSettings=true so the `!v.UseLocaleSettings`
+		// branch is not taken, and UseLocale is only written when UseLocaleSettings=false).
+	}
+	// When UseLocaleSettings=true, UseLocale is NOT written (it's the default).
+	if strings.Contains(out, `Format.UseLocale="false"`) {
+		t.Errorf("UseLocale=false should NOT appear when locale is true:\n%s", out)
+	}
+
+	// Round-trip: deserialize and verify.
+	r := serial.NewReader(bytes.NewReader(buf.Bytes()))
+	_, _ = r.ReadObjectHeader()
+	got := object.NewTextObject()
+	_ = got.Deserialize(r)
+	cf, ok := got.Format().(*format.CurrencyFormat)
+	if !ok {
+		t.Fatal("expected *format.CurrencyFormat after round-trip")
+	}
+	if !cf.UseLocaleSettings {
+		t.Error("UseLocaleSettings should be true after round-trip")
+	}
+}

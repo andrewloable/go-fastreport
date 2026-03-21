@@ -283,3 +283,99 @@ func TestDmDoPlacement_NcolMod8Zero(t *testing.T) {
 		}
 	}
 }
+
+// ── c128IsFourOrMoreDigits boundary tests ─────────────────────────────────────
+//
+// C# IsFourOrMoreDigits requires index+4 < code.Length (strictly less than),
+// meaning exactly 4 digits at end-of-string returns FALSE. This mirrors
+// Barcode128.cs:238-249 which uses "index + 4 < code.Length".
+
+// TestC128IsFourOrMoreDigits_ExactlyFour checks the boundary: 4 digits with no
+// further chars must return false, matching C# strict-less-than check.
+func TestC128IsFourOrMoreDigits_ExactlyFour(t *testing.T) {
+	ok, n := c128IsFourOrMoreDigits("1234", 0)
+	if ok {
+		t.Errorf("c128IsFourOrMoreDigits(\"1234\", 0) = (true, %d), want (false, 0); C# index+4 < len requires 5+ chars", n)
+	}
+}
+
+// TestC128IsFourOrMoreDigits_FiveDigits checks that 5 digits at index 0 returns true.
+func TestC128IsFourOrMoreDigits_FiveDigits(t *testing.T) {
+	ok, n := c128IsFourOrMoreDigits("12345", 0)
+	if !ok || n != 5 {
+		t.Errorf("c128IsFourOrMoreDigits(\"12345\", 0) = (%v, %d), want (true, 5)", ok, n)
+	}
+}
+
+// TestC128IsFourOrMoreDigits_FourDigitsThenAlpha checks 4 digits followed by alpha.
+// C# condition: 0+4 < 5 → true, so count=4 digits → returns (true, 4).
+func TestC128IsFourOrMoreDigits_FourDigitsThenAlpha(t *testing.T) {
+	ok, n := c128IsFourOrMoreDigits("1234A", 0)
+	if !ok || n != 4 {
+		t.Errorf("c128IsFourOrMoreDigits(\"1234A\", 0) = (%v, %d), want (true, 4)", ok, n)
+	}
+}
+
+// TestC128IsFourOrMoreDigits_EmptyString checks that empty input returns false.
+func TestC128IsFourOrMoreDigits_EmptyString(t *testing.T) {
+	ok, _ := c128IsFourOrMoreDigits("", 0)
+	if ok {
+		t.Error("c128IsFourOrMoreDigits(\"\", 0) should return false for empty string")
+	}
+}
+
+// TestC128IsFourOrMoreDigits_NonDigitFirst checks that a non-digit first char returns false.
+func TestC128IsFourOrMoreDigits_NonDigitFirst(t *testing.T) {
+	ok, _ := c128IsFourOrMoreDigits("ABCDE", 0)
+	if ok {
+		t.Error("c128IsFourOrMoreDigits(\"ABCDE\", 0) should return false (non-digit first)")
+	}
+}
+
+// TestC128AutoEncode_ExactlyFourDigits verifies that 4 digits with no trailing
+// chars use Code B (not Code C). C# IsFourOrMoreDigits requires index+4 < len,
+// so exactly 4 digits at end-of-string does NOT select Code C.
+// Ref: Barcode128.cs:238-249, GetNextPortion lines 302-315.
+func TestC128AutoEncode_ExactlyFourDigits(t *testing.T) {
+	encoded := c128AutoEncode("1234")
+	// C# produces "&B;1234" (Code B), NOT "&C;1234" (Code C).
+	if encoded != "&B;1234" {
+		t.Errorf("c128AutoEncode(\"1234\") = %q, want \"&B;1234\" (C# uses Code B for exactly 4 digits)", encoded)
+	}
+}
+
+// TestC128AutoEncode_FiveDigits verifies that 5 digits select Code C (even pair = 4).
+// C# IsFourOrMoreDigits returns true for 5 digits (0+4 < 5 → true), and
+// numDigits=(5/2)*2=4, so "&C;1234" is produced, leaving "5" for the next portion.
+func TestC128AutoEncode_FiveDigits(t *testing.T) {
+	encoded := c128AutoEncode("12345")
+	// 5 digits: Code C for first 4 (even), then Code B for remaining "5".
+	// Expected: "&C;1234&B;5"
+	if encoded != "&C;1234&B;5" {
+		t.Errorf("c128AutoEncode(\"12345\") = %q, want \"&C;1234&B;5\"", encoded)
+	}
+}
+
+// TestCode128_GetPattern_ExactlyFourDigits ensures the GetPattern output for "1234"
+// (auto-encoded as Code B) is well-formed and has correct length.
+// Code B: StartB(6)+4chars×6(24)+check(6)+stop(7) = 43 chars.
+func TestCode128_GetPattern_ExactlyFourDigits(t *testing.T) {
+	b := NewCode128Barcode()
+	if err := b.Encode("1234"); err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	pattern, err := b.GetPattern()
+	if err != nil {
+		t.Fatalf("GetPattern: %v", err)
+	}
+	// StartB "211214" → doConvert at positions 0-5 → "605153"
+	// doConvert: i=0(even):'2'-1+5=6; i=1(odd):'1'-1=0; i=2(even):'1'-1+5=5;
+	//            i=3(odd):'2'-1=1; i=4(even):'1'-1+5=5; i=5(odd):'4'-1=3.
+	if len(pattern) < 6 || pattern[:6] != "605153" {
+		t.Errorf("pattern start = %q, want \"605153\" (C# StartB \"211214\" after doConvert)", pattern[:6])
+	}
+	// Stop "2331112" → "6270506"
+	if len(pattern) < 7 || pattern[len(pattern)-7:] != "6270506" {
+		t.Errorf("pattern stop = %q, want \"6270506\"", pattern[len(pattern)-7:])
+	}
+}

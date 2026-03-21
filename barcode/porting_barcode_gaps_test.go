@@ -434,3 +434,239 @@ func countDarkPixels(img image.Image) int {
 	}
 	return count
 }
+
+// ── QR Mask Patterns ──────────────────────────────────────────────────────────
+//
+// These tests verify that all 8 mask patterns match the formulas in
+// JISX0510:2004 §8.8 / MaskUtil.cs:getDataMaskBit (MaskUtil.cs:123–173).
+
+// TestQRDataMaskBit_AllPatterns checks the mask condition at representative
+// (x, y) coordinates for each of the 8 mask patterns.
+func TestQRDataMaskBit_AllPatterns(t *testing.T) {
+	// Each entry: {maskPattern, x, y, wantMasked}
+	// Expected values derived directly from JISX0510:2004 formulae and
+	// verified against C# MaskUtil.getDataMaskBit.
+	cases := []struct {
+		pattern    int
+		x, y       int
+		wantMasked bool
+	}{
+		// Pattern 0: (y+x) % 2 == 0
+		{0, 0, 0, true},  // (0+0)&1=0
+		{0, 1, 0, false}, // (0+1)&1=1
+		{0, 0, 1, false}, // (1+0)&1=1
+		{0, 1, 1, true},  // (1+1)&1=0
+		// Pattern 1: y % 2 == 0
+		{1, 0, 0, true},  // 0&1=0
+		{1, 5, 0, true},  // 0&1=0
+		{1, 0, 1, false}, // 1&1=1
+		{1, 0, 2, true},  // 2&1=0
+		// Pattern 2: x % 3 == 0
+		{2, 0, 0, true},  // 0%3=0
+		{2, 1, 0, false}, // 1%3=1
+		{2, 2, 0, false}, // 2%3=2
+		{2, 3, 0, true},  // 3%3=0
+		// Pattern 3: (y+x) % 3 == 0
+		{3, 0, 0, true},  // 0%3=0
+		{3, 1, 2, true},  // 3%3=0
+		{3, 1, 0, false}, // 1%3=1
+		{3, 2, 1, true},  // 3%3=0
+		// Pattern 4: (y/2 + x/3) % 2 == 0
+		{4, 0, 0, true},  // (0+0)&1=0
+		{4, 3, 2, true},  // (1+1)&1=0
+		{4, 0, 2, false}, // (1+0)&1=1 → false
+		{4, 3, 0, false}, // (0+1)&1=1
+		// Pattern 5: (y*x % 2) + (y*x % 3) == 0
+		{5, 0, 0, true},  // 0+0=0
+		{5, 1, 1, false}, // 1+1=2
+		{5, 3, 3, false}, // (9&1)+(9%3)=1+0=1 → false
+		{5, 2, 3, true},  // (6&1)+(6%3)=0+0=0
+		// Pattern 6: ((y*x % 2) + (y*x % 3)) % 2 == 0
+		{6, 0, 0, true},  // (0+0)&1=0
+		{6, 1, 1, true},  // (1+1)&1=0 → true
+		{6, 2, 3, true},  // ((6&1)+(6%3))&1=(0+0)&1=0
+		{6, 1, 2, true},  // ((2&1)+(2%3))&1=(0+2)&1=0
+		// Pattern 7: ((y*x % 3) + (y+x) % 2) % 2 == 0
+		{7, 0, 0, true},  // (0+0)&1=0
+		{7, 1, 1, false}, // (1+0)&1=1
+		{7, 2, 2, false}, // 4%3=1, (2+2)&1=0 → (1+0)&1=1 → false
+		{7, 3, 3, true},  // 9%3=0, (3+3)&1=0 → (0+0)=0
+	}
+	for _, c := range cases {
+		got := qrDataMaskBit(c.pattern, c.x, c.y)
+		if got != c.wantMasked {
+			t.Errorf("qrDataMaskBit(pattern=%d, x=%d, y=%d) = %v, want %v",
+				c.pattern, c.x, c.y, got, c.wantMasked)
+		}
+	}
+}
+
+// TestQRDataMaskBit_Pattern1_Row verifies pattern 1 (y%2==0) is true for all
+// x in even rows and false for all x in odd rows — matching JISX0510:2004.
+func TestQRDataMaskBit_Pattern1_Row(t *testing.T) {
+	for y := 0; y < 10; y++ {
+		want := (y % 2) == 0
+		for x := 0; x < 5; x++ {
+			if got := qrDataMaskBit(1, x, y); got != want {
+				t.Errorf("pattern=1 x=%d y=%d: got %v, want %v", x, y, got, want)
+			}
+		}
+	}
+}
+
+// TestQRDataMaskBit_Pattern2_Col verifies pattern 2 (x%3==0) alternates every
+// 3 columns, independent of row — matching JISX0510:2004.
+func TestQRDataMaskBit_Pattern2_Col(t *testing.T) {
+	for x := 0; x < 12; x++ {
+		want := (x % 3) == 0
+		for y := 0; y < 5; y++ {
+			if got := qrDataMaskBit(2, x, y); got != want {
+				t.Errorf("pattern=2 x=%d y=%d: got %v, want %v", x, y, got, want)
+			}
+		}
+	}
+}
+
+// ── QR Version Capacity ───────────────────────────────────────────────────────
+//
+// These tests verify a representative sample of qrVersionTable entries against
+// the C# Version.cs buildVersions() table (Version.cs:199-204).
+
+// TestQRVersionTable_V1_AllLevels checks version 1 data-codeword capacities
+// which is 19 (L), 16 (M), 13 (Q), 9 (H) per ISO 18004:2006 Table 9.
+func TestQRVersionTable_V1_AllLevels(t *testing.T) {
+	// C#: new Version(1, new int[]{},
+	//   new ECBlocks(7, new ECB(1, 19)),   // L
+	//   new ECBlocks(10, new ECB(1, 16)),  // M
+	//   new ECBlocks(13, new ECB(1, 13)), // Q
+	//   new ECBlocks(17, new ECB(1, 9)))  // H
+	cases := []struct {
+		level   int
+		wantDC  int // numDataCodewords
+		wantEC  int // ecCodewords
+		wantBlk int // numBlocks
+	}{
+		{0, 19, 7, 1},  // L: 1 block of 19 data, 7 EC
+		{1, 16, 10, 1}, // M
+		{2, 13, 13, 1}, // Q
+		{3, 9, 17, 1},  // H
+	}
+	for _, c := range cases {
+		vi := qrVersionTable[0][c.level]
+		if got := vi.numDataCodewords(); got != c.wantDC {
+			t.Errorf("v1 level=%d: numDataCodewords=%d, want %d", c.level, got, c.wantDC)
+		}
+		if got := vi.ecCodewords; got != c.wantEC {
+			t.Errorf("v1 level=%d: ecCodewords=%d, want %d", c.level, got, c.wantEC)
+		}
+		if got := vi.numBlocks(); got != c.wantBlk {
+			t.Errorf("v1 level=%d: numBlocks=%d, want %d", c.level, got, c.wantBlk)
+		}
+	}
+}
+
+// TestQRVersionTable_V7_MultiBlock verifies version 7 which has mixed-size
+// block groups (L:2×78; M:4×31; Q:2×14+4×15; H:4×13+1×14).
+func TestQRVersionTable_V7_MultiBlock(t *testing.T) {
+	// C#: new Version(7, new int[]{6,22,38},
+	//   new ECBlocks(20, new ECB(2, 78)),
+	//   new ECBlocks(18, new ECB(4, 31)),
+	//   new ECBlocks(18, new ECB(2, 14), new ECB(4, 15)),
+	//   new ECBlocks(26, new ECB(4, 13), new ECB(1, 14)))
+	cases := []struct {
+		level   int
+		wantDC  int
+		wantBlk int
+		wantECP int // ecPerBlock
+	}{
+		{0, 156, 2, 20}, // L: 2*78=156; ecPerBlock=20
+		{1, 124, 4, 18}, // M: 4*31=124; ecPerBlock=18
+		{2, 88, 6, 18},  // Q: 2*14+4*15=28+60=88; ecPerBlock=18
+		{3, 66, 5, 26},  // H: 4*13+1*14=52+14=66; ecPerBlock=26
+	}
+	for _, c := range cases {
+		vi := qrVersionTable[6][c.level]
+		if got := vi.numDataCodewords(); got != c.wantDC {
+			t.Errorf("v7 level=%d: numDataCodewords=%d, want %d", c.level, got, c.wantDC)
+		}
+		if got := vi.numBlocks(); got != c.wantBlk {
+			t.Errorf("v7 level=%d: numBlocks=%d, want %d", c.level, got, c.wantBlk)
+		}
+		if got := vi.ecPerBlock(); got != c.wantECP {
+			t.Errorf("v7 level=%d: ecPerBlock=%d, want %d", c.level, got, c.wantECP)
+		}
+	}
+}
+
+// TestQRVersionTable_V40_H checks the highest version/level entry.
+func TestQRVersionTable_V40_H(t *testing.T) {
+	// C#: new ECBlocks(30, new ECB(20, 15), new ECB(61, 16))
+	// numDataCodewords = 20*15 + 61*16 = 300 + 976 = 1276
+	// numBlocks = 20 + 61 = 81; ecPerBlock = 30
+	vi := qrVersionTable[39][3] // H
+	if got := vi.numDataCodewords(); got != 1276 {
+		t.Errorf("v40-H: numDataCodewords=%d, want 1276", got)
+	}
+	if got := vi.numBlocks(); got != 81 {
+		t.Errorf("v40-H: numBlocks=%d, want 81", got)
+	}
+	if got := vi.ecPerBlock(); got != 30 {
+		t.Errorf("v40-H: ecPerBlock=%d, want 30", got)
+	}
+}
+
+// ── QR Penalty Rule 4 ─────────────────────────────────────────────────────────
+//
+// Verifies that qrPenaltyRule4 matches C# MaskUtil.applyMaskPenaltyRule4.
+// The C# formula is: Math.Abs((int)(darkRatio * 100 - 50)) / 5 * 10
+// where the subtraction happens in float before truncation.
+
+// TestQRPenaltyRule4_ExactlyHalf checks that a matrix with exactly 50% dark
+// modules gives penalty 0.
+func TestQRPenaltyRule4_ExactlyHalf(t *testing.T) {
+	m := newQRByteMatrix(4, 2) // 8 cells
+	// Set 4 dark (1) and 4 light (0).
+	m.set(0, 0, 1)
+	m.set(1, 0, 1)
+	m.set(2, 0, 1)
+	m.set(3, 0, 1)
+	// rest are 0 (default zero-initialized, not -1 since we skip clear)
+	// but clear initializes to a value — let's use clear(0) to init:
+	m.clear(0)
+	m.set(0, 0, 1)
+	m.set(1, 0, 1)
+	m.set(2, 0, 1)
+	m.set(3, 0, 1)
+	p := qrPenaltyRule4(m)
+	if p != 0 {
+		t.Errorf("50%% dark: penalty = %d, want 0", p)
+	}
+}
+
+// TestQRPenaltyRule4_FloatTruncation verifies the C#-correct behavior where
+// the float subtraction happens before truncation. For a matrix where dark/total
+// gives a non-integer percentage near a 5% boundary, verify correct rounding.
+func TestQRPenaltyRule4_FloatTruncation(t *testing.T) {
+	// Use a 10×10 = 100 cell matrix with 45 dark cells → ratio = 45.0%
+	// C#: (int)(0.45*100 - 50) = (int)(-5.0) = -5, abs=5, /5*10=10
+	// Go (old bug): int(45.0) - 50 = -5, same result (no difference at exact 45)
+	// Use 451 dark out of 1000 total (possible with 10×100? use 20×50=1000):
+	// ratio = 45.1%
+	// C#: (int)(0.451*100 - 50) = (int)(45.1-50) = (int)(-4.9) = -4, /5*10=0
+	// Go (fixed): (int)(0.451*100 - 50) same → 0
+	m := newQRByteMatrix(20, 50) // 1000 cells
+	m.clear(0)
+	// Set exactly 451 cells dark.
+	count := 0
+	for y := 0; y < 50 && count < 451; y++ {
+		for x := 0; x < 20 && count < 451; x++ {
+			m.set(x, y, 1)
+			count++
+		}
+	}
+	p := qrPenaltyRule4(m)
+	// C#: abs((int)(45.1 - 50))/5*10 = abs(-4)/5*10 = 4/5*10 = 0
+	if p != 0 {
+		t.Errorf("451/1000 dark: penalty = %d, want 0 (C#-correct formula)", p)
+	}
+}

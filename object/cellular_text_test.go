@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/andrewloable/go-fastreport/object"
+	"github.com/andrewloable/go-fastreport/style"
 )
 
 func TestNewCellularTextObject_Defaults(t *testing.T) {
@@ -25,6 +26,14 @@ func TestNewCellularTextObject_Defaults(t *testing.T) {
 	}
 	if c.TypeName() != "CellularTextObject" {
 		t.Errorf("TypeName = %q, want CellularTextObject", c.TypeName())
+	}
+	// C# constructor sets CanBreak = false (CellularTextObject.cs).
+	if c.CanBreak() {
+		t.Error("CanBreak should default to false (C# sets CanBreak=false in constructor)")
+	}
+	// C# constructor sets Border.Lines = BorderLines.All (CellularTextObject.cs).
+	if c.Border().VisibleLines != style.BorderLinesAll {
+		t.Errorf("Border.VisibleLines = %v, want BorderLinesAll (%v)", c.Border().VisibleLines, style.BorderLinesAll)
 	}
 }
 

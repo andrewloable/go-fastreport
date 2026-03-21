@@ -72,6 +72,44 @@ func TestStyleSheet_Find(t *testing.T) {
 	}
 }
 
+// C# StyleCollection.IndexOf(string) uses String.Compare with ignoreCase=true.
+// Verify that Go Find() matches this case-insensitive behaviour.
+func TestStyleSheet_Find_CaseInsensitive(t *testing.T) {
+	ss := style.NewStyleSheet()
+	ss.Add(&style.StyleEntry{Name: "HeaderStyle"})
+
+	variants := []string{"HeaderStyle", "headerstyle", "HEADERSTYLE", "headerSTYLE"}
+	for _, v := range variants {
+		if ss.Find(v) == nil {
+			t.Errorf("Find(%q) should find entry registered as HeaderStyle", v)
+		}
+	}
+}
+
+func TestStyleSheet_Add_Replace_DifferentCase_PreservesOrder(t *testing.T) {
+	ss := style.NewStyleSheet()
+	ss.Add(&style.StyleEntry{Name: "Foo", FontChanged: false})
+	ss.Add(&style.StyleEntry{Name: "Bar", FontChanged: false})
+	// Replace "foo" (same key, different casing) — should not grow the count.
+	ss.Add(&style.StyleEntry{Name: "FOO", FontChanged: true})
+
+	if ss.Len() != 2 {
+		t.Errorf("Len = %d, want 2 after case-insensitive replace", ss.Len())
+	}
+	found := ss.Find("foo")
+	if found == nil {
+		t.Fatal("Find(\"foo\") should find the replaced entry")
+	}
+	if !found.FontChanged {
+		t.Error("replacement entry should have FontChanged=true")
+	}
+	// All() must return both entries in insertion order.
+	all := ss.All()
+	if len(all) != 2 {
+		t.Fatalf("All() len = %d, want 2", len(all))
+	}
+}
+
 // ── All / order ───────────────────────────────────────────────────────────────
 
 func TestStyleSheet_All_Order(t *testing.T) {

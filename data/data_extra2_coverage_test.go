@@ -387,3 +387,103 @@ func TestViewDataSource_RebuildIndex_NextErrorImmediate(t *testing.T) {
 		t.Errorf("RowCount = %d, want 1 (break on first Next error)", vds.RowCount())
 	}
 }
+
+// ── filter.go: matches — time scalar with unsupported operation (line 193) ────
+// When value is time.Time, fe.Value is time.Time, but the operation is not one
+// of the six comparison ops handled in the switch, the final `return false` at
+// line 193 is reached.
+
+func TestFilter_TimeScalar_UnsupportedOp_ReturnsFalse(t *testing.T) {
+	tv := time.Date(2024, 6, 15, 0, 0, 0, 0, time.UTC)
+	f := data.NewDataSourceFilter()
+	f.Add(tv, data.FilterOperation(99)) // undefined op — falls through switch to return false
+	if f.ValueMatch(tv) {
+		t.Error("time.Time with unknown FilterOperation should return false")
+	}
+}
+
+// ── filter.go: matches — DateTime scalar LessThanOrEqual / GreaterThan / GreaterThanOrEqual ──
+// These three operations in the time-scalar branch were not yet exercised.
+
+func TestFilter_TimeScalar_LessThanOrEqual(t *testing.T) {
+	filterDate := time.Date(2024, 6, 15, 0, 0, 0, 0, time.UTC)
+	f := data.NewDataSourceFilter()
+	f.Add(filterDate, data.FilterLessThanOrEqual)
+
+	// Same day with time → stripped to same date → equal → LessThanOrEqual should match.
+	sameDay := time.Date(2024, 6, 15, 10, 0, 0, 0, time.UTC)
+	if !f.ValueMatch(sameDay) {
+		t.Error("same day (after time strip) should match LessThanOrEqual (equal case)")
+	}
+
+	// Day before — strictly less.
+	before := time.Date(2024, 6, 14, 23, 59, 59, 0, time.UTC)
+	if !f.ValueMatch(before) {
+		t.Error("day before filter should match LessThanOrEqual")
+	}
+
+	// Day after — should not match.
+	after := time.Date(2024, 6, 16, 0, 0, 0, 0, time.UTC)
+	if f.ValueMatch(after) {
+		t.Error("day after filter should not match LessThanOrEqual")
+	}
+}
+
+func TestFilter_TimeScalar_GreaterThan(t *testing.T) {
+	filterDate := time.Date(2024, 6, 15, 0, 0, 0, 0, time.UTC)
+	f := data.NewDataSourceFilter()
+	f.Add(filterDate, data.FilterGreaterThan)
+
+	// Day after → greater.
+	after := time.Date(2024, 6, 16, 0, 0, 0, 0, time.UTC)
+	if !f.ValueMatch(after) {
+		t.Error("day after filter should match GreaterThan")
+	}
+
+	// Same day with time → stripped to same → equal → NOT greater.
+	sameDay := time.Date(2024, 6, 15, 10, 0, 0, 0, time.UTC)
+	if f.ValueMatch(sameDay) {
+		t.Error("same day (after strip) should not match GreaterThan")
+	}
+}
+
+func TestFilter_TimeScalar_GreaterThanOrEqual(t *testing.T) {
+	filterDate := time.Date(2024, 6, 15, 0, 0, 0, 0, time.UTC)
+	f := data.NewDataSourceFilter()
+	f.Add(filterDate, data.FilterGreaterThanOrEqual)
+
+	// Same day with time → stripped to same → equal → GreaterThanOrEqual should match.
+	sameDay := time.Date(2024, 6, 15, 10, 0, 0, 0, time.UTC)
+	if !f.ValueMatch(sameDay) {
+		t.Error("same day (after strip) should match GreaterThanOrEqual")
+	}
+
+	// Day after → greater.
+	after := time.Date(2024, 6, 16, 0, 0, 0, 0, time.UTC)
+	if !f.ValueMatch(after) {
+		t.Error("day after filter should match GreaterThanOrEqual")
+	}
+
+	// Day before → should not match.
+	before := time.Date(2024, 6, 14, 0, 0, 0, 0, time.UTC)
+	if f.ValueMatch(before) {
+		t.Error("day before filter should not match GreaterThanOrEqual")
+	}
+}
+
+// ── datacomponent.go: SetName — case-insensitive alias sync (C# line 96) ──────
+// C# uses String.Compare(Alias, Name, true) (case-insensitive).
+// When alias has the same letters as name but different case, SetName must
+// still update alias to stay in sync.
+
+func TestDataComponentBase_SetName_CaseInsensitiveAliasSync(t *testing.T) {
+	d := data.NewDataComponentBase("original")
+	// Force alias to be a different case than name.
+	d.SetAlias("ORIGINAL")
+	// SetName should detect "ORIGINAL" == "original" (case-insensitively) and
+	// update alias to the new name.
+	d.SetName("updated")
+	if d.Alias() != "updated" {
+		t.Errorf("Alias should sync to updated when alias was same name (diff case), got %q", d.Alias())
+	}
+}

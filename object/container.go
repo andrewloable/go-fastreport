@@ -31,6 +31,66 @@ const (
 	UncheckedSymbolBackSlash
 )
 
+// formatCheckedSymbol converts CheckedSymbol to its FRX string name.
+func formatCheckedSymbol(s CheckedSymbol) string {
+	switch s {
+	case CheckedSymbolCross:
+		return "Cross"
+	case CheckedSymbolPlus:
+		return "Plus"
+	case CheckedSymbolFill:
+		return "Fill"
+	default:
+		return "Check"
+	}
+}
+
+// parseCheckedSymbol converts an FRX string to CheckedSymbol (handles both names and ints).
+func parseCheckedSymbol(s string) CheckedSymbol {
+	switch s {
+	case "Cross", "1":
+		return CheckedSymbolCross
+	case "Plus", "2":
+		return CheckedSymbolPlus
+	case "Fill", "3":
+		return CheckedSymbolFill
+	default:
+		return CheckedSymbolCheck
+	}
+}
+
+// formatUncheckedSymbol converts UncheckedSymbol to its FRX string name.
+func formatUncheckedSymbol(s UncheckedSymbol) string {
+	switch s {
+	case UncheckedSymbolCross:
+		return "Cross"
+	case UncheckedSymbolMinus:
+		return "Minus"
+	case UncheckedSymbolSlash:
+		return "Slash"
+	case UncheckedSymbolBackSlash:
+		return "BackSlash"
+	default:
+		return "None"
+	}
+}
+
+// parseUncheckedSymbol converts an FRX string to UncheckedSymbol (handles both names and ints).
+func parseUncheckedSymbol(s string) UncheckedSymbol {
+	switch s {
+	case "Cross", "1":
+		return UncheckedSymbolCross
+	case "Minus", "2":
+		return UncheckedSymbolMinus
+	case "Slash", "3":
+		return UncheckedSymbolSlash
+	case "BackSlash", "4":
+		return UncheckedSymbolBackSlash
+	default:
+		return UncheckedSymbolNone
+	}
+}
+
 // CheckBoxObject displays a check box that can be bound to a boolean expression.
 // It is the Go equivalent of FastReport.CheckBoxObject.
 type CheckBoxObject struct {
@@ -119,10 +179,10 @@ func (c *CheckBoxObject) Serialize(w report.Writer) error {
 		w.WriteBool("Checked", true)
 	}
 	if c.checkedSymbol != CheckedSymbolCheck {
-		w.WriteInt("CheckedSymbol", int(c.checkedSymbol))
+		w.WriteStr("CheckedSymbol", formatCheckedSymbol(c.checkedSymbol))
 	}
 	if c.uncheckedSymbol != UncheckedSymbolNone {
-		w.WriteInt("UncheckedSymbol", int(c.uncheckedSymbol))
+		w.WriteStr("UncheckedSymbol", formatUncheckedSymbol(c.uncheckedSymbol))
 	}
 	if c.dataColumn != "" {
 		w.WriteStr("DataColumn", c.dataColumn)
@@ -150,8 +210,8 @@ func (c *CheckBoxObject) Deserialize(r report.Reader) error {
 	// FastReport.NET defaults Checked to true — the FRX only writes
 	// Checked="false" explicitly for unchecked boxes.
 	c.isChecked = r.ReadBool("Checked", true)
-	c.checkedSymbol = CheckedSymbol(r.ReadInt("CheckedSymbol", 0))
-	c.uncheckedSymbol = UncheckedSymbol(r.ReadInt("UncheckedSymbol", 0))
+	c.checkedSymbol = parseCheckedSymbol(r.ReadStr("CheckedSymbol", "Check"))
+	c.uncheckedSymbol = parseUncheckedSymbol(r.ReadStr("UncheckedSymbol", "None"))
 	c.dataColumn = r.ReadStr("DataColumn", "")
 	c.expression = r.ReadStr("Expression", "")
 	c.checkWidthRatio = r.ReadFloat("CheckWidthRatio", 1.0)

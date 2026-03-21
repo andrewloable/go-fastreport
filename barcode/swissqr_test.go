@@ -130,10 +130,3 @@ func TestSwissQR_NewBarcode_Factory(t *testing.T) {
 	}
 }
 
-// min is a helper because Go 1.20 added min as a builtin; for older compat define it here.
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}

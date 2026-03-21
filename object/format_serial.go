@@ -34,7 +34,8 @@ func serializeTextFormat(w report.Writer, f format.Format) {
 			}
 		}
 		if !v.UseLocaleSettings {
-			w.WriteBool(pfx+"UseLocaleSettings", false)
+			// C# FRX attribute name is "UseLocale" (not "UseLocaleSettings")
+			w.WriteBool(pfx+"UseLocale", false)
 		}
 
 	case *format.CurrencyFormat:
@@ -61,7 +62,8 @@ func serializeTextFormat(w report.Writer, f format.Format) {
 			}
 		}
 		if !v.UseLocaleSettings {
-			w.WriteBool(pfx+"UseLocaleSettings", false)
+			// C# FRX attribute name is "UseLocale" (not "UseLocaleSettings")
+			w.WriteBool(pfx+"UseLocale", false)
 		}
 
 	case *format.DateFormat:
@@ -71,7 +73,8 @@ func serializeTextFormat(w report.Writer, f format.Format) {
 			w.WriteStr(pfx+"Format", v.Format)
 		}
 		if v.UseLocaleSettings {
-			w.WriteBool(pfx+"UseLocaleSettings", true)
+			// C# FRX attribute name is "UseLocale" (not "UseLocaleSettings")
+			w.WriteBool(pfx+"UseLocale", true)
 		}
 
 	case *format.TimeFormat:
@@ -81,7 +84,8 @@ func serializeTextFormat(w report.Writer, f format.Format) {
 			w.WriteStr(pfx+"Format", v.Format)
 		}
 		if v.UseLocaleSettings {
-			w.WriteBool(pfx+"UseLocaleSettings", true)
+			// C# FRX attribute name is "UseLocale" (not "UseLocaleSettings")
+			w.WriteBool(pfx+"UseLocale", true)
 		}
 
 	case *format.PercentFormat:
@@ -108,7 +112,8 @@ func serializeTextFormat(w report.Writer, f format.Format) {
 			}
 		}
 		if !v.UseLocaleSettings {
-			w.WriteBool(pfx+"UseLocaleSettings", false)
+			// C# FRX attribute name is "UseLocale" (not "UseLocaleSettings")
+			w.WriteBool(pfx+"UseLocale", false)
 		}
 
 	case *format.BooleanFormat:
@@ -130,6 +135,19 @@ func serializeTextFormat(w report.Writer, f format.Format) {
 	}
 }
 
+// readUseLocale reads the UseLocale/UseLocaleSettings attribute from a format
+// element. C# FastReport FRX files use "UseLocale"; older Go-generated files may
+// use "UseLocaleSettings". Both are checked so that either source round-trips.
+func readUseLocale(r report.Reader, pfx string, def bool) bool {
+	// Prefer the C# FRX attribute name "UseLocale".
+	v := r.ReadBool(pfx+"UseLocale", def)
+	if v != def {
+		return v
+	}
+	// Fall back to the old Go-generated attribute name for backward compatibility.
+	return r.ReadBool(pfx+"UseLocaleSettings", def)
+}
+
 // deserializeTextFormat reads Format.* attributes from r and returns the
 // corresponding Format implementation. typeName is the value of the "Format"
 // attribute (e.g. "Number", "Date"). Returns nil for unknown/General.
@@ -139,7 +157,7 @@ func deserializeTextFormat(typeName string, r report.Reader) format.Format {
 	case "Number":
 		f := format.NewNumberFormat()
 		f.DecimalDigits = r.ReadInt(pfx+"DecimalDigits", f.DecimalDigits)
-		f.UseLocaleSettings = r.ReadBool(pfx+"UseLocaleSettings", f.UseLocaleSettings)
+		f.UseLocaleSettings = readUseLocale(r, pfx, f.UseLocaleSettings)
 		if !f.UseLocaleSettings {
 			f.DecimalSeparator = r.ReadStr(pfx+"DecimalSeparator", f.DecimalSeparator)
 			f.GroupSeparator = r.ReadStr(pfx+"GroupSeparator", f.GroupSeparator)
@@ -150,7 +168,7 @@ func deserializeTextFormat(typeName string, r report.Reader) format.Format {
 	case "Currency":
 		f := format.NewCurrencyFormat()
 		f.DecimalDigits = r.ReadInt(pfx+"DecimalDigits", f.DecimalDigits)
-		f.UseLocaleSettings = r.ReadBool(pfx+"UseLocaleSettings", f.UseLocaleSettings)
+		f.UseLocaleSettings = readUseLocale(r, pfx, f.UseLocaleSettings)
 		if !f.UseLocaleSettings {
 			f.DecimalSeparator = r.ReadStr(pfx+"DecimalSeparator", f.DecimalSeparator)
 			f.GroupSeparator = r.ReadStr(pfx+"GroupSeparator", f.GroupSeparator)
@@ -163,19 +181,19 @@ func deserializeTextFormat(typeName string, r report.Reader) format.Format {
 	case "Date":
 		f := format.NewDateFormat()
 		f.Format = r.ReadStr(pfx+"Format", f.Format)
-		f.UseLocaleSettings = r.ReadBool(pfx+"UseLocaleSettings", f.UseLocaleSettings)
+		f.UseLocaleSettings = readUseLocale(r, pfx, f.UseLocaleSettings)
 		return f
 
 	case "Time":
 		f := format.NewTimeFormat()
 		f.Format = r.ReadStr(pfx+"Format", f.Format)
-		f.UseLocaleSettings = r.ReadBool(pfx+"UseLocaleSettings", f.UseLocaleSettings)
+		f.UseLocaleSettings = readUseLocale(r, pfx, f.UseLocaleSettings)
 		return f
 
 	case "Percent":
 		f := format.NewPercentFormat()
 		f.DecimalDigits = r.ReadInt(pfx+"DecimalDigits", f.DecimalDigits)
-		f.UseLocaleSettings = r.ReadBool(pfx+"UseLocaleSettings", f.UseLocaleSettings)
+		f.UseLocaleSettings = readUseLocale(r, pfx, f.UseLocaleSettings)
 		if !f.UseLocaleSettings {
 			f.DecimalSeparator = r.ReadStr(pfx+"DecimalSeparator", f.DecimalSeparator)
 			f.GroupSeparator = r.ReadStr(pfx+"GroupSeparator", f.GroupSeparator)
@@ -209,7 +227,7 @@ func deserializeFormatFromChild(childType string, r report.Reader) format.Format
 	case "NumberFormat":
 		f := format.NewNumberFormat()
 		f.DecimalDigits = r.ReadInt("DecimalDigits", f.DecimalDigits)
-		f.UseLocaleSettings = r.ReadBool("UseLocaleSettings", f.UseLocaleSettings)
+		f.UseLocaleSettings = readUseLocale(r, "", f.UseLocaleSettings)
 		f.DecimalSeparator = r.ReadStr("DecimalSeparator", f.DecimalSeparator)
 		f.GroupSeparator = r.ReadStr("GroupSeparator", f.GroupSeparator)
 		f.NegativePattern = r.ReadInt("NegativePattern", f.NegativePattern)
@@ -218,7 +236,7 @@ func deserializeFormatFromChild(childType string, r report.Reader) format.Format
 	case "CurrencyFormat":
 		f := format.NewCurrencyFormat()
 		f.DecimalDigits = r.ReadInt("DecimalDigits", f.DecimalDigits)
-		f.UseLocaleSettings = r.ReadBool("UseLocaleSettings", f.UseLocaleSettings)
+		f.UseLocaleSettings = readUseLocale(r, "", f.UseLocaleSettings)
 		f.DecimalSeparator = r.ReadStr("DecimalSeparator", f.DecimalSeparator)
 		f.GroupSeparator = r.ReadStr("GroupSeparator", f.GroupSeparator)
 		f.CurrencySymbol = r.ReadStr("CurrencySymbol", f.CurrencySymbol)
@@ -229,19 +247,19 @@ func deserializeFormatFromChild(childType string, r report.Reader) format.Format
 	case "DateFormat":
 		f := format.NewDateFormat()
 		f.Format = r.ReadStr("Format", f.Format)
-		f.UseLocaleSettings = r.ReadBool("UseLocaleSettings", f.UseLocaleSettings)
+		f.UseLocaleSettings = readUseLocale(r, "", f.UseLocaleSettings)
 		return f
 
 	case "TimeFormat":
 		f := format.NewTimeFormat()
 		f.Format = r.ReadStr("Format", f.Format)
-		f.UseLocaleSettings = r.ReadBool("UseLocaleSettings", f.UseLocaleSettings)
+		f.UseLocaleSettings = readUseLocale(r, "", f.UseLocaleSettings)
 		return f
 
 	case "PercentFormat":
 		f := format.NewPercentFormat()
 		f.DecimalDigits = r.ReadInt("DecimalDigits", f.DecimalDigits)
-		f.UseLocaleSettings = r.ReadBool("UseLocaleSettings", f.UseLocaleSettings)
+		f.UseLocaleSettings = readUseLocale(r, "", f.UseLocaleSettings)
 		f.DecimalSeparator = r.ReadStr("DecimalSeparator", f.DecimalSeparator)
 		f.GroupSeparator = r.ReadStr("GroupSeparator", f.GroupSeparator)
 		f.PercentSymbol = r.ReadStr("PercentSymbol", f.PercentSymbol)

@@ -78,6 +78,24 @@ func (bc *BandColumns) Positions() []float32 {
 	return pos
 }
 
+// formatColumnLayout converts ColumnLayout to its FRX string name.
+func formatColumnLayout(l ColumnLayout) string {
+	if l == ColumnLayoutDownThenAcross {
+		return "DownThenAcross"
+	}
+	return "AcrossThenDown"
+}
+
+// parseColumnLayout converts an FRX string to ColumnLayout (handles both names and ints).
+func parseColumnLayout(s string) ColumnLayout {
+	switch s {
+	case "DownThenAcross", "1":
+		return ColumnLayoutDownThenAcross
+	default:
+		return ColumnLayoutAcrossThenDown
+	}
+}
+
 // Assign copies settings from another BandColumns.
 func (bc *BandColumns) Assign(src *BandColumns) {
 	bc.count = src.count

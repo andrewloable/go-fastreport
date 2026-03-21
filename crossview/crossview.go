@@ -96,6 +96,39 @@ type HeaderDescriptor struct {
 	CellSize  int // span in the data direction
 }
 
+// GetName returns the display name for this header descriptor.
+// Mirrors CrossViewHeaderDescriptor.GetName() in CrossViewHeaderDescriptor.cs.
+func (h *HeaderDescriptor) GetName() string {
+	if h.IsGrandTotal {
+		return "GrandTotal"
+	}
+	if h.IsMeasure {
+		return h.MeasureName
+	}
+	if h.IsTotal {
+		return "Total of " + h.FieldName
+	}
+	return h.FieldName
+}
+
+// Assign copies all fields from src into h.
+// Mirrors CrossViewHeaderDescriptor.Assign() in CrossViewHeaderDescriptor.cs.
+func (h *HeaderDescriptor) Assign(src *HeaderDescriptor) {
+	if src == nil {
+		return
+	}
+	h.Expression = src.Expression
+	h.FieldName = src.FieldName
+	h.MeasureName = src.MeasureName
+	h.IsGrandTotal = src.IsGrandTotal
+	h.IsTotal = src.IsTotal
+	h.IsMeasure = src.IsMeasure
+	h.Level = src.Level
+	h.LevelSize = src.LevelSize
+	h.Cell = src.Cell
+	h.CellSize = src.CellSize
+}
+
 // ── Cell descriptor ───────────────────────────────────────────────────────────
 
 // CellDescriptor describes a single data cell in the cross-tab grid.
@@ -114,6 +147,24 @@ type CellDescriptor struct {
 	// Grid coordinates.
 	X int
 	Y int
+}
+
+// Assign copies all fields from src into c.
+// Mirrors CrossViewCellDescriptor.Assign() in CrossViewCellDescriptor.cs.
+func (c *CellDescriptor) Assign(src *CellDescriptor) {
+	if src == nil {
+		return
+	}
+	c.Expression = src.Expression
+	c.XFieldName = src.XFieldName
+	c.YFieldName = src.YFieldName
+	c.MeasureName = src.MeasureName
+	c.IsXTotal = src.IsXTotal
+	c.IsYTotal = src.IsYTotal
+	c.IsXGrandTotal = src.IsXGrandTotal
+	c.IsYGrandTotal = src.IsYGrandTotal
+	c.X = src.X
+	c.Y = src.Y
 }
 
 // ── CrossViewData ─────────────────────────────────────────────────────────────

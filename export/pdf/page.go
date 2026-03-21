@@ -29,7 +29,7 @@ func NewPages(w *Writer) *Pages {
 // AddPage appends a page to the tree and updates the /Count entry.
 func (p *Pages) AddPage(page *Page) {
 	p.pageList = append(p.pageList, page)
-	p.kids.Add(core.NewName(page.obj.Reference()))
+	p.kids.Add(core.NewRef(page.obj))
 	p.dict.Add("Count", core.NewInt(len(p.pageList)))
 }
 
@@ -104,10 +104,10 @@ func NewPage(w *Writer, pages *Pages, width, height float64) *Page {
 
 	dict := core.NewDictionary()
 	dict.Add("Type", core.NewName("Page"))
-	dict.Add("Parent", core.NewName(pages.obj.Reference()))
+	dict.Add("Parent", core.NewRef(pages.obj))
 	dict.Add("MediaBox", mediaBox)
 	dict.Add("Resources", resources)
-	dict.Add("Contents", core.NewName(contents.obj.Reference()))
+	dict.Add("Contents", core.NewRef(contents.obj))
 
 	obj := w.NewObject(dict)
 	page := &Page{
@@ -135,7 +135,7 @@ func (p *Page) Obj() *core.IndirectObject { return p.obj }
 // AddXObject registers an indirect object as an XObject resource under the
 // given name (e.g. "Im0").  The name is used in content streams as /Im0.
 func (p *Page) AddXObject(name string, obj *core.IndirectObject) {
-	p.xObjects.Add(name, core.NewName(obj.Reference()))
+	p.xObjects.Add(name, core.NewRef(obj))
 }
 
 // AddAnnotation appends a PDF annotation dictionary to the page's /Annots array.

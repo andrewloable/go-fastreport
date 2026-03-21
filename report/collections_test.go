@@ -397,3 +397,155 @@ func TestTypedCollection_Clear(t *testing.T) {
 
 // Compile-time check: TypedCollection embeds ObjectCollection properly.
 var _ interface{ Len() int } = (*report.TypedCollection[*simpleObject])(nil)
+
+// --- SortByTop ---
+
+// sortBoundedObj wraps ComponentBase so we can construct objects with a
+// known Top value for SortByTop tests.
+type sortBoundedObj struct {
+	*report.ComponentBase
+	name string
+}
+
+func (b *sortBoundedObj) Name() string               { return b.name }
+func (b *sortBoundedObj) SetName(n string)           { b.name = n }
+func (b *sortBoundedObj) BaseName() string           { return "Bounded" }
+func (b *sortBoundedObj) Parent() report.Parent      { return nil }
+func (b *sortBoundedObj) SetParent(_ report.Parent)  {}
+func (b *sortBoundedObj) Serialize(_ report.Writer) error   { return nil }
+func (b *sortBoundedObj) Deserialize(_ report.Reader) error { return nil }
+
+func newBounded(name string, top float32) *sortBoundedObj {
+	cb := report.NewComponentBase()
+	cb.SetTop(top)
+	return &sortBoundedObj{ComponentBase: cb, name: name}
+}
+
+func TestObjectCollection_SortByTop_BasicOrder(t *testing.T) {
+	c := report.NewObjectCollection()
+	a := newBounded("a", 30)
+	b := newBounded("b", 10)
+	cr := newBounded("c", 20)
+	c.Add(a)
+	c.Add(b)
+	c.Add(cr)
+
+	sorted := c.SortByTop()
+	if len(sorted) != 3 {
+		t.Fatalf("SortByTop len = %d, want 3", len(sorted))
+	}
+	// Expected order: b(10), c(20), a(30).
+	if sorted[0] != b {
+		t.Errorf("sorted[0] = %v, want b (top=10)", sorted[0])
+	}
+	if sorted[1] != cr {
+		t.Errorf("sorted[1] = %v, want c (top=20)", sorted[1])
+	}
+	if sorted[2] != a {
+		t.Errorf("sorted[2] = %v, want a (top=30)", sorted[2])
+	}
+}
+
+func TestObjectCollection_SortByTop_AlreadySorted(t *testing.T) {
+	c := report.NewObjectCollection()
+	a := newBounded("a", 5)
+	b := newBounded("b", 10)
+	c.Add(a)
+	c.Add(b)
+
+	sorted := c.SortByTop()
+	if sorted[0] != a || sorted[1] != b {
+		t.Error("SortByTop: already-sorted collection should remain in same order")
+	}
+}
+
+func TestObjectCollection_SortByTop_EqualTop_StableOrder(t *testing.T) {
+	c := report.NewObjectCollection()
+	a := newBounded("a", 10)
+	b := newBounded("b", 10)
+	cr := newBounded("c", 10)
+	c.Add(a)
+	c.Add(b)
+	c.Add(cr)
+
+	sorted := c.SortByTop()
+	// All have the same Top; stable sort should preserve insertion order.
+	if sorted[0] != a || sorted[1] != b || sorted[2] != cr {
+		t.Error("SortByTop with equal Top values should preserve insertion order (stable sort)")
+	}
+}
+
+func TestObjectCollection_SortByTop_Empty(t *testing.T) {
+	c := report.NewObjectCollection()
+	sorted := c.SortByTop()
+	if len(sorted) != 0 {
+		t.Errorf("SortByTop on empty collection returned %d elements", len(sorted))
+	}
+}
+
+func TestObjectCollection_SortByTop_SingleElement(t *testing.T) {
+	c := report.NewObjectCollection()
+	a := newBounded("a", 42)
+	c.Add(a)
+
+	sorted := c.SortByTop()
+	if len(sorted) != 1 || sorted[0] != a {
+		t.Error("SortByTop with single element should return that element")
+	}
+}
+
+func TestObjectCollection_SortByTop_DoesNotMutateOriginal(t *testing.T) {
+	c := report.NewObjectCollection()
+	a := newBounded("a", 30)
+	b := newBounded("b", 10)
+	c.Add(a)
+	c.Add(b)
+
+	_ = c.SortByTop()
+	// The original collection should still be in insertion order.
+	if c.Get(0) != a {
+		t.Error("SortByTop should not mutate the original collection")
+	}
+	if c.Get(1) != b {
+		t.Error("SortByTop should not mutate the original collection")
+	}
+}
+
+func TestObjectCollection_SortByTop_NoBoundsObjects(t *testing.T) {
+	// simpleObject does not implement Bounds(), so Top defaults to 0.
+	c := report.NewObjectCollection()
+	a := newSO("a")
+	b := newSO("b")
+	c.Add(a)
+	c.Add(b)
+
+	sorted := c.SortByTop()
+	// Both have effective Top=0; stable sort preserves insertion order.
+	if len(sorted) != 2 {
+		t.Fatalf("SortByTop len = %d, want 2", len(sorted))
+	}
+	if sorted[0] != a || sorted[1] != b {
+		t.Error("SortByTop: objects without Bounds() should sort as Top=0 (stable)")
+	}
+}
+
+func TestObjectCollection_SortByTop_MixedBoundedAndUnbounded(t *testing.T) {
+	// Mix bounded (Top=5) and unbounded (Top=0).
+	c := report.NewObjectCollection()
+	high := newBounded("high", 5)
+	plain := newSO("plain") // no Bounds, effective Top=0
+	c.Add(high)
+	c.Add(plain)
+
+	sorted := c.SortByTop()
+	if len(sorted) != 2 {
+		t.Fatalf("SortByTop len = %d, want 2", len(sorted))
+	}
+	// plain has Top=0, high has Top=5 → plain first.
+	if sorted[0] != plain {
+		t.Errorf("sorted[0] should be plain (Top=0), got %v", sorted[0])
+	}
+	if sorted[1] != high {
+		t.Errorf("sorted[1] should be high (Top=5), got %v", sorted[1])
+	}
+}

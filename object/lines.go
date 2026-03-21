@@ -9,6 +9,8 @@ import (
 // -----------------------------------------------------------------------
 
 // CapStyle specifies the style of a line end cap.
+// It is the Go equivalent of FastReport.CapStyle.
+// CapSettings.cs, FastReport.Base — enum order matches C# definition.
 type CapStyle int
 
 const (
@@ -24,8 +26,41 @@ const (
 	CapStyleArrow
 )
 
+// formatCapStyle converts a CapStyle to its FRX string name (e.g. "Arrow").
+// Matches the C# enum name used by FRWriter.WriteValue.
+func formatCapStyle(s CapStyle) string {
+	switch s {
+	case CapStyleCircle:
+		return "Circle"
+	case CapStyleSquare:
+		return "Square"
+	case CapStyleDiamond:
+		return "Diamond"
+	case CapStyleArrow:
+		return "Arrow"
+	default:
+		return "None"
+	}
+}
+
+// parseCapStyle converts an FRX string name to a CapStyle.
+func parseCapStyle(s string) CapStyle {
+	switch s {
+	case "Circle":
+		return CapStyleCircle
+	case "Square":
+		return CapStyleSquare
+	case "Diamond":
+		return CapStyleDiamond
+	case "Arrow":
+		return CapStyleArrow
+	default:
+		return CapStyleNone
+	}
+}
+
 // CapSettings defines the visual cap at one end of a line.
-// It is the Go equivalent of FastReport.CapSettings.
+// It is the Go equivalent of FastReport.CapSettings (CapSettings.cs).
 type CapSettings struct {
 	// Width of the cap in pixels (default 8).
 	Width float32
@@ -35,9 +70,62 @@ type CapSettings struct {
 	Style CapStyle
 }
 
-// DefaultCapSettings returns a CapSettings with default values.
+// DefaultCapSettings returns a CapSettings with default values matching
+// the C# constructor: width=8, height=8, style=None.
 func DefaultCapSettings() CapSettings {
 	return CapSettings{Width: 8, Height: 8, Style: CapStyleNone}
+}
+
+// Assign copies all fields from src into c.
+// Equivalent to C# CapSettings.Assign(CapSettings source).
+func (c *CapSettings) Assign(src CapSettings) {
+	c.Width = src.Width
+	c.Height = src.Height
+	c.Style = src.Style
+}
+
+// Clone returns an independent copy of c.
+// Equivalent to C# CapSettings.Clone().
+func (c CapSettings) Clone() CapSettings {
+	var result CapSettings
+	result.Assign(c)
+	return result
+}
+
+// Equals reports whether c and other have identical field values.
+// Equivalent to C# CapSettings.Equals(object obj).
+func (c CapSettings) Equals(other CapSettings) bool {
+	return c.Width == other.Width && c.Height == other.Height && c.Style == other.Style
+}
+
+// SerializeCap writes the three dot-qualified attributes for a cap property
+// using the FRX format that C# CapSettings.Serialize(prefix, writer, diff) produces:
+//
+//	prefix.Width, prefix.Height, prefix.Style
+//
+// Only attributes that differ from def are written (diff-encoding, same as C#).
+func SerializeCap(prefix string, w report.Writer, c, def CapSettings) {
+	if c.Width != def.Width {
+		w.WriteFloat(prefix+".Width", c.Width)
+	}
+	if c.Height != def.Height {
+		w.WriteFloat(prefix+".Height", c.Height)
+	}
+	if c.Style != def.Style {
+		w.WriteStr(prefix+".Style", formatCapStyle(c.Style))
+	}
+}
+
+// DeserializeCap reads the dot-qualified cap attributes written by SerializeCap
+// and returns the resulting CapSettings starting from def.
+func DeserializeCap(prefix string, r report.Reader, def CapSettings) CapSettings {
+	c := def
+	c.Width = r.ReadFloat(prefix+".Width", def.Width)
+	c.Height = r.ReadFloat(prefix+".Height", def.Height)
+	if s := r.ReadStr(prefix+".Style", ""); s != "" {
+		c.Style = parseCapStyle(s)
+	}
+	return c
 }
 
 // -----------------------------------------------------------------------
@@ -81,6 +169,9 @@ func (l *LineObject) DashPattern() []float32 { return l.dashPattern }
 func (l *LineObject) SetDashPattern(dp []float32) { l.dashPattern = dp }
 
 // Serialize writes LineObject properties that differ from defaults.
+// Follows LineObject.cs Serialize(): writes Diagonal, then delegates to
+// CapSettings.Serialize("StartCap", …) and CapSettings.Serialize("EndCap", …)
+// which produce dot-qualified attributes (e.g. StartCap.Style="Arrow").
 func (l *LineObject) Serialize(w report.Writer) error {
 	if err := l.ReportComponentBase.Serialize(w); err != nil {
 		return err
@@ -89,50 +180,23 @@ func (l *LineObject) Serialize(w report.Writer) error {
 		w.WriteBool("Diagonal", true)
 	}
 	def := DefaultCapSettings()
-	if l.StartCap != def {
-		w.WriteStr("StartCap", capToStr(l.StartCap))
-	}
-	if l.EndCap != def {
-		w.WriteStr("EndCap", capToStr(l.EndCap))
-	}
+	SerializeCap("StartCap", w, l.StartCap, def)
+	SerializeCap("EndCap", w, l.EndCap, def)
 	return nil
 }
 
 // Deserialize reads LineObject properties.
+// Cap attributes are read as dot-qualified names matching the FRX format
+// produced by C# CapSettings.Serialize() (e.g. StartCap.Style="Arrow").
 func (l *LineObject) Deserialize(r report.Reader) error {
 	if err := l.ReportComponentBase.Deserialize(r); err != nil {
 		return err
 	}
 	l.diagonal = r.ReadBool("Diagonal", false)
-	if s := r.ReadStr("StartCap", ""); s != "" {
-		l.StartCap = capFromStr(s)
-	}
-	if s := r.ReadStr("EndCap", ""); s != "" {
-		l.EndCap = capFromStr(s)
-	}
+	def := DefaultCapSettings()
+	l.StartCap = DeserializeCap("StartCap", r, def)
+	l.EndCap = DeserializeCap("EndCap", r, def)
 	return nil
-}
-
-// capToStr serialises a CapSettings as "W,H,Style".
-func capToStr(c CapSettings) string {
-	return report.FormatFloat(c.Width) + "," + report.FormatFloat(c.Height) + "," +
-		report.FormatFloat(float32(c.Style))
-}
-
-// capFromStr parses "W,H,Style".
-func capFromStr(s string) CapSettings {
-	parts := report.SplitComma(s)
-	c := DefaultCapSettings()
-	if len(parts) >= 1 {
-		c.Width = report.ParseFloat(parts[0])
-	}
-	if len(parts) >= 2 {
-		c.Height = report.ParseFloat(parts[1])
-	}
-	if len(parts) >= 3 {
-		c.Style = CapStyle(int(report.ParseFloat(parts[2])))
-	}
-	return c
 }
 
 // -----------------------------------------------------------------------
@@ -154,6 +218,38 @@ const (
 	// ShapeKindDiamond draws a diamond.
 	ShapeKindDiamond
 )
+
+// formatShapeKind converts ShapeKind to its FRX string name.
+func formatShapeKind(k ShapeKind) string {
+	switch k {
+	case ShapeKindRoundRectangle:
+		return "RoundRectangle"
+	case ShapeKindEllipse:
+		return "Ellipse"
+	case ShapeKindTriangle:
+		return "Triangle"
+	case ShapeKindDiamond:
+		return "Diamond"
+	default:
+		return "Rectangle"
+	}
+}
+
+// parseShapeKind converts an FRX string to ShapeKind (handles both names and ints).
+func parseShapeKind(s string) ShapeKind {
+	switch s {
+	case "RoundRectangle", "1":
+		return ShapeKindRoundRectangle
+	case "Ellipse", "2":
+		return ShapeKindEllipse
+	case "Triangle", "3":
+		return ShapeKindTriangle
+	case "Diamond", "4":
+		return ShapeKindDiamond
+	default:
+		return ShapeKindRectangle
+	}
+}
 
 // -----------------------------------------------------------------------
 // ShapeObject
@@ -203,7 +299,7 @@ func (s *ShapeObject) Serialize(w report.Writer) error {
 		return err
 	}
 	if s.shape != ShapeKindRectangle {
-		w.WriteInt("Shape", int(s.shape))
+		w.WriteStr("Shape", formatShapeKind(s.shape))
 	}
 	if s.curve != 0 {
 		w.WriteFloat("Curve", s.curve)
@@ -216,7 +312,7 @@ func (s *ShapeObject) Deserialize(r report.Reader) error {
 	if err := s.ReportComponentBase.Deserialize(r); err != nil {
 		return err
 	}
-	s.shape = ShapeKind(r.ReadInt("Shape", 0))
+	s.shape = parseShapeKind(r.ReadStr("Shape", "Rectangle"))
 	s.curve = r.ReadFloat("Curve", 0)
 	return nil
 }

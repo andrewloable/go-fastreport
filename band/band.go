@@ -60,13 +60,13 @@ type BandBase struct {
 // firstRowStartsNewPage=true, repeatBandNTimes=1, FlagCheckFreeSpace=true,
 // FlagUseStartNewPage=true.
 //
-// FlagCheckFreeSpace=true and FlagUseStartNewPage=true match the C# BandBase
-// constructor defaults so that non-service bands (GroupHeader, GroupFooter,
-// DataHeader, DataFooter, ReportTitle, ReportSummary, ChildBand, DataBand)
-// all trigger page breaks when content overflows a page or when StartNewPage
-// is set. Service bands (PageHeader, PageFooter, Overlay, ColumnHeader,
-// ColumnFooter) reset FlagCheckFreeSpace to false in their own constructors
-// because those bands are rendered unconditionally.
+// These match the C# BandBase constructor defaults (BandBase.cs line 992-993).
+// Non-service bands (GroupHeader, GroupFooter, DataHeader, DataFooter,
+// ReportTitle, ReportSummary, ChildBand, DataBand) keep FlagUseStartNewPage=true
+// so they respect the StartNewPage property and page-break logic.
+// Service bands (PageHeader, PageFooter, Overlay, ColumnHeader, ColumnFooter)
+// set FlagUseStartNewPage=false in their own constructors to match C# behaviour —
+// those bands are rendered unconditionally and must never trigger StartNewPage.
 func NewBandBase() *BandBase {
 	b := &BandBase{
 		BreakableComponent:    *report.NewBreakableComponent(),

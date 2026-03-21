@@ -190,3 +190,81 @@ func TestInfo_SetProducer(t *testing.T) {
 		t.Errorf("expected Producer 'MyProducer', got %q", info.Producer)
 	}
 }
+
+func TestInfo_SetSubject(t *testing.T) {
+	w := NewWriter()
+	info := NewInfo(w)
+	info.SetSubject("Quarterly Report")
+
+	if info.Subject != "Quarterly Report" {
+		t.Errorf("expected Subject 'Quarterly Report', got %q", info.Subject)
+	}
+
+	var buf bytes.Buffer
+	if err := w.Write(&buf); err != nil {
+		t.Fatalf("Write failed: %v", err)
+	}
+	if !strings.Contains(buf.String(), "/Subject") {
+		t.Error("output missing /Subject")
+	}
+}
+
+func TestInfo_SetSubject_Empty(t *testing.T) {
+	w := NewWriter()
+	info := NewInfo(w)
+	info.SetSubject("")
+
+	if info.Subject != "" {
+		t.Errorf("expected empty Subject, got %q", info.Subject)
+	}
+}
+
+func TestInfo_SetKeywords(t *testing.T) {
+	w := NewWriter()
+	info := NewInfo(w)
+	info.SetKeywords("finance sales 2024")
+
+	if info.Keywords != "finance sales 2024" {
+		t.Errorf("expected Keywords 'finance sales 2024', got %q", info.Keywords)
+	}
+
+	var buf bytes.Buffer
+	if err := w.Write(&buf); err != nil {
+		t.Fatalf("Write failed: %v", err)
+	}
+	if !strings.Contains(buf.String(), "/Keywords") {
+		t.Error("output missing /Keywords")
+	}
+}
+
+func TestInfo_SetKeywords_Empty(t *testing.T) {
+	w := NewWriter()
+	info := NewInfo(w)
+	info.SetKeywords("")
+
+	if info.Keywords != "" {
+		t.Errorf("expected empty Keywords, got %q", info.Keywords)
+	}
+}
+
+// TestCatalog_Version verifies the catalog includes /Version matching the PDF version name.
+// Both C# PdfName and Go core.Name hex-encode non-alphanumeric chars, so "1.5" is
+// written as "/1#2E5" (dot → #2E).  This matches C# PdfCatalog behaviour exactly.
+func TestCatalog_Version(t *testing.T) {
+	w := NewWriter()
+	pages := NewPages(w)
+	_ = NewCatalog(w, pages)
+
+	var buf bytes.Buffer
+	if err := w.Write(&buf); err != nil {
+		t.Fatalf("Write failed: %v", err)
+	}
+	output := buf.String()
+	// The Name "1.5" encodes the dot as #2E (matching C# PdfName behaviour)
+	if !strings.Contains(output, "/Version") {
+		t.Error("catalog missing /Version key")
+	}
+	if !strings.Contains(output, "/1#2E5") {
+		t.Errorf("expected version name '/1#2E5' (1.5 with dot hex-encoded), output does not contain it")
+	}
+}

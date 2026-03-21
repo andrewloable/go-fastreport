@@ -461,18 +461,9 @@ func TestLineObject_Deserialize_ViaNoopReader(t *testing.T) {
 }
 
 // TestLineObject_Deserialize_WithCaps_ViaReader exercises Deserialize when
-// StartCap and EndCap strings are present in the reader.
+// StartCap and EndCap dot-qualified attributes are present in the reader.
+// Uses the FRX format: StartCap.Style="Arrow", StartCap.Width=10, etc.
 func TestLineObject_Deserialize_WithCaps_ViaReader(t *testing.T) {
-	// Use a custom reader that returns cap strings.
-	type capReader struct {
-		noopReader
-	}
-	// We can't override ReadStr on noopReader easily, so use an inline mock.
-	type capMockReader struct{}
-	_ = (*capMockReader)(nil) // compile check
-
-	// Use the sequencedReader pattern from text_internal_coverage_test.go.
-	// For simplicity, use a manual reader.
 	r := &capReadReader{}
 	l := NewLineObject()
 	if err := l.Deserialize(r); err != nil {
@@ -481,28 +472,47 @@ func TestLineObject_Deserialize_WithCaps_ViaReader(t *testing.T) {
 	if l.StartCap.Style != CapStyleArrow {
 		t.Errorf("StartCap.Style: got %d, want CapStyleArrow(%d)", l.StartCap.Style, CapStyleArrow)
 	}
+	if l.StartCap.Width != 10 {
+		t.Errorf("StartCap.Width: got %v, want 10", l.StartCap.Width)
+	}
+	if l.EndCap.Style != CapStyleCircle {
+		t.Errorf("EndCap.Style: got %d, want CapStyleCircle(%d)", l.EndCap.Style, CapStyleCircle)
+	}
 	if l.diagonal {
 		t.Error("Diagonal: expected false (reader returns default)")
 	}
 }
 
-// capReadReader is a mock reader that returns cap strings for StartCap/EndCap.
+// capReadReader is a mock reader that returns dot-qualified cap attributes
+// matching the FRX format produced by C# CapSettings.Serialize().
 type capReadReader struct{}
 
 func (r *capReadReader) ReadStr(name, def string) string {
 	switch name {
-	case "StartCap":
-		return "10,10,4" // Width=10, Height=10, Style=CapStyleArrow(4)
-	case "EndCap":
-		return "6,6,1" // Width=6, Height=6, Style=CapStyleCircle(1)
+	case "StartCap.Style":
+		return "Arrow"
+	case "EndCap.Style":
+		return "Circle"
 	}
 	return def
 }
-func (r *capReadReader) ReadInt(name string, def int) int          { return def }
-func (r *capReadReader) ReadBool(name string, def bool) bool       { return def }
-func (r *capReadReader) ReadFloat(name string, def float32) float32 { return def }
-func (r *capReadReader) NextChild() (string, bool)                  { return "", false }
-func (r *capReadReader) FinishChild() error                         { return nil }
+func (r *capReadReader) ReadInt(name string, def int) int { return def }
+func (r *capReadReader) ReadBool(name string, def bool) bool { return def }
+func (r *capReadReader) ReadFloat(name string, def float32) float32 {
+	switch name {
+	case "StartCap.Width":
+		return 10
+	case "StartCap.Height":
+		return 10
+	case "EndCap.Width":
+		return 6
+	case "EndCap.Height":
+		return 6
+	}
+	return def
+}
+func (r *capReadReader) NextChild() (string, bool) { return "", false }
+func (r *capReadReader) FinishChild() error         { return nil }
 
 // ── ShapeObject ───────────────────────────────────────────────────────────────
 
@@ -614,54 +624,61 @@ func TestMapObject_Deserialize_ViaNoopReader(t *testing.T) {
 	}
 }
 
-// ── capFromStr edge cases ─────────────────────────────────────────────────────
+// ── parseCapStyle / formatCapStyle round-trip ─────────────────────────────────
+// These test the internal helpers that replaced the old capFromStr/capToStr CSV
+// approach. The new helpers use the FRX string-name format ("Arrow", "Circle",
+// etc.) that matches C# CapSettings.Serialize / FRWriter.WriteValue output.
 
-// TestCapFromStr_SinglePart exercises capFromStr with only 1 part (Width only).
-func TestCapFromStr_SinglePart(t *testing.T) {
-	got := capFromStr("12")
-	if got.Width != 12 {
-		t.Errorf("Width: got %v, want 12", got.Width)
+// TestParseCapStyle_AllValues verifies every enum name is parsed correctly.
+func TestParseCapStyle_AllValues(t *testing.T) {
+	cases := []struct {
+		input string
+		want  CapStyle
+	}{
+		{"None", CapStyleNone},
+		{"Circle", CapStyleCircle},
+		{"Square", CapStyleSquare},
+		{"Diamond", CapStyleDiamond},
+		{"Arrow", CapStyleArrow},
+		{"", CapStyleNone},          // empty → default
+		{"unknown", CapStyleNone},   // unknown → default
 	}
-	// Height and Style fall back to DefaultCapSettings values.
-	def := DefaultCapSettings()
-	if got.Height != def.Height {
-		t.Errorf("Height: got %v, want %v", got.Height, def.Height)
-	}
-	if got.Style != def.Style {
-		t.Errorf("Style: got %v, want %v", got.Style, def.Style)
+	for _, tc := range cases {
+		got := parseCapStyle(tc.input)
+		if got != tc.want {
+			t.Errorf("parseCapStyle(%q) = %v, want %v", tc.input, got, tc.want)
+		}
 	}
 }
 
-// TestCapFromStr_TwoParts exercises capFromStr with exactly 2 parts (Width + Height).
-func TestCapFromStr_TwoParts(t *testing.T) {
-	got := capFromStr("10,14")
-	if got.Width != 10 {
-		t.Errorf("Width: got %v, want 10", got.Width)
+// TestFormatCapStyle_AllValues verifies every CapStyle produces the correct name.
+func TestFormatCapStyle_AllValues(t *testing.T) {
+	cases := []struct {
+		style CapStyle
+		want  string
+	}{
+		{CapStyleNone, "None"},
+		{CapStyleCircle, "Circle"},
+		{CapStyleSquare, "Square"},
+		{CapStyleDiamond, "Diamond"},
+		{CapStyleArrow, "Arrow"},
 	}
-	if got.Height != 14 {
-		t.Errorf("Height: got %v, want 14", got.Height)
-	}
-	// Style defaults.
-	if got.Style != CapStyleNone {
-		t.Errorf("Style: got %v, want CapStyleNone", got.Style)
+	for _, tc := range cases {
+		got := formatCapStyle(tc.style)
+		if got != tc.want {
+			t.Errorf("formatCapStyle(%v) = %q, want %q", tc.style, got, tc.want)
+		}
 	}
 }
 
-// TestCapFromStr_Empty exercises capFromStr with an empty string. When the
-// string is "", SplitComma returns [""], so Width is parsed as 0 (ParseFloat("")
-// = 0), while Height and Style keep the DefaultCapSettings values.
-func TestCapFromStr_Empty(t *testing.T) {
-	got := capFromStr("")
-	// Width is 0 because ParseFloat("") = 0.
-	if got.Width != 0 {
-		t.Errorf("Width: got %v, want 0 (empty string parsed as 0)", got.Width)
-	}
-	// Height and Style are from DefaultCapSettings since only 1 part was present.
-	def := DefaultCapSettings()
-	if got.Height != def.Height {
-		t.Errorf("Height: got %v, want default %v", got.Height, def.Height)
-	}
-	if got.Style != def.Style {
-		t.Errorf("Style: got %v, want default %v", got.Style, def.Style)
+// TestFormatParseCapStyle_RoundTrip verifies format→parse is identity for all styles.
+func TestFormatParseCapStyle_RoundTrip(t *testing.T) {
+	styles := []CapStyle{CapStyleNone, CapStyleCircle, CapStyleSquare, CapStyleDiamond, CapStyleArrow}
+	for _, s := range styles {
+		name := formatCapStyle(s)
+		got := parseCapStyle(name)
+		if got != s {
+			t.Errorf("round-trip failed for %v: format=%q, parse back=%v", s, name, got)
+		}
 	}
 }

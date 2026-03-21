@@ -18,6 +18,11 @@ func TestNewReportTitleBand(t *testing.T) {
 	if !b.FirstRowStartsNewPage() {
 		t.Error("ReportTitleBand should inherit FirstRowStartsNewPage=true")
 	}
+	// C# ReportTitleBand has no constructor override — inherits FlagUseStartNewPage=true
+	// from BandBase (BandBase.cs line 992).
+	if !b.FlagUseStartNewPage {
+		t.Error("ReportTitleBand.FlagUseStartNewPage should be true (inherits BandBase default)")
+	}
 }
 
 func TestNewReportSummaryBand(t *testing.T) {
@@ -31,12 +36,21 @@ func TestNewReportSummaryBand(t *testing.T) {
 	if b.RepeatOnEveryPage() {
 		t.Error("ReportSummaryBand.RepeatOnEveryPage should default to false")
 	}
+	// C# ReportSummaryBand has no constructor override — inherits FlagUseStartNewPage=true
+	// from BandBase (BandBase.cs line 992).
+	if !b.FlagUseStartNewPage {
+		t.Error("ReportSummaryBand.FlagUseStartNewPage should be true (inherits BandBase default)")
+	}
 }
 
 func TestNewPageHeaderBand(t *testing.T) {
 	b := band.NewPageHeaderBand()
 	if b == nil {
 		t.Fatal("NewPageHeaderBand returned nil")
+	}
+	// C# PageHeaderBand() sets FlagUseStartNewPage=false (PageHeaderBand.cs constructor).
+	if b.FlagUseStartNewPage {
+		t.Error("PageHeaderBand.FlagUseStartNewPage should be false (C# PageHeaderBand.cs)")
 	}
 }
 
@@ -45,6 +59,10 @@ func TestNewPageFooterBand(t *testing.T) {
 	if b == nil {
 		t.Fatal("NewPageFooterBand returned nil")
 	}
+	// C# PageFooterBand() sets FlagUseStartNewPage=false (PageFooterBand.cs constructor).
+	if b.FlagUseStartNewPage {
+		t.Error("PageFooterBand.FlagUseStartNewPage should be false (C# PageFooterBand.cs)")
+	}
 }
 
 func TestNewColumnHeaderBand(t *testing.T) {
@@ -52,12 +70,20 @@ func TestNewColumnHeaderBand(t *testing.T) {
 	if b == nil {
 		t.Fatal("NewColumnHeaderBand returned nil")
 	}
+	// C# ColumnHeaderBand() sets FlagUseStartNewPage=false (ColumnHeaderBand.cs constructor).
+	if b.FlagUseStartNewPage {
+		t.Error("ColumnHeaderBand.FlagUseStartNewPage should be false (C# ColumnHeaderBand.cs)")
+	}
 }
 
 func TestNewColumnFooterBand(t *testing.T) {
 	b := band.NewColumnFooterBand()
 	if b == nil {
 		t.Fatal("NewColumnFooterBand returned nil")
+	}
+	// C# ColumnFooterBand() sets FlagUseStartNewPage=false (ColumnFooterBand.cs constructor).
+	if b.FlagUseStartNewPage {
+		t.Error("ColumnFooterBand.FlagUseStartNewPage should be false (C# ColumnFooterBand.cs)")
 	}
 }
 
@@ -94,6 +120,10 @@ func TestNewOverlayBand(t *testing.T) {
 	b := band.NewOverlayBand()
 	if b == nil {
 		t.Fatal("NewOverlayBand returned nil")
+	}
+	// C# OverlayBand() sets FlagUseStartNewPage=false (OverlayBand.cs constructor).
+	if b.FlagUseStartNewPage {
+		t.Error("OverlayBand.FlagUseStartNewPage should be false (C# OverlayBand.cs)")
 	}
 }
 

@@ -45,6 +45,16 @@ func TestGeneralFormat_Float(t *testing.T) {
 	}
 }
 
+// TestGeneralFormat_TypedNil verifies that a typed nil pointer returns ""
+// matching C# GeneralFormat.FormatValue which returns "" for null.
+func TestGeneralFormat_TypedNil(t *testing.T) {
+	f := NewGeneralFormat()
+	var p *string
+	if got := f.FormatValue(p); got != "" {
+		t.Fatalf("typed nil: got %q, want %q", got, "")
+	}
+}
+
 func TestGeneralFormat_ImplementsFormat(t *testing.T) {
 	var _ Format = NewGeneralFormat()
 }
@@ -600,6 +610,25 @@ func TestPercentFormat_UseLocale(t *testing.T) {
 	}
 }
 
+// TestPercentFormat_GetSampleValue verifies that the C# GetSampleValue input
+// of 1.23 produces the expected output. C# calls FormatValue(1.23f) which
+// multiplies by 100 → 123.00 %. With default UseLocale=true and DecimalDigits=2,
+// the output with pattern 0 ("n %") is "123.00 %".
+func TestPercentFormat_GetSampleValue(t *testing.T) {
+	f := &PercentFormat{
+		UseLocaleSettings: false,
+		DecimalDigits:     2,
+		DecimalSeparator:  ".",
+		GroupSeparator:    ",",
+		PercentSymbol:     "%",
+		PositivePattern:   0, // "n %"
+	}
+	got := f.FormatValue(1.23)
+	if got != "123.00 %" {
+		t.Fatalf("GetSampleValue: got %q, want %q", got, "123.00 %")
+	}
+}
+
 func TestPercentFormat_ImplementsFormat(t *testing.T) {
 	var _ Format = NewPercentFormat()
 }
@@ -720,6 +749,79 @@ func TestDateFormat_NilPointer(t *testing.T) {
 	// A typed nil pointer: toTime should return false.
 	if got := f.FormatValue(tp); got != "" {
 		t.Fatalf("got %q, want %q", got, "")
+	}
+}
+
+// TestDateFormat_GetSampleValue verifies that the C# GetSampleValue date
+// (2007-11-30 13:30:00) produces "11/30/2007" with the default "d" format,
+// matching DateFormat.GetSampleValue() in the C# source.
+func TestDateFormat_GetSampleValue(t *testing.T) {
+	f := NewDateFormat() // default Format = "d"
+	sample := time.Date(2007, 11, 30, 13, 30, 0, 0, time.UTC)
+	if got := f.FormatValue(sample); got != "11/30/2007" {
+		t.Fatalf("GetSampleValue date: got %q, want %q", got, "11/30/2007")
+	}
+}
+
+// TestDateFormat_CsharpLongDate verifies the "D" specifier (long date).
+// C# en-US: "Friday, November 30, 2007".
+func TestDateFormat_CsharpLongDate(t *testing.T) {
+	f := &DateFormat{Format: "D"}
+	tm := time.Date(2007, 11, 30, 13, 30, 0, 0, time.UTC)
+	got := f.FormatValue(tm)
+	// Go: "Monday, January 2, 2006" layout → "Friday, November 30, 2007"
+	if got != "Friday, November 30, 2007" {
+		t.Fatalf("D format: got %q, want %q", got, "Friday, November 30, 2007")
+	}
+}
+
+// TestDateFormat_CsharpFullShortTime verifies the "f" specifier (full date, short time).
+func TestDateFormat_CsharpFullShortTime(t *testing.T) {
+	f := &DateFormat{Format: "f"}
+	tm := time.Date(2007, 11, 30, 13, 30, 0, 0, time.UTC)
+	got := f.FormatValue(tm)
+	if got != "Friday, November 30, 2007 1:30 PM" {
+		t.Fatalf("f format: got %q, want %q", got, "Friday, November 30, 2007 1:30 PM")
+	}
+}
+
+// TestDateFormat_CsharpShortTime verifies the "t" specifier (short time).
+func TestDateFormat_CsharpShortTime(t *testing.T) {
+	f := &DateFormat{Format: "t"}
+	tm := time.Date(2007, 11, 30, 13, 30, 0, 0, time.UTC)
+	got := f.FormatValue(tm)
+	if got != "1:30 PM" {
+		t.Fatalf("t format: got %q, want %q", got, "1:30 PM")
+	}
+}
+
+// TestDateFormat_CsharpMonthDay verifies the "M"/"m" specifiers (month/day).
+func TestDateFormat_CsharpMonthDay(t *testing.T) {
+	f := &DateFormat{Format: "M"}
+	tm := time.Date(2007, 11, 30, 0, 0, 0, 0, time.UTC)
+	got := f.FormatValue(tm)
+	if got != "November 30" {
+		t.Fatalf("M format: got %q, want %q", got, "November 30")
+	}
+}
+
+// TestDateFormat_CsharpYearMonth verifies the "Y"/"y" specifiers (year/month).
+func TestDateFormat_CsharpYearMonth(t *testing.T) {
+	f := &DateFormat{Format: "Y"}
+	tm := time.Date(2007, 11, 30, 0, 0, 0, 0, time.UTC)
+	got := f.FormatValue(tm)
+	if got != "November 2007" {
+		t.Fatalf("Y format: got %q, want %q", got, "November 2007")
+	}
+}
+
+// TestDateFormat_CsharpSortable verifies the "s" specifier (sortable ISO 8601).
+func TestDateFormat_CsharpSortable(t *testing.T) {
+	f := &DateFormat{Format: "s"}
+	tm := time.Date(2007, 11, 30, 13, 30, 0, 0, time.UTC)
+	got := f.FormatValue(tm)
+	if got != "2007-11-30T13:30:00" {
+		t.Fatalf("s format: got %q, want %q", got, "2007-11-30T13:30:00")
 	}
 }
 

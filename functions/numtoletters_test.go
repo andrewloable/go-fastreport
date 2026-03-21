@@ -31,27 +31,46 @@ func TestNumToLetters(t *testing.T) {
 	}
 }
 
-func TestNumToLettersLower(t *testing.T) {
+func TestToLettersEn(t *testing.T) {
 	cases := []struct {
-		n    int
-		want string
+		n       int
+		isUpper bool
+		want    string
 	}{
-		{0, "a"},
-		{1, "b"},
-		{25, "z"},
-		{26, "aa"},
-		{27, "ab"},
-		{51, "az"},
-		{52, "ba"},
-		{701, "zz"},
-		{702, "aaa"},
-		{-1, ""},
-		{-100, ""},
+		{0, true, "A"},
+		{0, false, "a"},
+		{25, true, "Z"},
+		{26, true, "AA"},
+		{26, false, "aa"},
+		{701, true, "ZZ"},
+		{702, true, "AAA"},
 	}
 	for _, c := range cases {
-		got := functions.NumToLettersLower(c.n)
+		got := functions.ToLettersEn(c.n, c.isUpper)
 		if got != c.want {
-			t.Errorf("NumToLettersLower(%d) = %q, want %q", c.n, got, c.want)
+			t.Errorf("ToLettersEn(%d, %v) = %q, want %q", c.n, c.isUpper, got, c.want)
+		}
+	}
+}
+
+func TestToLettersRu(t *testing.T) {
+	cases := []struct {
+		n       int
+		isUpper bool
+		want    string
+	}{
+		{0, true, "А"},
+		{0, false, "а"},
+		{32, true, "Я"},
+		{33, true, "АА"},
+		{33, false, "аа"},
+		{65, true, "АЯ"},
+		{66, true, "БА"},
+	}
+	for _, c := range cases {
+		got := functions.ToLettersRu(c.n, c.isUpper)
+		if got != c.want {
+			t.Errorf("ToLettersRu(%d, %v) = %q, want %q", c.n, c.isUpper, got, c.want)
 		}
 	}
 }

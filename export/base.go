@@ -3,6 +3,8 @@ package export
 import (
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -42,8 +44,25 @@ type ExportBase struct {
 	// CurPage is the 1-based page number to export when PageRange == PageRangeCurrent.
 	CurPage int
 
+	// Zoom is a scaling factor applied to the exported content (default 1.0).
+	// Matches C# ExportBase.Zoom.
+	Zoom float32
+
+	// OnProgress is an optional callback invoked once per page during export.
+	// It receives the current 1-based page number and the total page count.
+	// This is the Go equivalent of C# ReportSettings.OnProgress (called from
+	// ExportBase.Export for each page when ShowProgress is true).
+	// C# ref: FastReport.Base/Export/ExportBase.cs, Export() method.
+	OnProgress func(page, total int)
+
 	// pages holds the resolved zero-based page indices to export.
 	pages []int
+
+	// generatedFiles holds the paths of output files produced by this export.
+	generatedFiles []string
+
+	// tempFiles tracks temporary files created via CreateTempFile.
+	tempFiles []*os.File
 }
 
 // NewExportBase creates an ExportBase with sensible defaults.
@@ -51,7 +70,42 @@ func NewExportBase() ExportBase {
 	return ExportBase{
 		PageRange: PageRangeAll,
 		CurPage:   1,
+		Zoom:      1,
 	}
+}
+
+// GeneratedFiles returns the list of output file paths produced by this export.
+// Matches C# ExportBase.GeneratedFiles.
+func (e *ExportBase) GeneratedFiles() []string { return e.generatedFiles }
+
+// AddGeneratedFile appends path to the generated files list.
+func (e *ExportBase) AddGeneratedFile(path string) { e.generatedFiles = append(e.generatedFiles, path) }
+
+// CreateTempFile creates a new temporary file in the OS temp directory under a
+// "TempExport" subdirectory.  The file is tracked and deleted by DeleteTempFiles.
+// Matches C# ExportBase.CreateTempFile.
+func (e *ExportBase) CreateTempFile() (*os.File, error) {
+	dir := filepath.Join(os.TempDir(), "TempExport")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return nil, fmt.Errorf("export: create temp dir: %w", err)
+	}
+	f, err := os.CreateTemp(dir, "")
+	if err != nil {
+		return nil, fmt.Errorf("export: create temp file: %w", err)
+	}
+	e.tempFiles = append(e.tempFiles, f)
+	return f, nil
+}
+
+// DeleteTempFiles closes and removes all temporary files created via CreateTempFile.
+// Matches C# ExportBase.DeleteTempFiles.
+func (e *ExportBase) DeleteTempFiles() {
+	for _, f := range e.tempFiles {
+		name := f.Name()
+		_ = f.Close()
+		_ = os.Remove(name)
+	}
+	e.tempFiles = e.tempFiles[:0]
 }
 
 // ── Page-number parsing ───────────────────────────────────────────────────────
@@ -186,6 +240,8 @@ func (e *ExportBase) Export(pages *preview.PreparedPages, w io.Writer, exp Expor
 		return fmt.Errorf("export: prepare page indices: %w", err)
 	}
 
+	e.generatedFiles = e.generatedFiles[:0]
+
 	if len(e.pages) == 0 {
 		return nil
 	}
@@ -194,10 +250,15 @@ func (e *ExportBase) Export(pages *preview.PreparedPages, w io.Writer, exp Expor
 		return fmt.Errorf("export: start: %w", err)
 	}
 
-	for _, idx := range e.pages {
+	for i, idx := range e.pages {
 		pg := pages.GetPage(idx)
 		if pg == nil {
 			continue
+		}
+		// Notify progress before each page — mirrors C# ExportBase.Export which
+		// calls Config.ReportSettings.OnProgress(Report, message, i+1, pages.Count).
+		if e.OnProgress != nil {
+			e.OnProgress(i+1, len(e.pages))
 		}
 		if err := exp.ExportPageBegin(pg); err != nil {
 			return fmt.Errorf("export: page %d begin: %w", idx+1, err)
@@ -215,6 +276,7 @@ func (e *ExportBase) Export(pages *preview.PreparedPages, w io.Writer, exp Expor
 	if err := exp.Finish(); err != nil {
 		return fmt.Errorf("export: finish: %w", err)
 	}
+	e.DeleteTempFiles()
 	return nil
 }
 

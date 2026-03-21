@@ -118,6 +118,24 @@ func (c *TableCell) AddObject(obj report.Serializable) {
 // ObjectCount returns the number of embedded objects.
 func (c *TableCell) ObjectCount() int { return len(c.objects) }
 
+// SetStyle applies a style to this cell through the given table's style
+// deduplication collection. The returned cell is the canonical shared style
+// instance from the collection — callers that need to track the applied style
+// should use the return value.
+//
+// This mirrors C# TableCell.SetStyle → TableCellData.SetStyle (TableCell.cs
+// line 328, TableCellData.cs line 326-329): the style is deduplicated through
+// Table.Styles so that cells sharing identical visual appearance reference the
+// same style object.
+//
+// If tbl is nil the style argument is returned unchanged.
+func (c *TableCell) SetStyle(tbl *TableBase, style *TableCell) *TableCell {
+	if tbl == nil {
+		return style
+	}
+	return tbl.styles.Add(style)
+}
+
 // Serialize writes TableCell properties that differ from defaults.
 func (c *TableCell) Serialize(w report.Writer) error {
 	if err := c.TextObject.Serialize(w); err != nil {

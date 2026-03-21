@@ -9,20 +9,28 @@ import (
 // --- stub DictionaryLookup for tests ---
 
 type stubDict struct {
-	sources    map[string]data.DataSource
-	relations  []*data.Relation
-	params     []*data.Parameter
-	sysVars    []*data.Parameter
-	totals     []*data.Total
+	sources   map[string]data.DataSource
+	relations []*data.Relation
+	params    []*data.Parameter
+	sysVars   []*data.Parameter
+	totals    []*data.Total
 }
 
 func (d *stubDict) FindDataSourceByAlias(alias string) data.DataSource {
 	return d.sources[alias]
 }
-func (d *stubDict) Relations() []*data.Relation     { return d.relations }
-func (d *stubDict) Parameters() []*data.Parameter   { return d.params }
+func (d *stubDict) FindDataSourceByName(name string) data.DataSource {
+	for _, ds := range d.sources {
+		if ds.Name() == name {
+			return ds
+		}
+	}
+	return nil
+}
+func (d *stubDict) Relations() []*data.Relation        { return d.relations }
+func (d *stubDict) Parameters() []*data.Parameter      { return d.params }
 func (d *stubDict) SystemVariables() []*data.Parameter { return d.sysVars }
-func (d *stubDict) Totals() []*data.Total            { return d.totals }
+func (d *stubDict) Totals() []*data.Total              { return d.totals }
 
 func newStubDict() *stubDict {
 	return &stubDict{sources: make(map[string]data.DataSource)}
@@ -38,6 +46,18 @@ func TestGetDataSource_Found(t *testing.T) {
 	got := data.GetDataSource(dict, "Orders")
 	if got != ds {
 		t.Error("GetDataSource should return the matching datasource")
+	}
+}
+
+func TestGetDataSource_ByNameFallback(t *testing.T) {
+	dict := newStubDict()
+	ds := data.NewBaseDataSource("Orders")
+	ds.SetAlias("SalesOrders")
+	dict.sources["SalesOrders"] = ds
+
+	got := data.GetDataSource(dict, "Orders")
+	if got != ds {
+		t.Error("GetDataSource should fall back to datasource name")
 	}
 }
 
@@ -186,6 +206,91 @@ func TestGetTotal_NotFound(t *testing.T) {
 	v := data.GetTotal(dict, "Missing")
 	if v != nil {
 		t.Error("GetTotal should return nil for unknown total")
+	}
+}
+
+// --- Column helpers ---
+
+func TestGetColumn_FlatColumn(t *testing.T) {
+	dict := newStubDict()
+	ds := data.NewBaseDataSource("Orders")
+	ds.AddColumn(data.Column{Name: "CustomerID", Alias: "CustomerID", DataType: "int"})
+	dict.sources["Orders"] = ds
+
+	got := data.GetColumn(dict, "Orders.CustomerID")
+	if got == nil {
+		t.Fatal("GetColumn should resolve a flat datasource column")
+	}
+	if got.Name != "CustomerID" || got.DataType != "int" {
+		t.Fatalf("GetColumn = %+v", got)
+	}
+}
+
+func TestGetColumn_RelationTraversal(t *testing.T) {
+	dict := newStubDict()
+	customers := data.NewBaseDataSource("Customers")
+	customers.AddColumn(data.Column{Name: "Name", Alias: "Name", DataType: "string"})
+	orders := data.NewBaseDataSource("Orders")
+	dict.sources["Customers"] = customers
+	dict.sources["Orders"] = orders
+	dict.relations = []*data.Relation{{
+		Alias:            "Customers",
+		ParentDataSource: customers,
+		ChildDataSource:  orders,
+	}}
+
+	got := data.GetColumn(dict, "Orders.Customers.Name")
+	if got == nil {
+		t.Fatal("GetColumn should traverse relations to parent datasource columns")
+	}
+	if got.Name != "Name" {
+		t.Errorf("GetColumn relation traversal name = %q, want Name", got.Name)
+	}
+}
+
+func TestIsValidColumn_AndType(t *testing.T) {
+	dict := newStubDict()
+	ds := data.NewBaseDataSource("Orders")
+	ds.AddColumn(data.Column{Name: "Amount", Alias: "Amount", DataType: "decimal"})
+	dict.sources["Orders"] = ds
+
+	if !data.IsValidColumn(dict, "Orders.Amount") {
+		t.Fatal("IsValidColumn should return true for an existing column")
+	}
+	if got := data.GetColumnType(dict, "Orders.Amount"); got != "decimal" {
+		t.Fatalf("GetColumnType = %q, want decimal", got)
+	}
+	if data.IsValidColumn(dict, "Orders.Missing") {
+		t.Fatal("IsValidColumn should return false for a missing column")
+	}
+}
+
+func TestIsSimpleColumn(t *testing.T) {
+	dict := newStubDict()
+	ds := data.NewBaseDataSource("Orders")
+	ds.AddColumn(data.Column{Name: "Amount", Alias: "Amount", DataType: "decimal"})
+	dict.sources["Orders"] = ds
+
+	if !data.IsSimpleColumn(dict, "Orders.Amount") {
+		t.Fatal("IsSimpleColumn should be true for direct datasource columns")
+	}
+	if data.IsSimpleColumn(dict, "Orders.Customers.Amount") {
+		t.Fatal("IsSimpleColumn should be false for multi-hop column paths")
+	}
+}
+
+func TestCreateParameter(t *testing.T) {
+	dict := data.NewDictionary()
+	got := data.CreateParameter(dict, "Filters.Range.Min")
+	if got == nil {
+		t.Fatal("CreateParameter returned nil")
+	}
+	if got.Name != "Min" {
+		t.Fatalf("CreateParameter leaf = %q, want Min", got.Name)
+	}
+	root := dict.FindParameter("Filters.Range.Min")
+	if root != got {
+		t.Fatal("CreateParameter should create a resolvable nested parameter chain")
 	}
 }
 

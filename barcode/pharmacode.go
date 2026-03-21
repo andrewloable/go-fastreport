@@ -8,9 +8,6 @@ import (
 	"strings"
 )
 
-// QuietZone controls whether a leading/trailing space is added.
-// Default: true (matching C# default).
-
 func (b *PharmacodeBarcode) GetPattern() (string, error) {
 	val, err := strconv.ParseUint(strings.TrimSpace(b.encodedText), 10, 64)
 	if err != nil {
@@ -25,7 +22,9 @@ func (b *PharmacodeBarcode) GetPattern() (string, error) {
 
 	const space = "2"
 	var sb strings.Builder
-	sb.WriteString(space) // leading quiet zone
+	if b.QuietZone {
+		sb.WriteString(space)
+	}
 
 	for _, c := range bin {
 		switch c {
@@ -36,6 +35,10 @@ func (b *PharmacodeBarcode) GetPattern() (string, error) {
 			sb.WriteByte('7')
 			sb.WriteString(space)
 		}
+	}
+	if !b.QuietZone && strings.HasSuffix(sb.String(), space) {
+		pattern := sb.String()
+		return pattern[:len(pattern)-len(space)], nil
 	}
 	return sb.String(), nil
 }

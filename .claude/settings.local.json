@@ -99,7 +99,19 @@
       "Bash(for id:*)",
       "Bash(do)",
       "Bash(while read:*)",
-      "Bash(do grep:*)"
+      "Bash(do grep:*)",
+      "Bash(git grep:*)",
+      "Bash(/tmp/c_sharp_properties.txt:*)",
+      "Read(//tmp/**)",
+      "Bash(do bd:*)",
+      "Bash(echo \"Closed $id\")",
+      "Bash(echo \"Failed $id\")",
+      "Bash(bd doctor:*)",
+      "Bash(bd dolt:*)",
+      "Bash(kill 22074)",
+      "Bash(BD_NO_DB=true bd close go-fastreport-8guu --force)",
+      "Bash(/dev/null ls:*)",
+      "Bash(1 go:*)"
     ]
   }
 }

@@ -78,6 +78,7 @@ func NewWatermark() *Watermark {
 		},
 		TextRotation:  WatermarkTextRotationForwardDiagonal,
 		ShowTextOnTop: true,
+		TextFillColor: color.RGBA{A: 40, R: 128, G: 128, B: 128},
 		ImageSize:     WatermarkImageSizeZoom,
 	}
 }
@@ -110,6 +111,9 @@ func (wm *Watermark) Serialize(w report.Writer) {
 	}
 	if wm.ShowImageOnTop {
 		w.WriteBool("Watermark.ShowImageOnTop", true)
+	}
+	if wm.TextFillColor != def.TextFillColor {
+		w.WriteStr("Watermark.TextFill.Color", utils.FormatColor(wm.TextFillColor))
 	}
 }
 

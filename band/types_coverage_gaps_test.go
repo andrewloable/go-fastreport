@@ -165,10 +165,11 @@ func TestGroupHeaderBand_Deserialize_ResetPageNumberOnly(t *testing.T) {
 	}
 }
 
-// ─── DataBand.Serialize: SortOrderAscending direction branch ─────────────────
+// ─── DataBand.Serialize: Sort child-element branch ───────────────────────────
 
-// TestDataBand_Serialize_SortASCOnly exercises the dir="ASC" branch inside the
-// sort-string builder with a single ascending sort spec (no Expression).
+// TestDataBand_Serialize_SortASCOnly exercises the sort child-element path with
+// a single ascending sort spec (no Expression). Sort is now written as a child
+// <Sort> element via WriteObjectNamed, not as an attribute string.
 func TestDataBand_Serialize_SortASCOnly(t *testing.T) {
 	d := NewDataBand()
 	d.AddSort(SortSpec{Column: "Price", Order: SortOrderAscending})
@@ -177,13 +178,13 @@ func TestDataBand_Serialize_SortASCOnly(t *testing.T) {
 	if err := d.Serialize(w); err != nil {
 		t.Errorf("DataBand.Serialize error: %v", err)
 	}
-	if v, ok := w.written["Sort"]; !ok || v == "" {
-		t.Error("Sort attribute should be written")
+	if _, ok := w.written["Sort"]; ok {
+		t.Error("Sort should NOT be written as an attribute; it is a child element")
 	}
 }
 
-// TestDataBand_Serialize_SortExpressionASC exercises the Expression branch (col
-// = s.Expression) with an ascending sort.
+// TestDataBand_Serialize_SortExpressionASC exercises the Expression path inside
+// sortCollection.Serialize when Expression is non-empty (overrides Column).
 func TestDataBand_Serialize_SortExpressionASC(t *testing.T) {
 	d := NewDataBand()
 	d.AddSort(SortSpec{Expression: "[Price]+[Tax]", Order: SortOrderAscending})
@@ -192,8 +193,8 @@ func TestDataBand_Serialize_SortExpressionASC(t *testing.T) {
 	if err := d.Serialize(w); err != nil {
 		t.Errorf("DataBand.Serialize error: %v", err)
 	}
-	if _, ok := w.written["Sort"]; !ok {
-		t.Error("Sort attribute should be written")
+	if _, ok := w.written["Sort"]; ok {
+		t.Error("Sort should NOT be written as an attribute; it is a child element")
 	}
 }
 

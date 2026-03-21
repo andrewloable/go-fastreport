@@ -139,7 +139,7 @@ func (r *barcodeAllFieldsReader) ReadBool(name string, def bool) bool {
 // via a no-op writer with all non-default field values set.
 func TestZipCodeObject_Serialize_NoopWriter(t *testing.T) {
 	z := NewZipCodeObject()
-	z.text = "123456"
+	z.text = "654321"  // non-default (default = "123456")
 	z.dataColumn = "ZipCol"
 	z.expression = "[Zip]"
 	z.segmentWidth = 4.5
@@ -177,8 +177,15 @@ func TestZipCodeObject_Deserialize_DefaultReader(t *testing.T) {
 	if err := z.Deserialize(r); err != nil {
 		t.Fatalf("ZipCodeObject.Deserialize unexpected error: %v", err)
 	}
-	if z.text != "" {
-		t.Errorf("text: got %q, want empty", z.text)
+	// defaultReader returns the fallback — which is now the C# default "123456".
+	if z.text != "123456" {
+		t.Errorf("text: got %q, want 123456 (C# default)", z.text)
+	}
+	if z.segmentWidth != 18.9 {
+		t.Errorf("segmentWidth: got %v, want 18.9 (C# default)", z.segmentWidth)
+	}
+	if z.segmentHeight != 37.8 {
+		t.Errorf("segmentHeight: got %v, want 37.8 (C# default)", z.segmentHeight)
 	}
 	if z.segmentCount != 6 {
 		t.Errorf("segmentCount: got %d, want 6 (default)", z.segmentCount)

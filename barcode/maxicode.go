@@ -173,6 +173,113 @@ func maxiCodeEncodeText(text string, maxCW int) []byte {
 	return cw[:maxCW]
 }
 
+// maxiCodeMode2PrimaryCodewords returns the 10 primary codewords for Mode 2
+// (numeric postal code). Ported from C# BarcodeMaxiCode.cs getMode2PrimaryCodewords.
+//
+// C# source: BarcodeMaxiCode.cs lines 820-847 (getMode2PrimaryCodewords).
+func maxiCodeMode2PrimaryCodewords(postcode string, country, service int) []byte {
+	// Strip non-digit suffix (C# truncates at first non-digit character).
+	for i := 0; i < len(postcode); i++ {
+		if postcode[i] < '0' || postcode[i] > '9' {
+			postcode = postcode[:i]
+			break
+		}
+	}
+	if len(postcode) == 0 {
+		postcode = "0"
+	}
+
+	// Parse postal code as integer.
+	postcodeNum := 0
+	for _, ch := range postcode {
+		postcodeNum = postcodeNum*10 + int(ch-'0')
+	}
+	postcodeLen := len(postcode)
+
+	primary := make([]byte, 10)
+	primary[0] = byte(((postcodeNum & 0x03) << 4) | 2)
+	primary[1] = byte((postcodeNum & 0xfc) >> 2)
+	primary[2] = byte((postcodeNum & 0x3f00) >> 8)
+	primary[3] = byte((postcodeNum & 0xfc000) >> 14)
+	primary[4] = byte((postcodeNum & 0x3f00000) >> 20)
+	primary[5] = byte(((postcodeNum & 0x3c000000) >> 26) | ((postcodeLen & 0x3) << 4))
+	primary[6] = byte(((postcodeLen & 0x3c) >> 2) | ((country & 0x3) << 4))
+	primary[7] = byte((country & 0xfc) >> 2)
+	primary[8] = byte(((country & 0x300) >> 8) | ((service & 0xf) << 2))
+	primary[9] = byte((service & 0x3f0) >> 4)
+	return primary
+}
+
+// maxiCodeMode3PrimaryCodewords returns the 10 primary codewords for Mode 3
+// (alphanumeric postal code). Ported from C# BarcodeMaxiCode.cs getMode3PrimaryCodewords.
+//
+// C# source: BarcodeMaxiCode.cs lines 857-893 (getMode3PrimaryCodewords).
+func maxiCodeMode3PrimaryCodewords(postcode string, country, service int) []byte {
+	// Ensure exactly 6 characters (Mode 3 uses first 6 chars of the postal code).
+	for len(postcode) < 6 {
+		postcode += " "
+	}
+	postcode = postcode[:6]
+
+	// Convert each character to its Code Set A numeric value.
+	postcodeNums := make([]int, 6)
+	upper := strings.ToUpper(postcode)
+	for i := 0; i < 6; i++ {
+		ch := int(upper[i])
+		if upper[i] >= 'A' && upper[i] <= 'Z' {
+			// Capital letters shifted to Code Set A values (A=1..Z=26).
+			ch -= 64
+		}
+		// Disallowed characters → space (ASCII 32).
+		if ch == 27 || ch == 31 || ch == 33 || ch >= 59 {
+			ch = 32
+		}
+		postcodeNums[i] = ch
+	}
+
+	primary := make([]byte, 10)
+	primary[0] = byte(((postcodeNums[5] & 0x03) << 4) | 3)
+	primary[1] = byte(((postcodeNums[4] & 0x03) << 4) | ((postcodeNums[5] & 0x3c) >> 2))
+	primary[2] = byte(((postcodeNums[3] & 0x03) << 4) | ((postcodeNums[4] & 0x3c) >> 2))
+	primary[3] = byte(((postcodeNums[2] & 0x03) << 4) | ((postcodeNums[3] & 0x3c) >> 2))
+	primary[4] = byte(((postcodeNums[1] & 0x03) << 4) | ((postcodeNums[2] & 0x3c) >> 2))
+	primary[5] = byte(((postcodeNums[0] & 0x03) << 4) | ((postcodeNums[1] & 0x3c) >> 2))
+	primary[6] = byte(((postcodeNums[0] & 0x3c) >> 2) | ((country & 0x3) << 4))
+	primary[7] = byte((country & 0xfc) >> 2)
+	primary[8] = byte(((country & 0x300) >> 8) | ((service & 0xf) << 2))
+	primary[9] = byte((service & 0x3f0) >> 4)
+	return primary
+}
+
+// maxiCodeParseMode23Text parses a Mode 2/3 payload string (produced by
+// MaxiCodeMode2Payload / MaxiCodeMode3Payload) into its component parts.
+//
+// Expected format: postal(9) + country(3) + service(2) + GS(1) + secondary
+// Returns postcode, countryStr, serviceInt, secondaryText.
+func maxiCodeParseMode23Text(text string) (postcode, country string, service int, secondary string) {
+	// Need at least 14 chars (9+3+2) plus optional GS+secondary.
+	for len(text) < 14 {
+		text += " "
+	}
+	postcode = text[:9]
+	country = text[9:12]
+	svc := text[12:14]
+	// Parse service as integer (2-char field).
+	for _, ch := range svc {
+		if ch >= '0' && ch <= '9' {
+			service = service*10 + int(ch-'0')
+		}
+	}
+
+	// Secondary follows the GS separator (0x1D) at position 14, if present.
+	if len(text) > 14 && text[14] == 0x1D {
+		secondary = text[15:]
+	} else if len(text) > 14 {
+		secondary = text[14:]
+	}
+	return postcode, country, service, secondary
+}
+
 // maxiCodeEncode encodes text as a 144-codeword MaxiCode symbol including
 // Reed-Solomon error correction. Layout (ISO/IEC 16023):
 //
@@ -196,26 +303,63 @@ func maxiCodeEncode(text string, mode int) []byte {
 	}
 	totalMax := secondaryMax + 10 // primary(10) + secondary data
 
-	// Build raw codewords: [mode_byte] + [secondary text], length totalMax.
-	// For modes 2/3, the primary codewords (positions 0..9) embed postal data,
-	// but we use the simplified encoding (mode byte + secondary data bytes) since
-	// the structured primary is parsed from the text by the caller's payload builder.
 	raw := make([]byte, totalMax)
-	raw[0] = byte(mode)
-	// Encode the text into secondary slots (positions 1..totalMax-1).
-	sec := maxiCodeEncodeText(text, totalMax-1)
-	copy(raw[1:], sec)
+
+	if mode == 2 || mode == 3 {
+		// Mode 2/3: structured carrier message.
+		// Parse the payload text to extract postal, country, service, and secondary.
+		// Format produced by MaxiCodeMode2Payload/MaxiCodeMode3Payload:
+		//   postal(9) + country(3) + service(2) + GS(0x1D) + secondary
+		postcode, countryStr, service, secondary := maxiCodeParseMode23Text(text)
+
+		// Parse country as integer.
+		countryNum := 0
+		for _, ch := range countryStr {
+			if ch >= '0' && ch <= '9' {
+				countryNum = countryNum*10 + int(ch-'0')
+			}
+		}
+
+		// Auto-promote Mode 2 → Mode 3 if postal code isn't strictly numeric.
+		// Ported from C# BarcodeMaxiCode.cs encode() lines 537-548.
+		if mode == 2 {
+			for i := 0; i < len(postcode) && i < 9; i++ {
+				if postcode[i] != ' ' && (postcode[i] < '0' || postcode[i] > '9') {
+					mode = 3
+					break
+				}
+			}
+		}
+
+		// Build the 10 primary codewords using the postal encoding algorithm.
+		var primaryCW []byte
+		if mode == 2 {
+			primaryCW = maxiCodeMode2PrimaryCodewords(strings.TrimRight(postcode, " "), countryNum, service)
+		} else {
+			primaryCW = maxiCodeMode3PrimaryCodewords(strings.TrimRight(postcode, " "), countryNum, service)
+		}
+		copy(raw[:10], primaryCW)
+
+		// Encode the secondary message into secondary slots (positions 10..totalMax-1).
+		sec := maxiCodeEncodeText(secondary, totalMax-10)
+		copy(raw[10:], sec)
+	} else {
+		// Modes 4/5/6: [mode_byte] + [text encoded into remaining slots].
+		raw[0] = byte(mode)
+		sec := maxiCodeEncodeText(text, totalMax-1)
+		copy(raw[1:], sec)
+	}
 
 	// Compute primary ECC on codewords[0..9].
-	primary := raw[:10]
-	primaryECC := maxiCodeRS(primary, 10)
+	primaryCWs := raw[:10]
+	primaryECC := maxiCodeRS(primaryCWs, 10)
 
 	// Split secondary (raw[10..totalMax-1]) into odd and even interleaves.
-	secondary := raw[10:]
-	half := len(secondary) / 2
+	secondaryCWs := raw[10:]
+	half := len(secondaryCWs) / 2
 	secOdd := make([]byte, half)
 	secEven := make([]byte, half)
-	for i, cw := range secondary {
+	for i, cw := range secondaryCWs {
 		if i%2 == 1 {
 			secOdd[(i-1)/2] = cw
 		} else {
@@ -228,7 +372,7 @@ func maxiCodeEncode(text string, mode int) []byte {
 
 	// Assemble final 144 codewords.
 	out := make([]byte, 144)
-	copy(out[0:10], primary)
+	copy(out[0:10], primaryCWs)
 	copy(out[10:20], primaryECC)
 	copy(out[20:20+secondaryMax], raw[10:])
 	// Interleave secondary ECC after the secondary data block.

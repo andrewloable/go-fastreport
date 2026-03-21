@@ -137,8 +137,10 @@ func TestNewDataConnectionBase_Fields(t *testing.T) {
 	if c.DB() != nil {
 		t.Error("DB should be nil before Open")
 	}
-	if c.CommandTimeout != 0 {
-		t.Errorf("CommandTimeout default = %d, want 0", c.CommandTimeout)
+	// CommandTimeout default is 30 to match C# DataConnectionBase constructor.
+	// C# ref: FastReport.Data.DataConnectionBase constructor — commandTimeout = 30
+	if c.CommandTimeout != 30 {
+		t.Errorf("CommandTimeout default = %d, want 30", c.CommandTimeout)
 	}
 }
 

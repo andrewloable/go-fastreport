@@ -2,7 +2,9 @@ package data
 
 import (
 	"iter"
+	"sort"
 	"strconv"
+	"strings"
 
 	"github.com/andrewloable/go-fastreport/report"
 )
@@ -249,10 +251,10 @@ func (cc *ColumnCollection) Clear() {
 	cc.items = cc.items[:0]
 }
 
-// FindByName returns the first column whose Name matches, or nil.
+// FindByName returns the first column whose Name matches (case-insensitive), or nil.
 func (cc *ColumnCollection) FindByName(name string) *DataColumn {
 	for _, col := range cc.items {
-		if col.Name == name {
+		if strings.EqualFold(col.Name, name) {
 			return col
 		}
 		// Recurse into nested columns
@@ -265,10 +267,10 @@ func (cc *ColumnCollection) FindByName(name string) *DataColumn {
 	return nil
 }
 
-// FindByAlias returns the first column whose Alias matches, or nil.
+// FindByAlias returns the first column whose Alias matches (case-insensitive), or nil.
 func (cc *ColumnCollection) FindByAlias(alias string) *DataColumn {
 	for _, col := range cc.items {
-		if col.Alias == alias {
+		if strings.EqualFold(col.Alias, alias) {
 			return col
 		}
 		if col.HasColumns() {
@@ -289,6 +291,40 @@ func (cc *ColumnCollection) FindByPropName(propName string) *DataColumn {
 		}
 	}
 	return nil
+}
+
+// removeAt removes the column at index i (bounds must be valid).
+func (cc *ColumnCollection) removeAt(i int) {
+	cc.items = append(cc.items[:i], cc.items[i+1:]...)
+}
+
+// CreateUniqueName returns a unique column name based on the given base name.
+func (cc *ColumnCollection) CreateUniqueName(name string) string {
+	base := name
+	i := 1
+	for cc.FindByName(name) != nil {
+		name = base + strconv.Itoa(i)
+		i++
+	}
+	return name
+}
+
+// CreateUniqueAlias returns a unique column alias based on the given base alias.
+func (cc *ColumnCollection) CreateUniqueAlias(alias string) string {
+	base := alias
+	i := 1
+	for cc.FindByAlias(alias) != nil {
+		alias = base + strconv.Itoa(i)
+		i++
+	}
+	return alias
+}
+
+// Sort sorts the collection of columns by Name (ascending, case-sensitive).
+func (cc *ColumnCollection) Sort() {
+	sort.SliceStable(cc.items, func(i, j int) bool {
+		return cc.items[i].Name < cc.items[j].Name
+	})
 }
 
 // All returns an iterator over all columns (Go 1.23 range-over-func).

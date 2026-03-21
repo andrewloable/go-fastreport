@@ -641,6 +641,9 @@ func (e *ReportEngine) buildPreparedObject(obj report.Base) *preview.PreparedObj
 				po.HyperlinkKind = 3
 				po.HyperlinkValue = hl.Expression
 			}
+			// Carry the anchor target (e.g. "_blank") through to the prepared object.
+			// C# reference: Hyperlink.Target / OpenLinkInNewTab → target="_blank".
+			po.HyperlinkTarget = hl.Target
 		}
 	}
 
@@ -780,6 +783,16 @@ func (e *ReportEngine) buildPreparedObject(obj report.Base) *preview.PreparedObj
 		}
 
 	case *object.ZipCodeObject:
+		// Evaluate DataColumn / Expression to update the Text value before
+		// rendering, mirroring C# ZipCodeObject.GetData / GetDataShared()
+		// (ZipCodeObject.cs line 338-356):
+		//   if DataColumn != "" → Report.GetColumnValue(DataColumn)
+		//   else if Expression != "" → Report.Calc(Expression)
+		if col := v.DataColumn(); col != "" {
+			v.SetText(e.evalText("[" + col + "]"))
+		} else if expr := v.Expression(); expr != "" {
+			v.SetText(e.evalText(expr))
+		}
 		// Render as a barcode placeholder (no text content).
 		// ZipCodeObject generates a graphical barcode; we cannot yet render it
 		// as an image, so we output a blank rectangle to preserve layout.
@@ -990,11 +1003,15 @@ func (e *ReportEngine) buildPreparedObject(obj report.Base) *preview.PreparedObj
 		return nil
 	}
 
-	// Register bookmark if the component has one.
+	// Register bookmark if the component has one, and carry the name to the
+	// PreparedObject so that HTML exporters can emit <a name="..."> anchors.
+	// C# reference: HTMLExportLayers.cs ExportObject → obj.Bookmark → <a name="...">.
 	type hasBookmark interface{ Bookmark() string }
 	if bk, ok := obj.(hasBookmark); ok {
 		if name := bk.Bookmark(); name != "" {
-			e.AddBookmark(e.evalText(name))
+			resolved := e.evalText(name)
+			e.AddBookmark(resolved)
+			po.Bookmark = resolved
 		}
 	}
 

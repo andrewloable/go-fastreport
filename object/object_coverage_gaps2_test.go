@@ -128,7 +128,7 @@ func TestBarcodeObject_Deserialize_ViaNoopReader(t *testing.T) {
 // to exercise all reachable branches including non-default fields.
 func TestZipCodeObject_Serialize_ViaNoopWriter(t *testing.T) {
 	z := NewZipCodeObject()
-	z.text = "123456"
+	z.text = "654321"  // non-default (default = "123456")
 	z.dataColumn = "ZipCol"
 	z.expression = "[Zip]"
 	z.segmentWidth = 5

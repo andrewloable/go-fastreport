@@ -38,6 +38,12 @@ import (
 //	    </div>
 //	  </div>
 //	</body></html>
+//
+// When InlineStyles is true, all CSS properties are emitted as inline style
+// attributes instead of CSS class references. This matches the C# InlineStyles
+// option in HTMLExportStyles.cs: GetStyle(string) → InlineStyle(style) vs
+// GetStyleTag(index). Use InlineStyles=true when embedding the HTML in email or
+// other contexts where external CSS classes may be stripped.
 type Exporter struct {
 	export.ExportBase
 
@@ -52,6 +58,24 @@ type Exporter struct {
 	// with a z-index matching its paint order. Band wrapper divs are omitted.
 	// This allows overlapping objects to render correctly.
 	Layers bool
+	// InlineStyles controls whether CSS properties are emitted as inline
+	// style="..." attributes (true) or as CSS class references (false, default).
+	// When InlineStyles=true the <style> block is omitted and all styling is
+	// inlined on each element. Matches C# HTMLExportStyles.InlineStyles.
+	// C# reference: HTMLExportStyles.cs GetStyle(string) → InlineStyle(style).
+	InlineStyles bool
+	// Mode controls the output structure.
+	// ExportModeSingleFile (default): one HTML file written to the io.Writer.
+	// ExportModeMultiPage: one file per page written to OutputDir.
+	// ExportModeNavigator: per-page files + index.html + nav.html in OutputDir.
+	// C# reference: HTMLExport.cs ExportType enum, SinglePage/Navigator fields.
+	Mode ExportMode
+	// OutputDir is the directory where files are written in MultiPage and
+	// Navigator modes. It is created if it does not exist.
+	OutputDir string
+	// BaseName is the base file name (without extension) used for per-page
+	// files and the navigator prefix. Defaults to "page" when empty.
+	BaseName string
 
 	w       io.Writer
 	pp      *preview.PreparedPages
@@ -295,11 +319,20 @@ func (e *Exporter) renderBandBackground(b *preview.PreparedBand, scale float32) 
 	css.WriteString("border:none;")
 	css.WriteString(fmt.Sprintf("width:%spx;height:%spx;", pxVal(w), pxVal(h)))
 
-	className := e.css.Register(css.String())
-	e.sb.WriteString(fmt.Sprintf(
-		"<div class=\"%s\" style=\"left:%spx;top:%spx;width:%spx;height:%spx;\">&nbsp;</div>\n",
-		className, pxVal(left), pxVal(top), pxVal(w), pxVal(h),
-	))
+	if e.InlineStyles {
+		// InlineStyles mode: merge all CSS (including position) into a single style attribute.
+		// C# InlineStyle(style) → style="...{shared}left:...;top:...;..."
+		e.sb.WriteString(fmt.Sprintf(
+			"<div style=\"%sleft:%spx;top:%spx;width:%spx;height:%spx;\">&nbsp;</div>\n",
+			css.String(), pxVal(left), pxVal(top), pxVal(w), pxVal(h),
+		))
+	} else {
+		className := e.css.Register(css.String())
+		e.sb.WriteString(fmt.Sprintf(
+			"<div class=\"%s\" style=\"left:%spx;top:%spx;width:%spx;height:%spx;\">&nbsp;</div>\n",
+			className, pxVal(left), pxVal(top), pxVal(w), pxVal(h),
+		))
+	}
 }
 
 // renderObjectLayered renders a single object in layers mode.
@@ -328,6 +361,13 @@ func (e *Exporter) renderObjectLayered(obj preview.PreparedObject, scale float32
 
 // renderObject writes an HTML element for a single PreparedObject.
 func (e *Exporter) renderObject(obj preview.PreparedObject, scale float32) {
+	// Bookmark anchor — emit before the object element so that navigation lands
+	// at the object's position. C# reference: HTMLExportLayers.cs ExportObject →
+	// if (!String.IsNullOrEmpty(obj.Bookmark)) htmlPage.Append("<a name=\"...\">");
+	if obj.Bookmark != "" {
+		e.sb.WriteString(fmt.Sprintf(`<a name="%s"></a>`, export.HTMLString(obj.Bookmark)))
+	}
+
 	left := obj.Left * scale
 	top := obj.Top * scale
 	w := obj.Width * scale
@@ -356,8 +396,14 @@ func (e *Exporter) renderObject(obj preview.PreparedObject, scale float32) {
 	shared.WriteString(borderCSS(&obj.Border, scale))
 
 	// styleAttr builds the full style= attribute (positional only when a class is used).
+	// In InlineStyles mode, all CSS is merged into a single style= attribute.
+	// C# reference: HTMLExportStyles.cs GetStyle(obj) → InlineStyle vs GetStyleTag.
 	styleAttr := func(extra string) string {
 		combined := shared.String() + extra
+		if e.InlineStyles {
+			// Inline mode: merge positional + shared CSS into a single style= attribute.
+			return fmt.Sprintf(`style="%s%s"`, positional, combined)
+		}
 		name := e.css.Register(combined)
 		if name != "" {
 			return fmt.Sprintf(`style="%s" class="%s"`, positional, name)
@@ -393,7 +439,7 @@ func (e *Exporter) renderObject(obj preview.PreparedObject, scale float32) {
 					picCSS.WriteString(fmt.Sprintf("background-color:%s;", rgbColor(obj.FillColor)))
 				}
 				picCSS.WriteString(fmt.Sprintf("border:none;width:%spx;height:%spx;", pxVal(w), pxVal(h)))
-				picClass := e.css.Register(picCSS.String())
+				// picClass and imgClass are assigned below depending on InlineStyles mode.
 
 				// For barcodes rendered at higher resolution (3x), keep the
 				// high-res image and let the browser downscale via background-size.
@@ -415,17 +461,29 @@ func (e *Exporter) renderObject(obj preview.PreparedObject, scale float32) {
 					"%sbackground: url('data:%s;base64,%s') no-repeat !important;-webkit-print-color-adjust:exact;",
 					bgSize, mime, encoded,
 				)
-				imgClass := e.css.Register(imgCSS)
-
 				// Two overlapping divs: background/border div + image overlay div (C# pattern).
-				// C# Layer() uses AppendLine("</div>") which adds \n after each div.
+			// In InlineStyles mode, merge all CSS into inline style= attributes.
+			// C# InlineStyle(style) → style="...{shared}left:...;top:..." pattern.
+			// C# Layer() uses AppendLine("</div>") which adds \n after each div.
+			if e.InlineStyles {
+				// Inline mode: no CSS classes; emit style attributes directly.
+				e.sb.WriteString(fmt.Sprintf(
+					"<div style=\"%sleft:%spx;top:%spx;width:%spx;height:%spx;border:none;\">&nbsp;</div>\n",
+					picCSS.String(), pxVal(left), pxVal(top), pxVal(w), pxVal(h)))
+				e.sb.WriteString(fmt.Sprintf(
+					"<div style=\"%s%sleft:%spx;top:%spx;width:%spx;height:%spx;\">&nbsp;</div>\n",
+					picCSS.String(), imgCSS, pxVal(left), pxVal(top), pxVal(w), pxVal(h)))
+			} else {
+				picClass := e.css.Register(picCSS.String())
+				imgClass := e.css.Register(imgCSS)
 				e.sb.WriteString(fmt.Sprintf(
 					"<div class=\"%s\" style=\"left:%spx;top:%spx;width:%spx;height:%spx;border:none;\">&nbsp;</div>\n",
 					picClass, pxVal(left), pxVal(top), pxVal(w), pxVal(h)))
 				e.sb.WriteString(fmt.Sprintf(
 					"<div class=\"%s %s\" style=\"left:%spx;top:%spx;width:%spx;height:%spx;\">&nbsp;</div>\n",
 					picClass, imgClass, pxVal(left), pxVal(top), pxVal(w), pxVal(h)))
-				break
+			}
+			break
 			}
 		}
 		// No image data — empty placeholder.
@@ -819,11 +877,11 @@ func (e *Exporter) renderTextObject(obj preview.PreparedObject, scale float32) {
 		innerCSS.WriteString("overflow: hidden; text-wrap: nowrap;")
 	}
 
-	innerClass := e.css.Register(innerCSS.String())
-
-	// Register outer class AFTER inner (C# flow: GetSpanText registers inner,
-	// then LayerBack→GetStyle registers outer).
-	outerClass := e.css.Register(outerCSS.String())
+	// In class mode, register CSS classes (C# flow: inner registered first via
+	// GetSpanText, then outer via LayerBack→GetStyle).
+	// In InlineStyles mode, classes are empty strings; CSS is emitted inline.
+	innerClass := e.cssClass(innerCSS.String())
+	outerClass := e.cssClass(outerCSS.String())
 
 	// ── Format text content ──
 	// C# HtmlString converts line breaks to <p> tags and double-spaces to &nbsp;&nbsp;.
@@ -848,18 +906,36 @@ func (e *Exporter) renderTextObject(obj preview.PreparedObject, scale float32) {
 	href := hyperlinkHref(obj.HyperlinkKind, obj.HyperlinkValue)
 	if href != "" {
 		// C# GetHref: <a style="color:{textColor}[;text-decoration:none]" href="{value}"[target="_blank"]>
+		// target attribute is taken from HyperlinkTarget (C# Hyperlink.Target / OpenLinkInNewTab).
 		linkColor := rgbColor(tc)
 		hrefStyle := fmt.Sprintf("color:%s", linkColor)
 		if font.Style&style.FontStyleUnderline == 0 {
 			hrefStyle += ";text-decoration:none"
 		}
-		e.sb.WriteString(fmt.Sprintf(`<a style="%s" href="%s">`, hrefStyle, href))
-		e.sb.WriteString(fmt.Sprintf(`<div class="%s" style="cursor:pointer;%s">`, outerClass, outerStyle))
-		e.sb.WriteString(fmt.Sprintf(`<div class="%s">%s</div>`, innerClass, innerText))
+		aTag := fmt.Sprintf(`<a style="%s" href="%s"`, hrefStyle, href)
+		if obj.HyperlinkTarget != "" {
+			aTag += fmt.Sprintf(` target="%s"`, export.HTMLString(obj.HyperlinkTarget))
+		}
+		aTag += ">"
+		e.sb.WriteString(aTag)
+		if e.InlineStyles {
+			// InlineStyles: merge outerCSS + position/size into inline style; no class attr.
+			e.sb.WriteString(fmt.Sprintf(`<div style="cursor:pointer;%s%s">`, outerCSS.String(), outerStyle))
+			e.sb.WriteString(fmt.Sprintf(`<div style="%s">%s</div>`, innerCSS.String(), innerText))
+		} else {
+			e.sb.WriteString(fmt.Sprintf(`<div class="%s" style="cursor:pointer;%s">`, outerClass, outerStyle))
+			e.sb.WriteString(fmt.Sprintf(`<div class="%s">%s</div>`, innerClass, innerText))
+		}
 		e.sb.WriteString("</div>\n</a>")
 	} else {
-		e.sb.WriteString(fmt.Sprintf(`<div class="%s" style="%s">`, outerClass, outerStyle))
-		e.sb.WriteString(fmt.Sprintf(`<div class="%s">%s</div>`, innerClass, innerText))
+		if e.InlineStyles {
+			// InlineStyles: merge outerCSS + position/size into inline style; no class attr.
+			e.sb.WriteString(fmt.Sprintf(`<div style="%s%s">`, outerCSS.String(), outerStyle))
+			e.sb.WriteString(fmt.Sprintf(`<div style="%s">%s</div>`, innerCSS.String(), innerText))
+		} else {
+			e.sb.WriteString(fmt.Sprintf(`<div class="%s" style="%s">`, outerClass, outerStyle))
+			e.sb.WriteString(fmt.Sprintf(`<div class="%s">%s</div>`, innerClass, innerText))
+		}
 		e.sb.WriteString("</div>\n")
 	}
 }
@@ -901,7 +977,9 @@ func (e *Exporter) ExportPageEnd(pg *preview.PreparedPage) error {
 	// C# per-page CSS emission: print CSS + new content CSS BEFORE the page content.
 	pageNum := e.pageIdx - 1 // 0-based (pageIdx was incremented in ExportPageBegin)
 
-	if e.EmbedCSS && e.css != nil {
+	// In InlineStyles mode, skip the <style> class block — all CSS is inline.
+	// C# reference: HTMLExportStyles.cs InlineStyles branch skips cssStyles emission.
+	if e.EmbedCSS && e.css != nil && !e.InlineStyles {
 		// Print CSS (one block per page).
 		e.sb.WriteString(fmt.Sprintf("<style type=\"text/css\" media=\"print\"><!--\ndiv.frpage%d { break-after: always; page-break-inside: avoid; }\n @page { size: portrait; margin: 0; }--></style>\n", pageNum))
 		// New content CSS classes for this page.
@@ -958,6 +1036,33 @@ func (e *Exporter) Finish() error {
 // Useful for testing. Call after Export has been called.
 func (e *Exporter) HTML() string {
 	return e.sb.String()
+}
+
+// ── InlineStyles helpers ─────────────────────────────────────────────────────────
+
+// cssAttr returns either a class="sN" attribute (normal mode) or an inline
+// style="..." attribute (InlineStyles mode) for the given CSS content string.
+// This matches C# GetStyle(string): InlineStyle(style) vs GetStyleTag(index).
+// C# reference: HTMLExportStyles.cs lines 98-109.
+func (e *Exporter) cssAttr(css string) string {
+	if e.InlineStyles {
+		// C# InlineStyle: return $"style=\"{style}\""
+		return fmt.Sprintf(`style="%s"`, css)
+	}
+	name := e.css.Register(css)
+	if name == "" {
+		return ""
+	}
+	return fmt.Sprintf(`class="%s"`, name)
+}
+
+// cssClass returns only the class name string (no attribute wrapping), or ""
+// in InlineStyles mode. Used when the caller needs to compose multiple classes.
+func (e *Exporter) cssClass(css string) string {
+	if e.InlineStyles {
+		return ""
+	}
+	return e.css.Register(css)
 }
 
 // ── CSS helpers ─────────────────────────────────────────────────────────────────

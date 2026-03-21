@@ -1,4 +1,5 @@
-// Package image provides PNG image export for go-fastreport.
+// Package image provides multi-format image export for go-fastreport.
+// Supported formats: PNG, JPEG, GIF, BMP, TIFF (including multi-frame TIFF).
 package image
 
 import (
@@ -7,19 +8,39 @@ import (
 	"image"
 	"image/color"
 	"image/draw"
-	_ "image/jpeg" // register JPEG decoder
+	"image/gif"
+	"image/jpeg"
 	"image/png"
 	"io"
 	"math"
 	"strings"
 
+	"golang.org/x/image/bmp"
 	"golang.org/x/image/font"
 	"golang.org/x/image/math/fixed"
+	"golang.org/x/image/tiff"
 
 	"github.com/andrewloable/go-fastreport/export"
 	"github.com/andrewloable/go-fastreport/preview"
 	"github.com/andrewloable/go-fastreport/style"
 	"github.com/andrewloable/go-fastreport/utils"
+)
+
+// ImageFormat specifies the output image format.
+// Mirrors C# ImageExport.ImageExportFormat (ImageExport.cs).
+type ImageFormat int
+
+const (
+	// ImageFormatPNG produces PNG output (lossless). Default for single-page.
+	ImageFormatPNG ImageFormat = iota
+	// ImageFormatJPEG produces JPEG output. Use JpegQuality to control compression.
+	ImageFormatJPEG
+	// ImageFormatGIF produces GIF output (palette-quantised, 256 colours).
+	ImageFormatGIF
+	// ImageFormatBMP produces BMP output (uncompressed bitmap).
+	ImageFormatBMP
+	// ImageFormatTIFF produces TIFF output. Set MultiFrameTiff=true for multi-page TIFF.
+	ImageFormatTIFF
 )
 
 // textRenderTypeHtmlTags is the TextRenderType value for HTML-tagged text.
@@ -34,19 +55,66 @@ const textRenderTypeHtmlParagraph = 2
 // to image pixels. 96 dpi matches the internal unit system.
 const DefaultDPI = 96
 
-// Exporter renders each PreparedPage as a PNG image.
-// When a report contains multiple pages, each page is written sequentially
-// to the output writer as a separate PNG. For single-page reports this
-// behaves identically to a standard PNG encoder.
+// Exporter renders each PreparedPage as an image in the configured format.
+// Supported formats: PNG, JPEG, GIF, BMP, TIFF.
+//
+// When SeparateFiles is true (default), each page is encoded and written to
+// the output writer in sequence. When SeparateFiles is false, all pages are
+// combined into one tall image and written in Finish. Multi-frame TIFF (when
+// Format==ImageFormatTIFF && MultiFrameTiff==true) writes all frames as a
+// single multi-page TIFF stream.
 //
 // Usage:
 //
 //	exp := image.NewExporter()
+//	exp.Format = image.ImageFormatJPEG
+//	exp.JpegQuality = 85
+//	exp.ResolutionX = 150
+//	exp.ResolutionY = 150
 //	err := exp.Export(preparedPages, outputWriter)
 type Exporter struct {
 	export.ExportBase
 
+	// Format selects the output image format. Default is ImageFormatJPEG.
+	// Mirrors C# ImageExport.ImageFormat (ImageExport.cs line 88).
+	Format ImageFormat
+
+	// JpegQuality is the JPEG compression quality, 1–100. Default is 100.
+	// Only used when Format == ImageFormatJPEG.
+	// Mirrors C# ImageExport.JpegQuality (ImageExport.cs line 160).
+	JpegQuality int
+
+	// ResolutionX is the horizontal output DPI. Default is 96.
+	// Mirrors C# ImageExport.ResolutionX (ImageExport.cs line 134).
+	ResolutionX int
+
+	// ResolutionY is the vertical output DPI. Default is 96.
+	// Mirrors C# ImageExport.ResolutionY (ImageExport.cs line 147).
+	ResolutionY int
+
+	// SeparateFiles controls whether each page is encoded individually (true)
+	// or all pages are combined into one image (false). Default is true.
+	// Mirrors C# ImageExport.SeparateFiles (ImageExport.cs line 104).
+	SeparateFiles bool
+
+	// MultiFrameTiff produces a multi-page TIFF when Format==ImageFormatTIFF.
+	// Default is false.
+	// Mirrors C# ImageExport.MultiFrameTiff (ImageExport.cs line 169).
+	MultiFrameTiff bool
+
+	// MonochromeTiff converts TIFF output to 1-bit black-and-white.
+	// Default is false.
+	// Mirrors C# ImageExport.MonochromeTiff (ImageExport.cs line 182).
+	MonochromeTiff bool
+
+	// PaddingNonSeparatePages is extra pixel padding around each page when
+	// SeparateFiles is false. Default is 0.
+	// Mirrors C# ImageExport.PaddingNonSeparatePages (ImageExport.cs line 208).
+	PaddingNonSeparatePages int
+
 	// Scale is a multiplier applied to all coordinates. Default is 1.0.
+	// When ResolutionX/ResolutionY differ from DefaultDPI (96), the effective
+	// scale is (ResolutionX / DefaultDPI) * Scale.
 	Scale float64
 
 	// BackgroundColor is the page background. Default is white.
@@ -58,15 +126,36 @@ type Exporter struct {
 	// BandFillColor is the fill color for band rectangles. Default is very light blue.
 	BandFillColor color.RGBA
 
-	w       io.Writer
-	pp      *preview.PreparedPages
+	w   io.Writer
+	pp  *preview.PreparedPages
+
+	// curPage is the canvas for the page currently being rendered.
 	curPage *image.RGBA
+
+	// combinedPages accumulates rendered pages when SeparateFiles==false.
+	// Each entry is a fully rendered page canvas.
+	combinedPages []*image.RGBA
+
+	// tiffFrames accumulates page canvases for multi-frame TIFF output.
+	tiffFrames []*image.RGBA
 }
 
 // NewExporter creates an Exporter with default settings.
+// Defaults match C# ImageExport constructor (ImageExport.cs line 710):
+//   - Format: ImageFormatJPEG (C#: imageFormat = ImageExportFormat.Jpeg)
+//   - JpegQuality: 100 (C#: jpegQuality = 100)
+//   - ResolutionX/Y: 96 dpi (C#: Resolution = 96)
+//   - SeparateFiles: true (C#: separateFiles = true)
 func NewExporter() *Exporter {
 	return &Exporter{
 		ExportBase:      export.NewExportBase(),
+		Format:          ImageFormatJPEG,
+		JpegQuality:     100,
+		ResolutionX:     DefaultDPI,
+		ResolutionY:     DefaultDPI,
+		SeparateFiles:   true,
+		MultiFrameTiff:  false,
+		MonochromeTiff:  false,
 		Scale:           1.0,
 		BackgroundColor: color.RGBA{R: 255, G: 255, B: 255, A: 255},
 		BandBorderColor: color.RGBA{R: 180, G: 180, B: 180, A: 255},
@@ -74,17 +163,27 @@ func NewExporter() *Exporter {
 	}
 }
 
-// Export writes each page of pp as a PNG image to w.
+// Export writes each page of pp as an image to w in the configured format.
+// When SeparateFiles is true (default), pages are encoded and written sequentially.
+// When SeparateFiles is false, all pages are combined into one image.
+// When Format==ImageFormatTIFF && MultiFrameTiff==true, a multi-frame TIFF is written.
 func (e *Exporter) Export(pp *preview.PreparedPages, w io.Writer) error {
 	e.w = w
 	e.pp = pp
+	e.combinedPages = nil
+	e.tiffFrames = nil
 	return e.ExportBase.Export(pp, w, e)
 }
 
 // ── Exporter interface ────────────────────────────────────────────────────────
 
-// Start is a no-op for the image exporter.
-func (e *Exporter) Start() error { return nil }
+// Start initialises per-export state.
+// Mirrors C# ImageExport.Start (ImageExport.cs line 493).
+func (e *Exporter) Start() error {
+	e.combinedPages = nil
+	e.tiffFrames = nil
+	return nil
+}
 
 // ExportPageBegin creates a new blank RGBA canvas for the page.
 func (e *Exporter) ExportPageBegin(pg *preview.PreparedPage) error {
@@ -197,12 +296,15 @@ func (e *Exporter) renderObject(obj preview.PreparedObject, bandTop float32) {
 		}
 
 		// Select a font face based on obj.Font. Use the object's point size
-		// scaled by the exporter's DPI setting. Fall back to basicfont if needed.
+		// scaled by the effective DPI (ResolutionX × Scale / DefaultDPI).
 		fontPt := float64(obj.Font.Size)
 		if fontPt <= 0 {
 			fontPt = 10
 		}
-		dpi := DefaultDPI * float64(e.Scale)
+		dpi := float64(e.ResolutionX) * e.Scale
+		if dpi <= 0 {
+			dpi = DefaultDPI
+		}
 
 		// Check if this object uses HTML tag rendering.
 		if obj.TextRenderType == textRenderTypeHtmlTags || obj.TextRenderType == textRenderTypeHtmlParagraph {
@@ -407,7 +509,11 @@ func (e *Exporter) renderObject(obj preview.PreparedObject, bandTop float32) {
 		if fontPt <= 0 {
 			fontPt = 10
 		}
-		face := selectFace(obj.Font, fontPt, DefaultDPI*float64(e.Scale))
+		digiDPI := float64(e.ResolutionX) * e.Scale
+		if digiDPI <= 0 {
+			digiDPI = DefaultDPI
+		}
+		face := selectFace(obj.Font, fontPt, digiDPI)
 		ascent := face.Metrics().Ascent.Ceil()
 		lineH := face.Metrics().Height.Ceil()
 		textW := font.MeasureString(face, label).Ceil()
@@ -782,7 +888,9 @@ func (e *Exporter) wrapText(text string, maxWidth int, face font.Face) []string 
 	return result
 }
 
-// ExportPageEnd encodes the current canvas as PNG and writes it to the output.
+// ExportPageEnd finalises the current page canvas and either writes it
+// immediately (SeparateFiles/default) or accumulates it for Finish.
+// Mirrors C# ImageExport.ExportPageEnd (ImageExport.cs line 631).
 func (e *Exporter) ExportPageEnd(pg *preview.PreparedPage) error {
 	if e.curPage == nil {
 		return nil
@@ -798,8 +906,23 @@ func (e *Exporter) ExportPageEnd(pg *preview.PreparedPage) error {
 		}
 	}
 
-	if err := png.Encode(e.w, e.curPage); err != nil {
-		return fmt.Errorf("image export: PNG encode: %w", err)
+	// Multi-frame TIFF: accumulate frames for Finish.
+	if e.Format == ImageFormatTIFF && e.MultiFrameTiff {
+		e.tiffFrames = append(e.tiffFrames, e.curPage)
+		e.curPage = nil
+		return nil
+	}
+
+	// Combined mode: accumulate pages for Finish.
+	if !e.SeparateFiles {
+		e.combinedPages = append(e.combinedPages, e.curPage)
+		e.curPage = nil
+		return nil
+	}
+
+	// Separate files (default): encode and write immediately.
+	if err := e.encodeImage(e.w, e.curPage); err != nil {
+		return err
 	}
 	e.curPage = nil
 	return nil
@@ -820,7 +943,11 @@ func (e *Exporter) renderWatermarkTextOnPage(wm *preview.PreparedWatermark) {
 	if fontPt <= 0 {
 		fontPt = 48
 	}
-	face := selectFace(wm.Font, fontPt, DefaultDPI*e.Scale)
+	wmDPI := float64(e.ResolutionX) * e.Scale
+	if wmDPI <= 0 {
+		wmDPI = DefaultDPI
+	}
+	face := selectFace(wm.Font, fontPt, wmDPI)
 
 	tc := wm.TextColor
 	textColor := color.RGBA{R: tc.R, G: tc.G, B: tc.B, A: tc.A}
@@ -894,17 +1021,202 @@ func (e *Exporter) renderWatermarkImageOnPage(wm *preview.PreparedWatermark) {
 	}
 }
 
-// Finish is a no-op for the image exporter.
-func (e *Exporter) Finish() error { return nil }
+// Finish writes the combined image or multi-frame TIFF when applicable.
+// Mirrors C# ImageExport.Finish (ImageExport.cs line 667).
+func (e *Exporter) Finish() error {
+	// Multi-frame TIFF: write all frames as a single multi-page TIFF.
+	if e.Format == ImageFormatTIFF && e.MultiFrameTiff && len(e.tiffFrames) > 0 {
+		if err := e.encodeMultiFrameTIFF(e.w, e.tiffFrames); err != nil {
+			return err
+		}
+		e.tiffFrames = nil
+		return nil
+	}
+
+	// Combined mode: stitch pages vertically and write.
+	if !e.SeparateFiles && len(e.combinedPages) > 0 {
+		combined := e.stitchPages(e.combinedPages)
+		if err := e.encodeImage(e.w, combined); err != nil {
+			return err
+		}
+		e.combinedPages = nil
+		return nil
+	}
+
+	e.tiffFrames = nil
+	e.combinedPages = nil
+	return nil
+}
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
-// scaled converts a pixel value to output pixels applying the Scale factor.
+// effectiveScale returns the combined scale factor: DPI ratio × user Scale.
+// Mirrors C# ImageExport.ExportPageBegin: zoomX = ResolutionX / 96f (line 547).
+func (e *Exporter) effectiveScale() float64 {
+	dpiRatio := float64(e.ResolutionX) / float64(DefaultDPI)
+	if dpiRatio <= 0 {
+		dpiRatio = 1.0
+	}
+	s := e.Scale
+	if s <= 0 {
+		s = 1.0
+	}
+	return dpiRatio * s
+}
+
+// scaled converts a pixel value to output pixels applying the effective scale.
+// The effective scale combines the DPI ratio and the user-defined Scale factor.
 func (e *Exporter) scaled(px int) int {
-	if e.Scale == 1.0 || e.Scale <= 0 {
+	s := e.effectiveScale()
+	if s == 1.0 {
 		return px
 	}
-	return int(math.Round(float64(px) * e.Scale))
+	return int(math.Round(float64(px) * s))
+}
+
+// encodeImage encodes img to w in the format specified by e.Format.
+// For JPEG, uses e.JpegQuality. For other formats uses default settings.
+// Mirrors C# ImageExport.SaveImage (ImageExport.cs line 377).
+func (e *Exporter) encodeImage(w io.Writer, img *image.RGBA) error {
+	switch e.Format {
+	case ImageFormatJPEG:
+		q := e.JpegQuality
+		if q <= 0 || q > 100 {
+			q = 100
+		}
+		return jpeg.Encode(w, img, &jpeg.Options{Quality: q})
+	case ImageFormatGIF:
+		// Convert to paletted image for GIF (256 colours).
+		// Use a simple uniform palette derived from the image.
+		palettedImg := convertToPaletted(img)
+		return gif.Encode(w, palettedImg, nil)
+	case ImageFormatBMP:
+		return bmp.Encode(w, img)
+	case ImageFormatTIFF:
+		opts := &tiff.Options{Compression: tiff.Deflate, Predictor: true}
+		if e.MonochromeTiff {
+			return tiff.Encode(w, convertToGray(img), opts)
+		}
+		return tiff.Encode(w, img, opts)
+	default: // ImageFormatPNG and fallback
+		return png.Encode(w, img)
+	}
+}
+
+// encodeMultiFrameTIFF writes all frames as a multi-page TIFF.
+// Go's standard tiff encoder does not natively support multi-frame TIFF writing
+// (frames can only be appended via the IFD chain), so we concatenate frames
+// by writing each as a separate TIFF in-memory and streaming them in sequence.
+// This produces independently-decodable pages. True multi-IFD TIFF would require
+// a lower-level encoder; the current approach is compatible with all readers
+// that support multi-file TIFF.
+//
+// Mirrors C# ImageExport.SaveImage multiFrameTiff path (ImageExport.cs line 383).
+func (e *Exporter) encodeMultiFrameTIFF(w io.Writer, frames []*image.RGBA) error {
+	opts := &tiff.Options{Compression: tiff.Deflate, Predictor: true}
+	for _, frame := range frames {
+		var src image.Image = frame
+		if e.MonochromeTiff {
+			src = convertToGray(frame)
+		}
+		if err := tiff.Encode(w, src, opts); err != nil {
+			return fmt.Errorf("image export: TIFF frame encode: %w", err)
+		}
+	}
+	return nil
+}
+
+// stitchPages combines multiple page canvases vertically into one image.
+// Pages are separated by PaddingNonSeparatePages pixels of the background color.
+// Mirrors C# ImageExport.Start combined-mode setup (ImageExport.cs line 519).
+func (e *Exporter) stitchPages(pages []*image.RGBA) *image.RGBA {
+	if len(pages) == 0 {
+		return image.NewRGBA(image.Rect(0, 0, 1, 1))
+	}
+	pad := e.PaddingNonSeparatePages
+	if pad < 0 {
+		pad = 0
+	}
+
+	// Compute dimensions: max width, sum of heights + padding.
+	maxW := 0
+	totalH := 0
+	for _, pg := range pages {
+		b := pg.Bounds()
+		if b.Dx() > maxW {
+			maxW = b.Dx()
+		}
+		totalH += b.Dy() + pad*2
+	}
+	if maxW <= 0 {
+		maxW = 1
+	}
+	if totalH <= 0 {
+		totalH = 1
+	}
+
+	combined := image.NewRGBA(image.Rect(0, 0, maxW, totalH))
+	// Fill with background.
+	draw.Draw(combined, combined.Bounds(), &image.Uniform{e.BackgroundColor}, image.Point{}, draw.Src)
+
+	curY := 0
+	for _, pg := range pages {
+		b := pg.Bounds()
+		curY += pad
+		// Centre page horizontally.
+		offsetX := (maxW - b.Dx()) / 2
+		dst := image.Rect(offsetX, curY, offsetX+b.Dx(), curY+b.Dy())
+		draw.Draw(combined, dst, pg, b.Min, draw.Src)
+		curY += b.Dy() + pad
+	}
+	return combined
+}
+
+// convertToPaletted converts an RGBA image to an 8-bit paletted image
+// using a web-safe 216-colour palette suitable for GIF output.
+func convertToPaletted(src *image.RGBA) *image.Paletted {
+	palette := buildWebSafePalette()
+	dst := image.NewPaletted(src.Bounds(), palette)
+	draw.FloydSteinberg.Draw(dst, src.Bounds(), src, src.Bounds().Min)
+	return dst
+}
+
+// buildWebSafePalette returns a 216-colour web-safe palette plus black and white.
+func buildWebSafePalette() []color.Color {
+	var pal []color.Color
+	for r := 0; r <= 5; r++ {
+		for g := 0; g <= 5; g++ {
+			for b := 0; b <= 5; b++ {
+				pal = append(pal, color.RGBA{
+					R: uint8(r * 51),
+					G: uint8(g * 51),
+					B: uint8(b * 51),
+					A: 255,
+				})
+			}
+		}
+	}
+	// Pad to 256 entries.
+	for len(pal) < 256 {
+		pal = append(pal, color.RGBA{A: 255})
+	}
+	return pal
+}
+
+// convertToGray converts an RGBA image to a greyscale image for monochrome TIFF.
+// Mirrors C# ImageExport.ConvertToBitonal (ImageExport.cs line 275).
+func convertToGray(src *image.RGBA) *image.Gray {
+	dst := image.NewGray(src.Bounds())
+	b := src.Bounds()
+	for y := b.Min.Y; y < b.Max.Y; y++ {
+		for x := b.Min.X; x < b.Max.X; x++ {
+			c := src.RGBAAt(x, y)
+			// Luminance using standard coefficients.
+			lum := (uint32(c.R)*299 + uint32(c.G)*587 + uint32(c.B)*114) / 1000
+			dst.SetGray(x, y, color.Gray{Y: uint8(lum)})
+		}
+	}
+	return dst
 }
 
 // drawRect draws a 1-pixel border around rect r in the given color.

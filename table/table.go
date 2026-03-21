@@ -27,6 +27,9 @@ type TableBase struct {
 	rows []*TableRow
 	// columns is the ordered list of table columns.
 	columns []*TableColumn
+	// styles deduplicates cell styles used during rendering.
+	// See FastReport.Table.TableBase.styles (TableBase.cs line 39).
+	styles *TableStyleCollection
 
 	// fixedRows is the number of header rows repeated on each page.
 	fixedRows int
@@ -52,12 +55,19 @@ type TableBase struct {
 }
 
 // NewTableBase creates a TableBase with defaults matching the C# constructor.
+// See FastReport.Table.TableBase constructor (TableBase.cs line 1384).
 func NewTableBase() *TableBase {
 	return &TableBase{
 		BreakableComponent: *report.NewBreakableComponent(),
+		styles:             NewTableStyleCollection(),
 		repeatHeaders:      true, // C# default is true
 	}
 }
+
+// Styles returns the style deduplication collection owned by this table.
+// It is the Go equivalent of the internal FastReport.Table.TableBase.Styles property
+// (TableBase.cs line 77).
+func (t *TableBase) Styles() *TableStyleCollection { return t.styles }
 
 // --- Rows ---
 

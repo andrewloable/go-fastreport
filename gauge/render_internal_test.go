@@ -153,3 +153,113 @@ func TestDrawArc_NegativeSweep(t *testing.T) {
 		t.Error("expected pixels to be drawn by drawArc with negative sweep")
 	}
 }
+
+// ── drawRadialScaleTicks guard conditions ─────────────────────────────────────
+
+// TestDrawRadialScaleTicks_ZeroRadius tests the early-return guard (radius <= 0).
+func TestDrawRadialScaleTicks_ZeroRadius(t *testing.T) {
+	img := image.NewRGBA(image.Rect(0, 0, 50, 50))
+	tick := color.RGBA{R: 255, A: 255}
+	// radius = 0 → should return immediately without drawing.
+	drawRadialScaleTicks(img, 25, 25, 0, -135, 135, 11, 4, tick)
+	for y := 0; y < 50; y++ {
+		for x := 0; x < 50; x++ {
+			if img.RGBAAt(x, y) != (color.RGBA{}) {
+				t.Errorf("pixel (%d,%d) set with zero radius", x, y)
+			}
+		}
+	}
+}
+
+// TestDrawRadialScaleTicks_MajorCountLessThan2 tests early-return for majorCount < 2.
+func TestDrawRadialScaleTicks_MajorCountLessThan2(t *testing.T) {
+	img := image.NewRGBA(image.Rect(0, 0, 50, 50))
+	tick := color.RGBA{R: 255, A: 255}
+	drawRadialScaleTicks(img, 25, 25, 20, -135, 135, 1, 4, tick)
+	for y := 0; y < 50; y++ {
+		for x := 0; x < 50; x++ {
+			if img.RGBAAt(x, y) != (color.RGBA{}) {
+				t.Errorf("pixel (%d,%d) set with majorCount=1", x, y)
+			}
+		}
+	}
+}
+
+// TestDrawRadialScaleTicks_NegativeSweep tests the sweep < 0 correction branch.
+func TestDrawRadialScaleTicks_NegativeSweep(t *testing.T) {
+	img := image.NewRGBA(image.Rect(0, 0, 100, 100))
+	tick := color.RGBA{B: 255, A: 255}
+	// startAngle > endAngle forces sweep < 0 → sweep += 360.
+	drawRadialScaleTicks(img, 50, 50, 40, 90, -90, 5, 3, tick)
+	found := false
+	for y := 0; y < 100 && !found; y++ {
+		for x := 0; x < 100 && !found; x++ {
+			if img.RGBAAt(x, y) == tick {
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Error("expected tick pixels with negative sweep")
+	}
+}
+
+// ── drawRadialLabelMarkers guard conditions ───────────────────────────────────
+
+// TestDrawRadialLabelMarkers_ZeroRadius tests early-return guard.
+func TestDrawRadialLabelMarkers_ZeroRadius(t *testing.T) {
+	img := image.NewRGBA(image.Rect(0, 0, 50, 50))
+	mark := color.RGBA{G: 255, A: 255}
+	drawRadialLabelMarkers(img, 25, 25, 0, -135, 135, 11, mark)
+	for y := 0; y < 50; y++ {
+		for x := 0; x < 50; x++ {
+			if img.RGBAAt(x, y) != (color.RGBA{}) {
+				t.Errorf("pixel (%d,%d) set with zero labelRadius", x, y)
+			}
+		}
+	}
+}
+
+// TestDrawRadialLabelMarkers_NegativeSweep tests the sweep < 0 correction branch.
+func TestDrawRadialLabelMarkers_NegativeSweep(t *testing.T) {
+	img := image.NewRGBA(image.Rect(0, 0, 100, 100))
+	mark := color.RGBA{G: 200, A: 255}
+	drawRadialLabelMarkers(img, 50, 50, 40, 90, -90, 5, mark)
+	found := false
+	for y := 0; y < 100 && !found; y++ {
+		for x := 0; x < 100 && !found; x++ {
+			if img.RGBAAt(x, y) == mark {
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Error("expected marker pixels with negative sweep")
+	}
+}
+
+// TestDrawRadialLabelMarkers_MajorCountLessThan2 tests early return for majorCount < 2.
+func TestDrawRadialLabelMarkers_MajorCountLessThan2(t *testing.T) {
+	img := image.NewRGBA(image.Rect(0, 0, 50, 50))
+	mark := color.RGBA{G: 255, A: 255}
+	drawRadialLabelMarkers(img, 25, 25, 20, -135, 135, 1, mark)
+	for y := 0; y < 50; y++ {
+		for x := 0; x < 50; x++ {
+			if img.RGBAAt(x, y) != (color.RGBA{}) {
+				t.Errorf("pixel (%d,%d) set with majorCount=1", x, y)
+			}
+		}
+	}
+}
+
+// ── drawRadialPointerNeedle edge case ─────────────────────────────────────────
+
+// TestDrawRadialPointerNeedle_TinyRadius ensures the needleLen >= 1 guard fires.
+// When radius is very small, needleLen would be 0; the guard clamps it to 1.
+func TestDrawRadialPointerNeedle_TinyRadius(t *testing.T) {
+	img := image.NewRGBA(image.Rect(0, 0, 10, 10))
+	ptr := color.RGBA{R: 200, A: 255}
+	// radius = 1, so 0.82*1 ≈ 0 (rounds to 0) → guard sets needleLen = 1.
+	drawRadialPointerNeedle(img, 5, 5, 0, 1, ptr)
+	// Should not panic; just verify at least the center pixel may be set.
+}

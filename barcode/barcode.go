@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"strings"
 
+	"github.com/andrewloable/go-fastreport/expr"
 	"github.com/andrewloable/go-fastreport/report"
 	"github.com/andrewloable/go-fastreport/style"
 )
@@ -19,35 +21,35 @@ import (
 type BarcodeType string
 
 const (
-	BarcodeTypeCode128              BarcodeType = "Code128"
-	BarcodeTypeCode128A             BarcodeType = "Code128A"
-	BarcodeTypeCode128B             BarcodeType = "Code128B"
-	BarcodeTypeCode128C             BarcodeType = "Code128C"
-	BarcodeTypeCode39               BarcodeType = "Code39"
-	BarcodeTypeCode39Extended       BarcodeType = "Code39Extended"
-	BarcodeTypeCode93               BarcodeType = "Code93"
-	BarcodeTypeCode93Extended       BarcodeType = "Code93Extended"
-	BarcodeTypeCode2of5             BarcodeType = "2of5"
-	BarcodeTypeCode2of5Industrial   BarcodeType = "2of5Industrial"
-	BarcodeTypeCode2of5Matrix       BarcodeType = "2of5Matrix"
-	BarcodeTypeCodabar              BarcodeType = "Codabar"
-	BarcodeTypeEAN13                BarcodeType = "EAN13"
-	BarcodeTypeEAN8                 BarcodeType = "EAN8"
-	BarcodeTypeUPCA                 BarcodeType = "UPCA"
-	BarcodeTypeUPCE                 BarcodeType = "UPCE"
-	BarcodeTypeMSI                  BarcodeType = "MSI"
-	BarcodeTypeQR                   BarcodeType = "QR"
-	BarcodeTypeDataMatrix           BarcodeType = "DataMatrix"
-	BarcodeTypeAztec                BarcodeType = "Aztec"
-	BarcodeTypeMaxiCode             BarcodeType = "MaxiCode"
-	BarcodeTypePDF417               BarcodeType = "PDF417"
-	BarcodeTypeGS1_128              BarcodeType = "GS1-128"
-	BarcodeTypeITF14                BarcodeType = "ITF14"
-	BarcodeTypeDeutscheIdentcode    BarcodeType = "DeutscheIdentcode"
-	BarcodeTypeDeutscheLeitcode     BarcodeType = "DeutscheLeitcode"
-	BarcodeTypeSupplement2          BarcodeType = "Supplement2"
-	BarcodeTypeSupplement5          BarcodeType = "Supplement5"
-	BarcodeTypeJapanPost4State      BarcodeType = "JapanPost4State"
+	BarcodeTypeCode128            BarcodeType = "Code128"
+	BarcodeTypeCode128A           BarcodeType = "Code128A"
+	BarcodeTypeCode128B           BarcodeType = "Code128B"
+	BarcodeTypeCode128C           BarcodeType = "Code128C"
+	BarcodeTypeCode39             BarcodeType = "Code39"
+	BarcodeTypeCode39Extended     BarcodeType = "Code39Extended"
+	BarcodeTypeCode93             BarcodeType = "Code93"
+	BarcodeTypeCode93Extended     BarcodeType = "Code93Extended"
+	BarcodeTypeCode2of5           BarcodeType = "2of5"
+	BarcodeTypeCode2of5Industrial BarcodeType = "2of5Industrial"
+	BarcodeTypeCode2of5Matrix     BarcodeType = "2of5Matrix"
+	BarcodeTypeCodabar            BarcodeType = "Codabar"
+	BarcodeTypeEAN13              BarcodeType = "EAN13"
+	BarcodeTypeEAN8               BarcodeType = "EAN8"
+	BarcodeTypeUPCA               BarcodeType = "UPCA"
+	BarcodeTypeUPCE               BarcodeType = "UPCE"
+	BarcodeTypeMSI                BarcodeType = "MSI"
+	BarcodeTypeQR                 BarcodeType = "QR"
+	BarcodeTypeDataMatrix         BarcodeType = "DataMatrix"
+	BarcodeTypeAztec              BarcodeType = "Aztec"
+	BarcodeTypeMaxiCode           BarcodeType = "MaxiCode"
+	BarcodeTypePDF417             BarcodeType = "PDF417"
+	BarcodeTypeGS1_128            BarcodeType = "GS1-128"
+	BarcodeTypeITF14              BarcodeType = "ITF14"
+	BarcodeTypeDeutscheIdentcode  BarcodeType = "DeutscheIdentcode"
+	BarcodeTypeDeutscheLeitcode   BarcodeType = "DeutscheLeitcode"
+	BarcodeTypeSupplement2        BarcodeType = "Supplement2"
+	BarcodeTypeSupplement5        BarcodeType = "Supplement5"
+	BarcodeTypeJapanPost4State    BarcodeType = "JapanPost4State"
 )
 
 // -----------------------------------------------------------------------
@@ -90,6 +92,11 @@ type BaseBarcodeImpl struct {
 	// is present in the FRX file. A zero value means "use the type's default".
 	// C# LinearBarcodeBase: barcode.WideBarRatio = Reader.ReadFloat("Barcode.WideBarRatio", 2)
 	wideBarRatioOverride float32
+	// ratioMin and ratioMax are the clamping bounds for WideBarRatio.
+	// C# LinearBarcodeBase.cs:40-41: internal float ratioMin, ratioMax.
+	// Set in each barcode type's constructor; zero means "no bound".
+	ratioMin float32
+	ratioMax float32
 	// showText is propagated from BarcodeObject.ShowText before CalcBounds.
 	// Used by 2D barcodes to add font height to the bounds.
 	showText bool
@@ -97,10 +104,37 @@ type BaseBarcodeImpl struct {
 
 // SetWideBarRatio overrides the WideBarRatio for this barcode instance.
 // Called during FRX deserialization when Barcode.WideBarRatio is present.
-func (b *BaseBarcodeImpl) SetWideBarRatio(v float32) { b.wideBarRatioOverride = v }
+// Applies clamping to ratioMin/ratioMax per C# LinearBarcodeBase.cs:66-73.
+func (b *BaseBarcodeImpl) SetWideBarRatio(v float32) {
+	b.wideBarRatioOverride = v
+	if b.ratioMin != 0 && b.wideBarRatioOverride < b.ratioMin {
+		b.wideBarRatioOverride = b.ratioMin
+	}
+	if b.ratioMax != 0 && b.wideBarRatioOverride > b.ratioMax {
+		b.wideBarRatioOverride = b.ratioMax
+	}
+}
 
 // WBROverride returns the FRX-deserialized WideBarRatio override (0 if not set).
 func (b *BaseBarcodeImpl) WBROverride() float32 { return b.wideBarRatioOverride }
+
+// clampedWBR returns the effective WideBarRatio: the override if non-zero,
+// otherwise typeDefault; the chosen value is then clamped to [ratioMin, ratioMax].
+// C# LinearBarcodeBase.WideBarRatio getter always returns the already-clamped value.
+// This helper is called by each concrete GetWideBarRatio() implementation.
+func (b *BaseBarcodeImpl) clampedWBR(typeDefault float32) float32 {
+	v := typeDefault
+	if b.wideBarRatioOverride != 0 {
+		v = b.wideBarRatioOverride
+	}
+	if b.ratioMin != 0 && v < b.ratioMin {
+		v = b.ratioMin
+	}
+	if b.ratioMax != 0 && v > b.ratioMax {
+		v = b.ratioMax
+	}
+	return v
+}
 
 // SetShowText propagates the BarcodeObject.ShowText flag to the barcode implementation.
 // Used by 2D barcodes to include font height in CalcBounds.
@@ -199,9 +233,13 @@ type Code39Barcode struct {
 
 // NewCode39Barcode creates a Code39Barcode.
 // C# LinearBarcodeBase default: calcCheckSum=true (LinearBarcodeBase.cs:637).
+// C# Barcode39 constructor: ratioMin=2, ratioMax=3 (Barcode39.cs:137-138).
 func NewCode39Barcode() *Code39Barcode {
+	b := newBaseBarcodeImpl(BarcodeTypeCode39)
+	b.ratioMin = 2
+	b.ratioMax = 3
 	return &Code39Barcode{
-		BaseBarcodeImpl: newBaseBarcodeImpl(BarcodeTypeCode39),
+		BaseBarcodeImpl: b,
 		CalcChecksum:    true,
 	}
 }
@@ -253,35 +291,69 @@ type QRBarcode struct {
 	// ShowMarker controls whether finder-pattern markers are drawn.
 	// C# BarcodeQR.showMarker, default false (BarcodeQR.cs:281).
 	ShowMarker bool
-	// Shape is the module shape: "Rectangle" or "Circle".
+	// Shape is the module shape: Rectangle, Circle, Diamond, RoundedSquare,
+	// PillHorizontal, PillVertical, Plus, Hexagon, Star, Snowflake.
 	// C# QrModuleShape enum, default Rectangle (BarcodeQR.cs:173).
 	Shape string
+	// UseThinModules adds a 10% inset to non-finder modules.
+	// C# BarcodeQR.UseThinModules default is false.
+	UseThinModules bool
+	// Angle is the rotation angle in degrees applied to rotational module shapes
+	// (Hexagon, Star, Snowflake). Has no effect on non-rotational shapes.
+	// C# BarcodeQR.Angle, default 0 (BarcodeQR.cs:198).
+	Angle int
 }
 
 // NewQRBarcode creates a QRBarcode.
 func NewQRBarcode() *QRBarcode {
 	return &QRBarcode{
 		BaseBarcodeImpl: newBaseBarcodeImpl(BarcodeTypeQR),
-		ErrorCorrection: "L", // C# BarcodeQR.cs:143 [DefaultValue(QRCodeErrorCorrection.L)]
-		QuietZone:       true,       // C# BarcodeQR default
-		Encoding:        "UTF8",     // C# QRCodeEncoding.UTF8 default
+		ErrorCorrection: "L",         // C# BarcodeQR.cs:143 [DefaultValue(QRCodeErrorCorrection.L)]
+		QuietZone:       true,        // C# BarcodeQR default
+		Encoding:        "UTF8",      // C# QRCodeEncoding.UTF8 default
 		Shape:           "Rectangle", // C# QrModuleShape.Rectangle default
 	}
 }
 
 // Encode validates and stores text for QR encoding.
 func (q *QRBarcode) Encode(text string) error {
-	q.encodedText = text
+	q.encodedText = normalizeSwissQRPayload(text)
 	return nil
 }
 
 // Render renders the QR barcode using the native matrix-based renderer.
+// For Swiss QR payloads (text starting with "SPC") the module shape is forced
+// to Rectangle and UseThinModules is disabled, matching C# BarcodeQR.Draw2DBarcode
+// (BarcodeQR.cs:311–315). After the QR modules are drawn the Swiss cross overlay
+// is applied at the image centre per C# Barcode2DBase.DrawBarcode (Barcode2DBase.cs:22–29).
 func (q *QRBarcode) Render(width, height int) (image.Image, error) {
 	if q.encodedText == "" {
 		return nil, fmt.Errorf("qr: Encode must be called before Render")
 	}
+	shape := q.Shape
+	useThin := q.UseThinModules
+	if isSwissQRPayload(q.encodedText) {
+		// C# BarcodeQR.Draw2DBarcode: force Rectangle shape and no thin modules.
+		shape = "Rectangle"
+		useThin = false
+	}
 	matrix, rows, cols := q.GetMatrix()
-	return DrawBarcode2D(matrix, rows, cols, width, height), nil
+	img := DrawQRCode2D(matrix, rows, cols, width, height, shape, useThin, q.QuietZone, q.Angle)
+	if isSwissQRPayload(q.encodedText) {
+		rgba, ok := img.(*image.RGBA)
+		if !ok {
+			// Convert to RGBA so we can overlay the cross.
+			rgba = image.NewRGBA(img.Bounds())
+			for y := 0; y < height; y++ {
+				for x := 0; x < width; x++ {
+					rgba.Set(x, y, img.At(x, y))
+				}
+			}
+		}
+		DrawSwissCross(rgba, width, height)
+		return rgba, nil
+	}
+	return img, nil
 }
 
 // DefaultValue returns a sample QR value.
@@ -331,6 +403,9 @@ type BarcodeObject struct {
 	// showMarker controls whether finder markers are shown (e.g. QR corner squares).
 	// C# BarcodeObject.ShowMarker, default false (BarcodeObject.cs:329).
 	showMarker bool
+	// asBitmap forces rendering as a bitmap image instead of vector graphics.
+	// C# BarcodeObject.AsBitmap, default false (BarcodeObject.cs:318).
+	asBitmap bool
 }
 
 // BarcodeHorzAlign is the horizontal alignment of the barcode within its bounds.
@@ -477,6 +552,12 @@ func (b *BarcodeObject) ShowMarker() bool { return b.showMarker }
 // SetShowMarker sets the show-marker flag.
 func (b *BarcodeObject) SetShowMarker(v bool) { b.showMarker = v }
 
+// AsBitmap returns whether the barcode is forced to render as a bitmap.
+func (b *BarcodeObject) AsBitmap() bool { return b.asBitmap }
+
+// SetAsBitmap sets the as-bitmap flag.
+func (b *BarcodeObject) SetAsBitmap(v bool) { b.asBitmap = v }
+
 // AllowExpressions returns whether expressions are evaluated in text.
 func (b *BarcodeObject) AllowExpressions() bool { return b.allowExpressions }
 
@@ -488,6 +569,63 @@ func (b *BarcodeObject) Brackets() string { return b.brackets }
 
 // SetBrackets sets the delimiter.
 func (b *BarcodeObject) SetBrackets(s string) { b.brackets = s }
+
+// GetExpressions returns all expression strings from this BarcodeObject for
+// dependency tracking and pre-compilation by the report engine.
+// Mirrors C# BarcodeObject.GetExpressions() (BarcodeObject.cs:557–576):
+//  1. Base expressions: Hyperlink.Expression and Bookmark from ReportComponentBase.
+//  2. DataColumn if non-empty.
+//  3. Expression if non-empty; otherwise, when AllowExpressions is true and
+//     Brackets is non-empty, extract every bracket-delimited expression from Text.
+func (b *BarcodeObject) GetExpressions() []string {
+	var expressions []string
+
+	// 1. Base: collect Hyperlink.Expression and Bookmark (C# ReportComponentBase.GetExpressions).
+	if h := b.Hyperlink(); h != nil && h.Expression != "" {
+		expressions = append(expressions, h.Expression)
+	}
+	if bk := b.Bookmark(); bk != "" {
+		expressions = append(expressions, bk)
+	}
+
+	// 2. DataColumn takes priority for data binding.
+	if b.dataColumn != "" {
+		expressions = append(expressions, b.dataColumn)
+	}
+
+	// 3. Expression or bracket-extracted expressions from Text.
+	// C# BarcodeObject.GetExpressions():
+	//   if Expression != "" → add Expression
+	//   else if AllowExpressions && Brackets != "" → GetExpressions(Text, open, close)
+	if b.expression != "" {
+		expressions = append(expressions, b.expression)
+	} else if b.allowExpressions && b.brackets != "" {
+		// Brackets is stored as "open,close" e.g. "[,]".
+		// Split on the first comma only to support multi-char bracket sequences.
+		parts := strings.SplitN(b.brackets, ",", 2)
+		if len(parts) == 2 {
+			open, close := parts[0], parts[1]
+			for _, tok := range expr.ParseWithBrackets(b.text, open, close) {
+				if tok.IsExpr {
+					expressions = append(expressions, tok.Value)
+				}
+			}
+		}
+	}
+
+	return expressions
+}
+
+// CreateSwissQR initializes the object as a QR barcode carrying a Swiss QR payload.
+// Mirrors the C# BarcodeObject.CreateSwissQR convenience method.
+func (b *BarcodeObject) CreateSwissQR(params SwissQRParameters) {
+	swiss := NewSwissQRBarcode()
+	swiss.Params = params
+
+	b.Barcode = NewQRBarcode()
+	b.text = swiss.FormatPayload()
+	b.showText = false
+}
 
 // UpdateAutoSize resizes the BarcodeObject to fit the barcode's natural dimensions,
 // then applies horizontal alignment via RelocateAlign().
@@ -632,6 +770,25 @@ func (b *BarcodeObject) Serialize(w report.Writer) error {
 	if b.showMarker {
 		w.WriteBool("ShowMarker", true)
 	}
+	// AsBitmap: default false (BarcodeObject.cs:318).
+	if b.asBitmap {
+		w.WriteBool("AsBitmap", true)
+	}
+	// Barcode-type-specific properties.
+	if b.Barcode != nil {
+		switch bc := b.Barcode.(type) {
+		case *IntelligentMailBarcode:
+			if bc.QuietZone {
+				w.WriteBool("Barcode.QuietZone", true)
+			}
+		case *ITF14Barcode:
+			// DrawVerticalBearerBars: default true; only write when false.
+			// C# BarcodeITF14.Serialize (Barcode2of5.cs:405-412).
+			if !bc.DrawVerticalBearerBars {
+				w.WriteBool("Barcode.DrawVerticalBearerBars", false)
+			}
+		}
+	}
 	return nil
 }
 
@@ -669,6 +826,10 @@ func (b *BarcodeObject) Deserialize(r report.Reader) error {
 			if sh := r.ReadStr("Barcode.Shape", ""); sh != "" {
 				bc.Shape = sh
 			}
+			bc.UseThinModules = r.ReadBool("Barcode.UseThinModules", false)
+			// Angle: rotation for rotational shapes (Hexagon, Star, Snowflake), default 0.
+			// C# BarcodeQR.Angle (BarcodeQR.cs:198).
+			bc.Angle = r.ReadInt("Barcode.Angle", 0)
 		case *AztecBarcode:
 			// ErrorCorrection for Aztec is an integer percentage (default 33).
 			// C# BarcodeAztec.ErrorCorrectionPercent serialised as prefix+"ErrorCorrection"
@@ -710,6 +871,18 @@ func (b *BarcodeObject) Deserialize(r report.Reader) error {
 			// DrawVerticalBearerBars: default true.
 			// C# BarcodeITF14.drawVerticalBearerBars=true (Barcode2of5.cs:332).
 			bc.DrawVerticalBearerBars = r.ReadBool("Barcode.DrawVerticalBearerBars", true)
+		case *DeutscheIdentcodeBarcode:
+			// PrintCheckSum: controls whether the check digit appears in display text.
+			// C# BarcodeDeutscheIdentcode serialises this as Barcode.DrawVerticalBearerBars
+			// (a naming quirk in the C# codebase, Barcode2of5.cs:183).
+			// Default true per C# constructor (Barcode2of5.cs:194).
+			bc.PrintCheckSum = r.ReadBool("Barcode.DrawVerticalBearerBars", true)
+		case *DeutscheLeitcodeBarcode:
+			// PrintCheckSum: controls whether the check digit appears in display text.
+			// C# BarcodeDeutscheLeitcode serialises this as Barcode.DrawVerticalBearerBars
+			// (a naming quirk in the C# codebase, Barcode2of5.cs:244).
+			// Default true per C# constructor (Barcode2of5.cs:316).
+			bc.PrintCheckSum = r.ReadBool("Barcode.DrawVerticalBearerBars", true)
 		case *CodabarBarcode:
 			// StartChar/StopChar: C# BarcodeCodabar.cs:63,71 (default A/B).
 			if s := r.ReadStr("Barcode.StartChar", ""); s != "" && len(s) == 1 {
@@ -718,6 +891,10 @@ func (b *BarcodeObject) Deserialize(r report.Reader) error {
 			if s := r.ReadStr("Barcode.StopChar", ""); s != "" && len(s) == 1 {
 				bc.StopChar = s[0]
 			}
+		case *PharmacodeBarcode:
+			bc.QuietZone = r.ReadBool("Barcode.QuietZone", true)
+		case *IntelligentMailBarcode:
+			bc.QuietZone = r.ReadBool("Barcode.QuietZone", false)
 		}
 		// FRX stores the WideBarRatio override as Barcode.WideBarRatio="2.25".
 		// C# LinearBarcodeBase: barcode.WideBarRatio = Reader.ReadFloat("Barcode.WideBarRatio", 2)
@@ -763,6 +940,8 @@ func (b *BarcodeObject) Deserialize(r report.Reader) error {
 	b.horzAlign = parseBarcodeHorzAlign(r.ReadStr("HorzAlign", "Left"))
 	// ShowMarker: default false (BarcodeObject.cs:329).
 	b.showMarker = r.ReadBool("ShowMarker", false)
+	// AsBitmap: default false (BarcodeObject.cs:318).
+	b.asBitmap = r.ReadBool("AsBitmap", false)
 	return nil
 }
 
@@ -981,9 +1160,13 @@ type Code2of5Barcode struct {
 }
 
 // NewCode2of5Barcode creates a Code2of5Barcode with defaults.
+// C# Barcode2of5Interleaved constructor: ratioMin=2, ratioMax=3 (Barcode2of5.cs:78-79).
 func NewCode2of5Barcode() *Code2of5Barcode {
+	b := newBaseBarcodeImpl(BarcodeTypeCode2of5)
+	b.ratioMin = 2
+	b.ratioMax = 3
 	return &Code2of5Barcode{
-		BaseBarcodeImpl: newBaseBarcodeImpl(BarcodeTypeCode2of5),
+		BaseBarcodeImpl: b,
 		Interleaved:     true,
 		CalcChecksum:    true,
 	}
@@ -1034,9 +1217,13 @@ type CodabarBarcode struct {
 }
 
 // NewCodabarBarcode creates a CodabarBarcode.
+// C# BarcodeCodabar constructor: ratioMin=2, ratioMax=3 (BarcodeCodabar.cs:141-142).
 func NewCodabarBarcode() *CodabarBarcode {
+	b := newBaseBarcodeImpl(BarcodeTypeCodabar)
+	b.ratioMin = 2
+	b.ratioMax = 3
 	return &CodabarBarcode{
-		BaseBarcodeImpl: newBaseBarcodeImpl(BarcodeTypeCodabar),
+		BaseBarcodeImpl: b,
 		StartChar:       'A', // C# default: CodabarChar.A
 		StopChar:        'B', // C# default: CodabarChar.B
 	}

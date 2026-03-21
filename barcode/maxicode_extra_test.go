@@ -169,3 +169,171 @@ func TestMaxiCodeEncodeText_OnlyNonASCII(t *testing.T) {
 		}
 	}
 }
+
+// ── Mode 2 primary codeword encoding ─────────────────────────────────────────
+//
+// Ported from C# BarcodeMaxiCode.cs getMode2PrimaryCodewords (lines 820-847).
+// Verifies that the low bits of primary[0] encode mode=2.
+
+func TestMaxiCodeMode2PrimaryCodewords_ModeBitsAre2(t *testing.T) {
+	// primary[0] low nibble must be 2 for Mode 2.
+	// C#: primary[0] = ((postcodeNum & 0x03) << 4) | 2
+	cw := maxiCodeMode2PrimaryCodewords("90210", 840, 1)
+	if len(cw) != 10 {
+		t.Errorf("expected 10 codewords, got %d", len(cw))
+	}
+	if cw[0]&0x0F != 2 {
+		t.Errorf("primary[0] & 0x0F = %d, want 2 (Mode 2 indicator)", cw[0]&0x0F)
+	}
+}
+
+func TestMaxiCodeMode2PrimaryCodewords_ZeroPostcode(t *testing.T) {
+	// Empty postcode should not panic; falls back to "0".
+	cw := maxiCodeMode2PrimaryCodewords("", 840, 1)
+	if len(cw) != 10 {
+		t.Errorf("expected 10 codewords, got %d", len(cw))
+	}
+	if cw[0]&0x0F != 2 {
+		t.Errorf("primary[0] & 0x0F = %d, want 2", cw[0]&0x0F)
+	}
+}
+
+func TestMaxiCodeMode2PrimaryCodewords_NonDigitTruncation(t *testing.T) {
+	// "12345ABC" — non-digit at index 5 causes truncation to "12345".
+	cwTrunc := maxiCodeMode2PrimaryCodewords("12345ABC", 840, 1)
+	cwFull := maxiCodeMode2PrimaryCodewords("12345", 840, 1)
+	if len(cwTrunc) != 10 || len(cwFull) != 10 {
+		t.Fatalf("expected 10 codewords each")
+	}
+	for i := 0; i < 10; i++ {
+		if cwTrunc[i] != cwFull[i] {
+			t.Errorf("primary[%d]: truncated=%d full=%d (should match)", i, cwTrunc[i], cwFull[i])
+		}
+	}
+}
+
+// ── Mode 3 primary codeword encoding ─────────────────────────────────────────
+//
+// Ported from C# BarcodeMaxiCode.cs getMode3PrimaryCodewords (lines 857-893).
+
+func TestMaxiCodeMode3PrimaryCodewords_ModeBitsAre3(t *testing.T) {
+	// primary[0] low nibble must be 3 for Mode 3.
+	// C#: primary[0] = ((postcodeNums[5] & 0x03) << 4) | 3
+	cw := maxiCodeMode3PrimaryCodewords("ABC123", 840, 1)
+	if len(cw) != 10 {
+		t.Errorf("expected 10 codewords, got %d", len(cw))
+	}
+	if cw[0]&0x0F != 3 {
+		t.Errorf("primary[0] & 0x0F = %d, want 3 (Mode 3 indicator)", cw[0]&0x0F)
+	}
+}
+
+func TestMaxiCodeMode3PrimaryCodewords_ShortPostcodePadded(t *testing.T) {
+	// Postal code shorter than 6 chars is padded with spaces to 6.
+	cwShort := maxiCodeMode3PrimaryCodewords("AB", 840, 1)
+	cwPadded := maxiCodeMode3PrimaryCodewords("AB    ", 840, 1)
+	if len(cwShort) != 10 || len(cwPadded) != 10 {
+		t.Fatalf("expected 10 codewords each")
+	}
+	for i := 0; i < 10; i++ {
+		if cwShort[i] != cwPadded[i] {
+			t.Errorf("primary[%d]: short=%d padded=%d (should match)", i, cwShort[i], cwPadded[i])
+		}
+	}
+}
+
+func TestMaxiCodeMode3PrimaryCodewords_LowercaseConvertedToUpper(t *testing.T) {
+	// Lowercase input should produce same codewords as uppercase.
+	cwLower := maxiCodeMode3PrimaryCodewords("abc123", 840, 1)
+	cwUpper := maxiCodeMode3PrimaryCodewords("ABC123", 840, 1)
+	if len(cwLower) != 10 || len(cwUpper) != 10 {
+		t.Fatalf("expected 10 codewords each")
+	}
+	for i := 0; i < 10; i++ {
+		if cwLower[i] != cwUpper[i] {
+			t.Errorf("primary[%d]: lower=%d upper=%d (should match)", i, cwLower[i], cwUpper[i])
+		}
+	}
+}
+
+// ── Mode 2/3 auto-promotion and full encode ───────────────────────────────────
+
+func TestMaxiCodeEncode_Mode2_ProducesPostalPrimaryBits(t *testing.T) {
+	// Mode 2 with a numeric postal code: primary codewords[0] & 0x0F should be 2.
+	payload := MaxiCodeMode2Payload("90210", "840", "01", "SECONDARY")
+	cw := maxiCodeEncode(payload, 2)
+	if len(cw) != 144 {
+		t.Fatalf("expected 144 codewords, got %d", len(cw))
+	}
+	// cw[0] is the first primary codeword. Low nibble must be 2.
+	if cw[0]&0x0F != 2 {
+		t.Errorf("Mode 2 primary cw[0] & 0x0F = %d, want 2", cw[0]&0x0F)
+	}
+}
+
+func TestMaxiCodeEncode_Mode2AutoPromotesToMode3_AlphaPostal(t *testing.T) {
+	// Mode 2 with an alphanumeric postal code should auto-promote to Mode 3.
+	// primary[0] low nibble must be 3 after auto-promotion.
+	payload := MaxiCodeMode2Payload("SW1A1AA", "826", "01", "SECONDARY")
+	cw := maxiCodeEncode(payload, 2)
+	if len(cw) != 144 {
+		t.Fatalf("expected 144 codewords, got %d", len(cw))
+	}
+	// After Mode 2 → 3 promotion, low nibble of cw[0] must be 3.
+	if cw[0]&0x0F != 3 {
+		t.Errorf("Mode 2 auto-promoted cw[0] & 0x0F = %d, want 3 (Mode 3)", cw[0]&0x0F)
+	}
+}
+
+func TestMaxiCodeEncode_Mode3_ProducesPostalPrimaryBits(t *testing.T) {
+	// Mode 3 with alphanumeric postal: primary codewords[0] & 0x0F should be 3.
+	payload := MaxiCodeMode3Payload("ABC123", "840", "01", "SECONDARY")
+	cw := maxiCodeEncode(payload, 3)
+	if len(cw) != 144 {
+		t.Fatalf("expected 144 codewords, got %d", len(cw))
+	}
+	if cw[0]&0x0F != 3 {
+		t.Errorf("Mode 3 primary cw[0] & 0x0F = %d, want 3", cw[0]&0x0F)
+	}
+}
+
+// ── maxiCodeParseMode23Text ───────────────────────────────────────────────────
+
+func TestMaxiCodeParseMode23Text_Standard(t *testing.T) {
+	// Standard format: 9 zip + 3 country + 2 service + GS + secondary
+	payload := "123456789" + "840" + "01" + "\x1d" + "SECONDARY"
+	postcode, country, service, secondary := maxiCodeParseMode23Text(payload)
+	if postcode != "123456789" {
+		t.Errorf("postcode = %q, want %q", postcode, "123456789")
+	}
+	if country != "840" {
+		t.Errorf("country = %q, want %q", country, "840")
+	}
+	if service != 1 {
+		t.Errorf("service = %d, want 1", service)
+	}
+	if secondary != "SECONDARY" {
+		t.Errorf("secondary = %q, want %q", secondary, "SECONDARY")
+	}
+}
+
+func TestMaxiCodeParseMode23Text_ShortInput_PaddedToMin(t *testing.T) {
+	// Input shorter than 14 chars should be padded with spaces.
+	postcode, country, service, secondary := maxiCodeParseMode23Text("ABC")
+	if len(postcode) != 9 {
+		t.Errorf("postcode len = %d, want 9", len(postcode))
+	}
+	_ = country
+	_ = service
+	_ = secondary
+}
+
+func TestMaxiCodeParseMode23Text_NoGS_FallsThrough(t *testing.T) {
+	// If there's no GS at position 14, chars from position 14 on are secondary.
+	payload := "123456789" + "840" + "01" + "X" + "DATA"
+	_, _, _, secondary := maxiCodeParseMode23Text(payload)
+	// Position 14 is 'X' (not GS), so secondary = text[14:] = "XDATA".
+	if secondary != "XDATA" {
+		t.Errorf("secondary = %q, want %q", secondary, "XDATA")
+	}
+}

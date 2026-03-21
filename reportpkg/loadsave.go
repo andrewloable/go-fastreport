@@ -207,10 +207,22 @@ func (r *Report) loadInherited(rdr *serial.Reader, baseDir string) error {
 		return fmt.Errorf("report.LoadFrom: cannot resolve base report path %q (no directory context; use Load(filename) instead of LoadFrom)", baseReportAttr)
 	}
 
-	// Load the base report.
-	base := NewReport()
-	if err := base.Load(basePath); err != nil {
-		return fmt.Errorf("report.LoadFrom: load base report %q: %w", basePath, err)
+	// Load the base report. If the caller registered an OnLoadBaseReport hook,
+	// delegate to it — this mirrors the C# Report.LoadBaseReport event which
+	// allows the host application to intercept inherited-report loading.
+	// C# ref: FastReport.Base/Report.cs, set_FileName → LoadBaseReport event.
+	var base *Report
+	if r.OnLoadBaseReport != nil {
+		loaded, err := r.OnLoadBaseReport(basePath, r)
+		if err != nil {
+			return fmt.Errorf("report.LoadFrom: load base report %q: %w", basePath, err)
+		}
+		base = loaded
+	} else {
+		base = NewReport()
+		if err := base.Load(basePath); err != nil {
+			return fmt.Errorf("report.LoadFrom: load base report %q: %w", basePath, err)
+		}
 	}
 
 	// Deserialize the inherited file's child elements (pages, dictionary, etc.)

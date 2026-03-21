@@ -127,7 +127,9 @@ func (b *Code39Barcode) GetPattern() (string, error) {
 	return code39GetPattern(b.encodedText, b.CalcChecksum), nil
 }
 
-func (b *Code39Barcode) GetWideBarRatio() float32 { return 2 }
+// GetWideBarRatio returns the effective wide bar ratio, clamped to [2, 3].
+// C# Barcode39 constructor: ratioMin=2, ratioMax=3; default WideBarRatio=2 (Barcode39.cs:137-138).
+func (b *Code39Barcode) GetWideBarRatio() float32 { return b.clampedWBR(2) }
 
 func (b *Code39ExtendedBarcode) GetPattern() (string, error) {
 	var expanded strings.Builder
@@ -139,4 +141,6 @@ func (b *Code39ExtendedBarcode) GetPattern() (string, error) {
 	return code39GetPattern(expanded.String(), b.CalcChecksum), nil
 }
 
-func (b *Code39ExtendedBarcode) GetWideBarRatio() float32 { return 2 }
+// GetWideBarRatio returns the effective wide bar ratio, clamped to [2, 3].
+// C# Barcode39 (base) constructor: ratioMin=2, ratioMax=3 (Barcode39.cs:137-138).
+func (b *Code39ExtendedBarcode) GetWideBarRatio() float32 { return b.clampedWBR(2) }

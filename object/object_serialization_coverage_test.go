@@ -763,8 +763,9 @@ func TestRFIDLabel_Serialize_EPCBankOnly(t *testing.T) {
 	_ = w.Flush()
 
 	xml := buf.String()
+	// C# bank prefix: "EpcBank" (RFIDLabel.cs:463)
 	for _, attr := range []string{
-		`EPCBank.Data=`, `EPCBank.DataColumn=`, `EPCBank.Offset=`, `EPCBank.DataFormat=`,
+		`EpcBank.Data=`, `EpcBank.DataColumn=`, `EpcBank.Offset=`, `EpcBank.DataFormat=`,
 	} {
 		if !strings.Contains(xml, attr) {
 			t.Errorf("expected %q in XML:\n%s", attr, xml)
@@ -798,7 +799,7 @@ func TestRFIDLabel_Serialize_EPCBankOnly(t *testing.T) {
 func TestRFIDLabel_Serialize_LockTypes(t *testing.T) {
 	orig := object.NewRFIDLabel()
 	orig.LockKillPassword = object.RFIDLockTypeLock
-	orig.LockAccessPassword = object.RFIDLockTypePermanentUnlock
+	orig.LockAccessPassword = object.RFIDLockTypeLock // non-default (default is PermanentUnlock) to force serialization
 	orig.LockEPCBank = object.RFIDLockTypePermanentLock
 	orig.LockUserBank = object.RFIDLockTypeLock
 
@@ -810,8 +811,9 @@ func TestRFIDLabel_Serialize_LockTypes(t *testing.T) {
 	_ = w.Flush()
 
 	xml := buf.String()
+	// C# key names: "LockEPCBlock", "LockUserBlock" (RFIDLabel.cs:482-484)
 	for _, attr := range []string{
-		`LockKillPassword=`, `LockAccessPassword=`, `LockEPCBank=`, `LockUserBank=`,
+		`LockKillPassword=`, `LockAccessPassword=`, `LockEPCBlock=`, `LockUserBlock=`,
 	} {
 		if !strings.Contains(xml, attr) {
 			t.Errorf("expected %q in XML:\n%s", attr, xml)
@@ -830,7 +832,7 @@ func TestRFIDLabel_Serialize_LockTypes(t *testing.T) {
 	if got.LockKillPassword != object.RFIDLockTypeLock {
 		t.Errorf("LockKillPassword: got %v", got.LockKillPassword)
 	}
-	if got.LockAccessPassword != object.RFIDLockTypePermanentUnlock {
+	if got.LockAccessPassword != object.RFIDLockTypeLock {
 		t.Errorf("LockAccessPassword: got %v", got.LockAccessPassword)
 	}
 	if got.LockEPCBank != object.RFIDLockTypePermanentLock {
@@ -908,8 +910,9 @@ func TestRFIDLabel_Serialize_BoolFlagsAndErrorHandle(t *testing.T) {
 	if !strings.Contains(xml, `UseAdjustForEPC="true"`) {
 		t.Errorf("expected UseAdjustForEPC=true in XML:\n%s", xml)
 	}
-	if !strings.Contains(xml, `RewriteEPCBank="true"`) {
-		t.Errorf("expected RewriteEPCBank=true in XML:\n%s", xml)
+	// C# key: "RewriteEPCbank" (lowercase b) (RFIDLabel.cs:498)
+	if !strings.Contains(xml, `RewriteEPCbank="true"`) {
+		t.Errorf("expected RewriteEPCbank=true in XML:\n%s", xml)
 	}
 	if !strings.Contains(xml, `ErrorHandle=`) {
 		t.Errorf("expected ErrorHandle in XML:\n%s", xml)
@@ -983,12 +986,13 @@ func TestRFIDLabel_Serialize_UserBankDecimalFormat(t *testing.T) {
 // TestRFIDLabel_Deserialize_FromRawXML verifies deserialization from a raw XML
 // string covering all field paths.
 func TestRFIDLabel_Deserialize_FromRawXML(t *testing.T) {
+	// C# key names: "EpcBank", "TidBank", "LockEPCBlock", "RewriteEPCbank" (RFIDLabel.cs:463-498)
 	rawXML := `<RFIDLabel Name="rfid1" ` +
-		`EPCBank.Data="EPC1" EPCBank.DataColumn="e_col" EPCBank.Offset="4" EPCBank.DataFormat="1" ` +
-		`TIDBank.Data="TID1" ` +
+		`EpcBank.Data="EPC1" EpcBank.DataColumn="e_col" EpcBank.Offset="4" EpcBank.DataFormat="1" ` +
+		`TidBank.Data="TID1" ` +
 		`UserBank.Data="USER" UserBank.DataColumn="u_col" ` +
 		`AccessPassword="AP" KillPassword="KP" ` +
-		`LockEPCBank="3" UseAdjustForEPC="true" RewriteEPCBank="true" ErrorHandle="2"/>`
+		`LockEPCBlock="3" UseAdjustForEPC="true" RewriteEPCbank="true" ErrorHandle="2"/>`
 
 	r := serial.NewReader(strings.NewReader(rawXML))
 	_, ok := r.ReadObjectHeader()

@@ -110,8 +110,14 @@ func (f *DataSourceFilter) ValueMatch(value any) bool {
 // matches checks whether value satisfies this single FilterElement.
 func (fe *FilterElement) matches(value any) bool {
 	// --- string-set branch (value is []string list) ---
+	// C# DataSourceFilter.cs line 110: value == null ? "" : value.ToString()
 	if fe.stringSet != nil {
-		s := fmt.Sprint(value)
+		var s string
+		if value == nil {
+			s = ""
+		} else {
+			s = fmt.Sprint(value)
+		}
 		_, inSet := fe.stringSet[s]
 		switch fe.Operation {
 		case FilterEqual, FilterContains:
@@ -124,10 +130,19 @@ func (fe *FilterElement) matches(value any) bool {
 	}
 
 	// --- time.Time range branch (two-element [2]time.Time or []time.Time) ---
+	// C# DataSourceFilter.cs: checks DateTime[] of length 2 for a date range.
+	// AddDays(1) makes end exclusive so the whole end-date day is included.
 	if tv, ok := value.(time.Time); ok {
+		var rngStart, rngEnd time.Time
+		var isRange bool
 		if rng, ok := fe.Value.([2]time.Time); ok {
-			end := rng[1].AddDate(0, 0, 1)
-			inRange := (tv.Equal(rng[0]) || tv.After(rng[0])) && tv.Before(end)
+			rngStart, rngEnd, isRange = rng[0], rng[1], true
+		} else if rng, ok := fe.Value.([]time.Time); ok && len(rng) == 2 {
+			rngStart, rngEnd, isRange = rng[0], rng[1], true
+		}
+		if isRange {
+			end := rngEnd.AddDate(0, 0, 1)
+			inRange := (tv.Equal(rngStart) || tv.After(rngStart)) && tv.Before(end)
 			switch fe.Operation {
 			case FilterEqual, FilterContains:
 				return inRange
@@ -137,6 +152,45 @@ func (fe *FilterElement) matches(value any) bool {
 				// fall through to general comparison below
 			}
 		}
+	}
+
+	// --- DateTime scalar comparison with optional time-stripping ---
+	// C# DataSourceFilter.cs lines 151–164: when value is DateTime and element is
+	// DateTime, check if the element has a time component (TimeOfDay.Ticks != 0).
+	// If the element has NO time component, strip the time portion from value before
+	// comparing so that filter "Equal 2024-06-15" matches "2024-06-15 14:30:00".
+	// If value is DateTime but element is NOT DateTime, return false.
+	if tv, ok := value.(time.Time); ok {
+		ev, isTime := fe.Value.(time.Time)
+		if !isTime {
+			// element is not a DateTime — incomparable, C# returns false here
+			return false
+		}
+		// Strip time from data value when element has no time component.
+		// C# TimeOfDay.Ticks != 0 means the element DOES have a time component.
+		if ev.Hour() == 0 && ev.Minute() == 0 && ev.Second() == 0 && ev.Nanosecond() == 0 {
+			// Element has no time — compare date only.
+			tv = time.Date(tv.Year(), tv.Month(), tv.Day(), 0, 0, 0, 0, tv.Location())
+		}
+		cmp, ok := compare(tv, ev)
+		if !ok {
+			return false
+		}
+		switch fe.Operation {
+		case FilterEqual:
+			return cmp == 0
+		case FilterNotEqual:
+			return cmp != 0
+		case FilterLessThan:
+			return cmp < 0
+		case FilterLessThanOrEqual:
+			return cmp <= 0
+		case FilterGreaterThan:
+			return cmp > 0
+		case FilterGreaterThanOrEqual:
+			return cmp >= 0
+		}
+		return false
 	}
 
 	// --- string-specific operations ---

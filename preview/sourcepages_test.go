@@ -98,3 +98,88 @@ func TestSourcePages_RemoveLast_Empty(t *testing.T) {
 		t.Errorf("Count = %d after RemoveLast on empty", sp.Count())
 	}
 }
+
+func TestSourcePages_IndexOf_Found(t *testing.T) {
+	sp := NewSourcePages()
+	sp.Record(10, 0, 1)
+	sp.Record(20, 2, 3)
+	sp.Record(30, 4, 5)
+
+	if got := sp.IndexOf(10); got != 0 {
+		t.Errorf("IndexOf(10) = %d, want 0", got)
+	}
+	if got := sp.IndexOf(20); got != 1 {
+		t.Errorf("IndexOf(20) = %d, want 1", got)
+	}
+	if got := sp.IndexOf(30); got != 2 {
+		t.Errorf("IndexOf(30) = %d, want 2", got)
+	}
+}
+
+func TestSourcePages_IndexOf_NotFound(t *testing.T) {
+	sp := NewSourcePages()
+	sp.Record(1, 0, 1)
+
+	if got := sp.IndexOf(99); got != -1 {
+		t.Errorf("IndexOf(missing) = %d, want -1", got)
+	}
+}
+
+func TestSourcePages_IndexOf_Empty(t *testing.T) {
+	sp := NewSourcePages()
+	if got := sp.IndexOf(0); got != -1 {
+		t.Errorf("IndexOf on empty SourcePages = %d, want -1", got)
+	}
+}
+
+func TestSourcePages_Get_Valid(t *testing.T) {
+	sp := NewSourcePages()
+	sp.Record(42, 0, 1)
+	sp.Record(7, 2, 3)
+
+	if got := sp.Get(0); got != 42 {
+		t.Errorf("Get(0) = %d, want 42", got)
+	}
+	if got := sp.Get(1); got != 7 {
+		t.Errorf("Get(1) = %d, want 7", got)
+	}
+}
+
+func TestSourcePages_Get_OutOfRange(t *testing.T) {
+	sp := NewSourcePages()
+	sp.Record(5, 0, 1)
+
+	if got := sp.Get(-1); got != -1 {
+		t.Errorf("Get(-1) = %d, want -1", got)
+	}
+	if got := sp.Get(1); got != -1 {
+		t.Errorf("Get(1) = %d on single-entry list, want -1", got)
+	}
+}
+
+func TestSourcePages_Get_Empty(t *testing.T) {
+	sp := NewSourcePages()
+	if got := sp.Get(0); got != -1 {
+		t.Errorf("Get(0) on empty SourcePages = %d, want -1", got)
+	}
+}
+
+func TestSourcePages_Dispose(t *testing.T) {
+	sp := NewSourcePages()
+	sp.Record(0, 0, 1)
+	sp.Record(1, 2, 3)
+	sp.Dispose()
+	if sp.Count() != 0 {
+		t.Errorf("after Dispose: Count = %d, want 0", sp.Count())
+	}
+}
+
+func TestSourcePages_ApplyPageSize(t *testing.T) {
+	sp := NewSourcePages()
+	sp.Record(0, 0, 1)
+	// ApplyPageSize is a no-op stub; verify it does not panic or modify state.
+	sp.ApplyPageSize()
+	if sp.Count() != 1 {
+		t.Errorf("after ApplyPageSize: Count = %d, want 1", sp.Count())
+	}
+}

@@ -3,6 +3,7 @@ package data
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 
 	"github.com/andrewloable/go-fastreport/report"
 )
@@ -21,6 +22,10 @@ const (
 	ParamDirectionReturnValue
 )
 
+// paramValueUninitialized is a sentinel type used by ResetLastValue to mark
+// the lastValue as unset. It mirrors C# CommandParameter.ParamValue.Uninitialized.
+type paramValueUninitialized struct{}
+
 // CommandParameter represents a parameter passed to a SQL command.
 // It is the Go equivalent of FastReport.Data.CommandParameter.
 type CommandParameter struct {
@@ -38,11 +43,25 @@ type CommandParameter struct {
 	Direction ParameterDirection
 	// Value holds the resolved run-time value.
 	Value any
+	// lastValue caches the previously evaluated value for change detection.
+	lastValue any
 }
 
 // NewCommandParameter creates a CommandParameter with default Input direction.
 func NewCommandParameter(name string) *CommandParameter {
 	return &CommandParameter{Name: name, Direction: ParamDirectionInput}
+}
+
+// LastValue returns the cached last-evaluated value.
+func (p *CommandParameter) LastValue() any { return p.lastValue }
+
+// SetLastValue sets the cached last-evaluated value.
+func (p *CommandParameter) SetLastValue(v any) { p.lastValue = v }
+
+// ResetLastValue resets the cached value to the uninitialized sentinel,
+// signalling that the parameter must be re-evaluated on the next use.
+func (p *CommandParameter) ResetLastValue() {
+	p.lastValue = paramValueUninitialized{}
 }
 
 // Serialize writes CommandParameter properties to w.
@@ -97,8 +116,15 @@ type DataConnectionBase struct {
 	ConnectionStringExpression string
 	// LoginPrompt causes the engine to prompt for credentials at run time.
 	LoginPrompt bool
-	// CommandTimeout is the per-query timeout in seconds (0 = driver default).
+	// CommandTimeout is the per-query timeout in seconds (default 30, per C# default).
 	CommandTimeout int
+
+	// isSqlBased indicates whether this connection is SQL-based.
+	// C# ref: FastReport.Data.DataConnectionBase.IsSqlBased
+	isSqlBased bool
+	// canContainProcedures indicates whether this connection can expose stored procedures.
+	// C# ref: FastReport.Data.DataConnectionBase.CanContainProcedures
+	canContainProcedures bool
 
 	// db is the underlying *sql.DB once opened.
 	db *sql.DB
@@ -109,11 +135,245 @@ type DataConnectionBase struct {
 }
 
 // NewDataConnectionBase creates a DataConnectionBase for the given sql driver.
+// Defaults match C# DataConnectionBase constructor: IsSqlBased=true, CommandTimeout=30.
 func NewDataConnectionBase(driverName string) *DataConnectionBase {
 	return &DataConnectionBase{
-		DataComponentBase: *NewDataComponentBase(""),
-		driverName:        driverName,
+		DataComponentBase:    *NewDataComponentBase(""),
+		driverName:           driverName,
+		isSqlBased:           true,
+		canContainProcedures: false,
+		CommandTimeout:       30,
 	}
+}
+
+// IsSqlBased returns whether this connection is SQL-based.
+// C# ref: FastReport.Data.DataConnectionBase.IsSqlBased
+func (c *DataConnectionBase) IsSqlBased() bool { return c.isSqlBased }
+
+// SetIsSqlBased sets the IsSqlBased flag.
+func (c *DataConnectionBase) SetIsSqlBased(v bool) { c.isSqlBased = v }
+
+// CanContainProcedures returns whether this connection can contain stored procedures.
+// C# ref: FastReport.Data.DataConnectionBase.CanContainProcedures
+func (c *DataConnectionBase) CanContainProcedures() bool { return c.canContainProcedures }
+
+// SetCanContainProcedures sets the CanContainProcedures flag.
+func (c *DataConnectionBase) SetCanContainProcedures(v bool) { c.canContainProcedures = v }
+
+// GetTableNames returns the list of table and view names available in this connection.
+// The base implementation returns an empty slice; SQL-based subclasses override this
+// to query the database schema.
+// C# ref: FastReport.Data.DataConnectionBase.GetTableNames()
+func (c *DataConnectionBase) GetTableNames() []string {
+	return nil
+}
+
+// GetTableCount returns the number of tables/views available in this connection.
+// C# ref: derived from GetTableNames().
+func (c *DataConnectionBase) GetTableCount() int {
+	return len(c.GetTableNames())
+}
+
+// FilterTables is a hook called by CreateAllTables to allow subclasses or callers
+// to remove table names from the list before table objects are created.
+// The base implementation is a no-op.
+// C# ref: FastReport.Data.DataConnectionBase.FilterTables (virtual, no-op in base)
+func (c *DataConnectionBase) FilterTables(tableNames []string) []string {
+	return tableNames
+}
+
+// CreateAllTables fills the Tables collection with all tables available in the
+// connection (calls GetTableNames, removes stale tables, creates new ones) and
+// then calls InitSchema on each table.
+// C# ref: FastReport.Data.DataConnectionBase.CreateAllTables()
+func (c *DataConnectionBase) CreateAllTables() {
+	c.CreateAllTablesWithSchema(true)
+}
+
+// CreateAllTablesWithSchema fills the Tables collection. When initSchema is true
+// each table's schema is initialised by calling InitSchema().
+// C# ref: FastReport.Data.DataConnectionBase.CreateAllTables(bool initSchema)
+func (c *DataConnectionBase) CreateAllTablesWithSchema(initSchema bool) {
+	tableNames := c.FilterTables(c.GetTableNames())
+	c.createAllTablesShared(tableNames)
+	if initSchema {
+		for _, t := range c.tables {
+			_ = t.InitSchema()
+		}
+	}
+}
+
+// createAllTablesShared implements the shared logic of CreateAllTables:
+// 1. Remove tables whose name no longer exists in the connection.
+// 2. Create new TableDataSource objects for table names not yet registered.
+// C# ref: FastReport.Data.DataConnectionBase.CreateAllTablesShared
+func (c *DataConnectionBase) createAllTablesShared(tableNames []string) {
+	// Step 1: remove stale tables (those with no SelectCommand whose TableName
+	// is no longer in the connection's schema list).
+	for i := 0; i < len(c.tables); {
+		t := c.tables[i]
+		// Keep query-based tables (they have a SelectCommand) — they are
+		// user-defined and are not managed by CreateAllTables.
+		if t.selectCommand != "" {
+			i++
+			continue
+		}
+		found := false
+		for _, name := range tableNames {
+			if strings.EqualFold(t.tableName, name) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			// Remove stale table.
+			c.tables = append(c.tables[:i], c.tables[i+1:]...)
+			continue
+		}
+		i++
+	}
+
+	// Step 2: create new TableDataSource for names not already present.
+	for _, tableName := range tableNames {
+		found := false
+		for _, t := range c.tables {
+			if strings.EqualFold(t.tableName, tableName) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			// Sanitise table name into a valid identifier (same as C# logic).
+			fixedName := strings.NewReplacer(".", "_", "[", "", "]", "", `"`, "").Replace(tableName)
+			t := NewTableDataSource(fixedName)
+			t.SetTableName(tableName)
+			// New tables are disabled by default so they are not selected automatically.
+			// C# ref: DataConnectionBase.CreateAllTablesShared — table.Enabled = false
+			t.SetEnabled(false)
+			c.AddTable(t)
+		}
+	}
+}
+
+// DeleteTable removes the TableDataSource from the tables collection and
+// resets its internal table reference (equivalent to C# DataSet table removal).
+// C# ref: FastReport.Data.DataConnectionBase.DeleteTable
+func (c *DataConnectionBase) DeleteTable(source *TableDataSource) {
+	for i, t := range c.tables {
+		if t == source {
+			c.tables = append(c.tables[:i], c.tables[i+1:]...)
+			break
+		}
+	}
+	// Clear cached row data so the source is no longer considered initialised.
+	source.initialized = false
+	source.rows = nil
+}
+
+// FillTable reloads data for the given source when needed:
+// - when ForceLoadData is true, or
+// - when any parameter value has changed since the last load.
+// C# ref: FastReport.Data.DataConnectionBase.FillTable (internal)
+func (c *DataConnectionBase) FillTable(source *TableDataSource) error {
+	if !source.initialized && len(source.rows) == 0 {
+		return source.Init()
+	}
+
+	parametersChanged := false
+	for _, par := range source.parameters {
+		if par.Value != par.lastValue {
+			par.lastValue = par.Value
+			parametersChanged = true
+		}
+	}
+
+	if source.forceLoadData || !source.initialized || parametersChanged {
+		return source.Init()
+	}
+	return nil
+}
+
+// Serialize writes the connection's properties to w.
+// Child TableDataSources that are enabled are written as child elements.
+// C# ref: FastReport.Data.DataConnectionBase.Serialize
+func (c *DataConnectionBase) Serialize(w report.Writer) error {
+	if c.Name() != "" {
+		w.WriteStr("Name", c.Name())
+	}
+	if c.IsAliased() {
+		w.WriteStr("Alias", c.Alias())
+	}
+	if !c.Enabled() {
+		w.WriteBool("Enabled", false)
+	}
+	if c.ReferenceName() != "" {
+		w.WriteStr("ReferenceName", c.ReferenceName())
+	}
+	if c.ConnectionString != "" {
+		w.WriteStr("ConnectionString", c.ConnectionString)
+	}
+	if c.ConnectionStringExpression != "" {
+		w.WriteStr("ConnectionStringExpression", c.ConnectionStringExpression)
+	}
+	if c.LoginPrompt {
+		w.WriteBool("LoginPrompt", true)
+	}
+	if c.CommandTimeout != 30 {
+		w.WriteInt("CommandTimeout", c.CommandTimeout)
+	}
+	// Write enabled child tables.
+	// C# ref: DataConnectionBase.Serialize — only enabled tables are written.
+	for _, t := range c.tables {
+		if t.Enabled() {
+			if err := w.WriteObjectNamed("TableDataSource", t); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// Deserialize reads the connection's properties from r.
+// Child TableDataSource elements are read back as registered tables.
+// C# ref: FastReport.Data.DataConnectionBase.Deserialize (implicit via FRX load)
+func (c *DataConnectionBase) Deserialize(r report.Reader) error {
+	name := r.ReadStr("Name", "")
+	if name != "" {
+		c.SetName(name)
+	}
+	alias := r.ReadStr("Alias", c.Name())
+	if alias != "" {
+		c.SetAlias(alias)
+	}
+	c.SetEnabled(r.ReadBool("Enabled", true))
+	c.SetReferenceName(r.ReadStr("ReferenceName", ""))
+	c.ConnectionString = r.ReadStr("ConnectionString", "")
+	c.ConnectionStringExpression = r.ReadStr("ConnectionStringExpression", "")
+	c.LoginPrompt = r.ReadBool("LoginPrompt", false)
+	c.CommandTimeout = r.ReadInt("CommandTimeout", 30)
+
+	// Read child TableDataSource elements.
+	for {
+		typeName, ok := r.NextChild()
+		if !ok {
+			break
+		}
+		if typeName == "TableDataSource" {
+			t := NewTableDataSource("")
+			if err := t.Deserialize(r); err != nil {
+				if ferr := r.FinishChild(); ferr != nil {
+					return ferr
+				}
+				return err
+			}
+			t.connection = c
+			c.tables = append(c.tables, t)
+		}
+		if err := r.FinishChild(); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // DriverName returns the database/sql driver name.
@@ -188,13 +448,61 @@ type TableDataSource struct {
 	// forceLoadData forces data reload even if already cached.
 	// C# ref: FastReport.Data.DataSourceBase.ForceLoadData
 	forceLoadData bool
+	// enabled controls whether this table is active during report execution.
+	// C# ref: FastReport.Data.DataComponentBase.Enabled
+	enabled bool
 }
 
 // NewTableDataSource creates a TableDataSource with the given name.
+// Enabled defaults to true to match DataComponentBase defaults.
 func NewTableDataSource(name string) *TableDataSource {
 	return &TableDataSource{
 		BaseDataSource: BaseDataSource{name: name, alias: name},
+		enabled:        true,
 	}
+}
+
+// Enabled returns whether this table data source is active.
+// C# ref: FastReport.Data.DataComponentBase.Enabled
+func (t *TableDataSource) Enabled() bool { return t.enabled }
+
+// SetEnabled enables or disables this table data source.
+func (t *TableDataSource) SetEnabled(v bool) { t.enabled = v }
+
+// Serialize writes the TableDataSource properties to w.
+// C# ref: FastReport.Data.TableDataSource.Serialize (implicit via FRX writer)
+func (t *TableDataSource) Serialize(w report.Writer) error {
+	if t.name != "" {
+		w.WriteStr("Name", t.name)
+	}
+	if t.alias != t.name && t.alias != "" {
+		w.WriteStr("Alias", t.alias)
+	}
+	if !t.enabled {
+		w.WriteBool("Enabled", false)
+	}
+	if t.tableName != "" {
+		w.WriteStr("TableName", t.tableName)
+	}
+	if t.selectCommand != "" {
+		w.WriteStr("SelectCommand", t.selectCommand)
+	}
+	if t.storeData {
+		w.WriteBool("StoreData", true)
+	}
+	return nil
+}
+
+// Deserialize reads the TableDataSource properties from r.
+// C# ref: FastReport.Data.TableDataSource.Deserialize (implicit via FRX reader)
+func (t *TableDataSource) Deserialize(r report.Reader) error {
+	t.name = r.ReadStr("Name", t.name)
+	t.alias = r.ReadStr("Alias", t.name)
+	t.enabled = r.ReadBool("Enabled", true)
+	t.tableName = r.ReadStr("TableName", "")
+	t.selectCommand = r.ReadStr("SelectCommand", "")
+	t.storeData = r.ReadBool("StoreData", false)
+	return nil
 }
 
 // TableName returns the source table or view name.

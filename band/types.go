@@ -1,7 +1,6 @@
 package band
 
 import (
-	"fmt"
 	"strings"
 
 	"github.com/andrewloable/go-fastreport/report"
@@ -20,6 +19,85 @@ type SortSpec struct {
 	// Expression is an optional expression (overrides Column when non-empty).
 	Expression string
 }
+
+// sortSpecItem is a single sort item used for serialization.
+// It is the Go equivalent of FastReport.Sort.
+type sortSpecItem struct {
+	Expression string
+	Descending bool
+}
+
+func (s *sortSpecItem) TypeName() string { return "Sort" }
+
+func (s *sortSpecItem) Serialize(w report.Writer) error {
+	w.WriteStr("Expression", s.Expression)
+	if s.Descending {
+		w.WriteBool("Descending", true)
+	}
+	return nil
+}
+
+func (s *sortSpecItem) Deserialize(r report.Reader) error {
+	s.Expression = r.ReadStr("Expression", "")
+	s.Descending = r.ReadBool("Descending", false)
+	return nil
+}
+
+// sortCollection is the serializable wrapper for a slice of SortSpec.
+// It is the Go equivalent of FastReport.SortCollection.
+type sortCollection struct {
+	items []SortSpec
+}
+
+func (sc *sortCollection) TypeName() string { return "Sort" }
+
+func (sc *sortCollection) Serialize(w report.Writer) error {
+	for _, s := range sc.items {
+		expr := s.Expression
+		if expr == "" {
+			expr = s.Column
+		}
+		item := &sortSpecItem{
+			Expression: expr,
+			Descending: s.Order == SortOrderDescending,
+		}
+		if err := w.WriteObject(item); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (sc *sortCollection) Deserialize(r report.Reader) error {
+	sc.items = sc.items[:0]
+	for {
+		ct, ok := r.NextChild()
+		if !ok {
+			break
+		}
+		if ct == "Sort" {
+			var item sortSpecItem
+			if err := item.Deserialize(r); err != nil {
+				if ferr := r.FinishChild(); ferr != nil {
+					return ferr
+				}
+				return err
+			}
+			if item.Expression != "" {
+				spec := SortSpec{Column: item.Expression, Expression: item.Expression}
+				if item.Descending {
+					spec.Order = SortOrderDescending
+				}
+				sc.items = append(sc.items, spec)
+			}
+		}
+		if err := r.FinishChild(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 
 // -----------------------------------------------------------------------
 // Thin band types that add no new fields
@@ -472,21 +550,6 @@ func (d *DataBand) Serialize(w report.Writer) error {
 	if d.filter != "" {
 		w.WriteStr("Filter", d.filter)
 	}
-	if len(d.sort) > 0 {
-		parts := make([]string, 0, len(d.sort))
-		for _, s := range d.sort {
-			dir := "ASC"
-			if s.Order == SortOrderDescending {
-				dir = "DESC"
-			}
-			col := s.Column
-			if s.Expression != "" {
-				col = s.Expression
-			}
-			parts = append(parts, fmt.Sprintf("%s %s", col, dir))
-		}
-		w.WriteStr("Sort", strings.Join(parts, ";"))
-	}
 	if d.printIfDetailEmpty {
 		w.WriteBool("PrintIfDetailEmpty", true)
 	}
@@ -519,6 +582,13 @@ func (d *DataBand) Serialize(w report.Writer) error {
 	}
 	if d.rowCount != 1 {
 		w.WriteInt("RowCount", d.rowCount)
+	}
+	// Write <Sort> child collection before band object children.
+	if len(d.sort) > 0 {
+		sc := &sortCollection{items: d.sort}
+		if err := w.WriteObjectNamed("Sort", sc); err != nil {
+			return err
+		}
 	}
 	// Write child objects after all attrs.
 	return d.BandBase.serializeChildren(w)

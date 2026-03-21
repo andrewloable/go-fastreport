@@ -96,11 +96,15 @@ func stripGS1Parens(s string) string {
 // for round-trip fidelity and renders a placeholder.
 type IntelligentMailBarcode struct {
 	BaseBarcodeImpl
+	QuietZone bool
 }
 
 // NewIntelligentMailBarcode creates an IntelligentMailBarcode.
 func NewIntelligentMailBarcode() *IntelligentMailBarcode {
-	return &IntelligentMailBarcode{BaseBarcodeImpl: newBaseBarcodeImpl(BarcodeTypeIntelligentMail)}
+	return &IntelligentMailBarcode{
+		BaseBarcodeImpl: newBaseBarcodeImpl(BarcodeTypeIntelligentMail),
+		QuietZone:       false,
+	}
 }
 
 // DefaultValue returns "12345678901234567890" matching C# BarcodeIntelligentMail.GetDefaultValue().
@@ -131,7 +135,7 @@ func (b *IntelligentMailBarcode) Encode(text string) error {
 type MSICheckDigit int
 
 const (
-	MSICheckDigitNone   MSICheckDigit = iota
+	MSICheckDigitNone    MSICheckDigit = iota
 	MSICheckDigitMod10                 // single Mod-10
 	MSICheckDigitMod1010               // double Mod-10
 	MSICheckDigitMod11                 // Mod-11
@@ -252,12 +256,16 @@ func (b *MaxiCodeBarcode) DefaultValue() string { return "MaxiCode Test" }
 // Pharmacode encodes an integer 3–131070 as alternating wide/narrow bars.
 type PharmacodeBarcode struct {
 	BaseBarcodeImpl
-	TwoTrack bool // use two-track Pharmacode variant
+	TwoTrack  bool // use two-track Pharmacode variant
+	QuietZone bool
 }
 
 // NewPharmacodeBarcode creates a PharmacodeBarcode.
 func NewPharmacodeBarcode() *PharmacodeBarcode {
-	return &PharmacodeBarcode{BaseBarcodeImpl: newBaseBarcodeImpl(BarcodeTypePharmacode)}
+	return &PharmacodeBarcode{
+		BaseBarcodeImpl: newBaseBarcodeImpl(BarcodeTypePharmacode),
+		QuietZone:       true,
+	}
 }
 
 // DefaultValue returns the C# BarcodeBase.GetDefaultValue() default: "12345678".
@@ -279,10 +287,11 @@ func (b *PharmacodeBarcode) Render(width, height int) (image.Image, error) {
 	if b.encodedText == "" {
 		return nil, fmt.Errorf("pharmacode: not encoded")
 	}
-	var n int
-	fmt.Sscanf(b.encodedText, "%d", &n) //nolint:errcheck
-	bits := pharmacodeEncode(n)
-	return renderBitPattern(bits, width, height, color.Black, color.White), nil
+	pattern, err := b.GetPattern()
+	if err != nil {
+		return nil, err
+	}
+	return DrawLinearBarcode(pattern, b.encodedText, width, height, true, b.GetWideBarRatio()), nil
 }
 
 // pharmacodeEncode encodes an integer as Pharmacode bar widths.
@@ -592,14 +601,14 @@ type SwissQRBarcode struct {
 
 	// Legacy flat fields — kept for backward compatibility; Params takes precedence
 	// when Params.IBAN is non-empty.
-	IBAN          string
-	Amount        string
-	Currency      string // CHF or EUR
-	CreditorName  string
-	CreditorIBAN  string
-	Reference     string
-	RefType       string // QRR, SCOR, or NON
-	Message       string
+	IBAN         string
+	Amount       string
+	Currency     string // CHF or EUR
+	CreditorName string
+	CreditorIBAN string
+	Reference    string
+	RefType      string // QRR, SCOR, or NON
+	Message      string
 }
 
 // NewSwissQRBarcode creates a SwissQRBarcode with default values.

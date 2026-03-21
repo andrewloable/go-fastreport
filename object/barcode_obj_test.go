@@ -119,7 +119,7 @@ func TestBarcodeObject_Deserialize_ExplicitDefaults(t *testing.T) {
 
 func TestZipCodeObject_RoundTrip_AllFields(t *testing.T) {
 	orig := object.NewZipCodeObject()
-	orig.SetText("123456")
+	orig.SetText("654321")  // non-default (default = "123456")
 	orig.SetDataColumn("ZipCol")
 	orig.SetExpression("[ZipCode]")
 	orig.SetSegmentWidth(5.5)
@@ -154,8 +154,8 @@ func TestZipCodeObject_RoundTrip_AllFields(t *testing.T) {
 		t.Fatalf("Deserialize: %v", err)
 	}
 
-	if got.Text() != "123456" {
-		t.Errorf("Text: got %q, want 123456", got.Text())
+	if got.Text() != "654321" {
+		t.Errorf("Text: got %q, want 654321", got.Text())
 	}
 	if got.DataColumn() != "ZipCol" {
 		t.Errorf("DataColumn: got %q, want ZipCol", got.DataColumn())
@@ -187,7 +187,9 @@ func TestZipCodeObject_RoundTrip_AllFields(t *testing.T) {
 
 func TestZipCodeObject_Serialize_Defaults(t *testing.T) {
 	orig := object.NewZipCodeObject()
-	// defaults: segmentCount=6, showMarkers=true, showGrid=true, all others zero/empty
+	// defaults: text="123456", segmentCount=6, showMarkers=true, showGrid=true,
+	// segmentWidth=18.9, segmentHeight=37.8, spacing=34.02 (C# Units.Centimeters)
+	// — none of these should be written to XML (diff-based serialization)
 
 	var buf bytes.Buffer
 	w := serial.NewWriter(&buf)
@@ -205,6 +207,20 @@ func TestZipCodeObject_Serialize_Defaults(t *testing.T) {
 	}
 	if strings.Contains(xml, `ShowGrid=`) {
 		t.Errorf("unexpected ShowGrid in default XML:\n%s", xml)
+	}
+	// text="123456" is the C# default — must not appear in XML
+	if strings.Contains(xml, `Text=`) {
+		t.Errorf("unexpected Text= in default XML:\n%s", xml)
+	}
+	// segmentWidth/Height/spacing at C# defaults — must not appear in XML
+	if strings.Contains(xml, `SegmentWidth=`) {
+		t.Errorf("unexpected SegmentWidth= in default XML:\n%s", xml)
+	}
+	if strings.Contains(xml, `SegmentHeight=`) {
+		t.Errorf("unexpected SegmentHeight= in default XML:\n%s", xml)
+	}
+	if strings.Contains(xml, `Spacing=`) {
+		t.Errorf("unexpected Spacing= in default XML:\n%s", xml)
 	}
 }
 

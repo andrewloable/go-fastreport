@@ -15,6 +15,7 @@ package barcode
 
 import (
 	"fmt"
+	"strings"
 	"unicode/utf8"
 )
 
@@ -123,8 +124,8 @@ func qrChooseMode(content string) qrMode {
 
 // qrBitVector is a dynamic bit buffer, MSB-first.
 type qrBitVector struct {
-	data        []byte
-	sizeInBits  int
+	data       []byte
+	sizeInBits int
 }
 
 func newQRBitVector() *qrBitVector {
@@ -205,8 +206,8 @@ func newQRByteMatrix(w, h int) *qrByteMatrix {
 	return &qrByteMatrix{bytes: b, width: w, height: h}
 }
 
-func (m *qrByteMatrix) get(x, y int) int8   { return m.bytes[y][x] }
-func (m *qrByteMatrix) set(x, y, v int)     { m.bytes[y][x] = int8(v) }
+func (m *qrByteMatrix) get(x, y int) int8 { return m.bytes[y][x] }
+func (m *qrByteMatrix) set(x, y, v int)   { m.bytes[y][x] = int8(v) }
 func (m *qrByteMatrix) clear(v int8) {
 	for y := range m.bytes {
 		for x := range m.bytes[y] {
@@ -273,7 +274,7 @@ func newQRGF256Poly(gf *qrGF256, coefficients []int) *qrGF256Poly {
 	return &qrGF256Poly{gf: gf, coefficients: c}
 }
 
-func (p *qrGF256Poly) degree() int { return len(p.coefficients) - 1 }
+func (p *qrGF256Poly) degree() int  { return len(p.coefficients) - 1 }
 func (p *qrGF256Poly) isZero() bool { return p.coefficients[0] == 0 }
 func (p *qrGF256Poly) getCoefficient(degree int) int {
 	return p.coefficients[len(p.coefficients)-1-degree]
@@ -356,7 +357,7 @@ func (p *qrGF256Poly) divide(other *qrGF256Poly) (*qrGF256Poly, *qrGF256Poly) {
 // qrReedSolomon encodes toEncode[0:dataBytes] and writes ecBytes EC bytes at
 // toEncode[dataBytes:dataBytes+ecBytes].
 type qrReedSolomon struct {
-	gf              *qrGF256
+	gf               *qrGF256
 	cachedGenerators []*qrGF256Poly
 }
 
@@ -403,7 +404,7 @@ type qrVersionInfo struct {
 
 // qrBlock describes one Reed-Solomon block group.
 type qrBlock struct {
-	count       int
+	count        int
 	dataPerBlock int
 }
 
@@ -731,46 +732,46 @@ func qrDimension(version int) int { return 17 + 4*version }
 // qrAlignmentCenters returns the alignment pattern center coordinates for version.
 // These match Version.cs POSITION_ADJUSTMENT_PATTERN_COORDINATE_TABLE.
 var qrAlignmentCentersTable = [40][]int{
-	{},                                     // v1
-	{6, 18},                                // v2
-	{6, 22},                                // v3
-	{6, 26},                                // v4
-	{6, 30},                                // v5
-	{6, 34},                                // v6
-	{6, 22, 38},                            // v7
-	{6, 24, 42},                            // v8
-	{6, 26, 46},                            // v9
-	{6, 28, 50},                            // v10
-	{6, 30, 54},                            // v11
-	{6, 32, 58},                            // v12
-	{6, 34, 62},                            // v13
-	{6, 26, 46, 66},                        // v14
-	{6, 26, 48, 70},                        // v15
-	{6, 26, 50, 74},                        // v16
-	{6, 30, 54, 78},                        // v17
-	{6, 30, 56, 82},                        // v18
-	{6, 30, 58, 86},                        // v19
-	{6, 34, 62, 90},                        // v20
-	{6, 28, 50, 72, 94},                    // v21
-	{6, 26, 50, 74, 98},                    // v22
-	{6, 30, 54, 78, 102},                   // v23
-	{6, 28, 54, 80, 106},                   // v24
-	{6, 32, 58, 84, 110},                   // v25
-	{6, 30, 58, 86, 114},                   // v26
-	{6, 34, 62, 90, 118},                   // v27
-	{6, 26, 50, 74, 98, 122},               // v28
-	{6, 30, 54, 78, 102, 126},              // v29
-	{6, 26, 52, 78, 104, 130},              // v30
-	{6, 30, 56, 82, 108, 134},              // v31
-	{6, 34, 60, 86, 112, 138},              // v32
-	{6, 30, 58, 86, 114, 142},              // v33
-	{6, 34, 62, 90, 118, 146},              // v34
-	{6, 30, 54, 78, 102, 126, 150},         // v35
-	{6, 24, 50, 76, 102, 128, 154},         // v36
-	{6, 28, 54, 80, 106, 132, 158},         // v37
-	{6, 32, 58, 84, 110, 136, 162},         // v38
-	{6, 26, 54, 82, 110, 138, 166},         // v39
-	{6, 30, 58, 86, 114, 142, 170},         // v40
+	{},                             // v1
+	{6, 18},                        // v2
+	{6, 22},                        // v3
+	{6, 26},                        // v4
+	{6, 30},                        // v5
+	{6, 34},                        // v6
+	{6, 22, 38},                    // v7
+	{6, 24, 42},                    // v8
+	{6, 26, 46},                    // v9
+	{6, 28, 50},                    // v10
+	{6, 30, 54},                    // v11
+	{6, 32, 58},                    // v12
+	{6, 34, 62},                    // v13
+	{6, 26, 46, 66},                // v14
+	{6, 26, 48, 70},                // v15
+	{6, 26, 50, 74},                // v16
+	{6, 30, 54, 78},                // v17
+	{6, 30, 56, 82},                // v18
+	{6, 30, 58, 86},                // v19
+	{6, 34, 62, 90},                // v20
+	{6, 28, 50, 72, 94},            // v21
+	{6, 26, 50, 74, 98},            // v22
+	{6, 30, 54, 78, 102},           // v23
+	{6, 28, 54, 80, 106},           // v24
+	{6, 32, 58, 84, 110},           // v25
+	{6, 30, 58, 86, 114},           // v26
+	{6, 34, 62, 90, 118},           // v27
+	{6, 26, 50, 74, 98, 122},       // v28
+	{6, 30, 54, 78, 102, 126},      // v29
+	{6, 26, 52, 78, 104, 130},      // v30
+	{6, 30, 56, 82, 108, 134},      // v31
+	{6, 34, 60, 86, 112, 138},      // v32
+	{6, 30, 58, 86, 114, 142},      // v33
+	{6, 34, 62, 90, 118, 146},      // v34
+	{6, 30, 54, 78, 102, 126, 150}, // v35
+	{6, 24, 50, 76, 102, 128, 154}, // v36
+	{6, 28, 54, 80, 106, 132, 158}, // v37
+	{6, 32, 58, 84, 110, 136, 162}, // v38
+	{6, 26, 54, 82, 110, 138, 166}, // v39
+	{6, 30, 58, 86, 114, 142, 170}, // v40
 }
 
 // ── Matrix construction helpers ───────────────────────────────────────────────
@@ -846,15 +847,15 @@ func qrEmbedBasicPatterns(version int, m *qrByteMatrix) {
 
 	// Horizontal separators (8 zeros).
 	for x := 0; x < 8; x++ {
-		m.set(x, 7, 0)           // top-left
-		m.set(w-8+x, 7, 0)       // top-right
-		m.set(x, w-8, 0)         // bottom-left
+		m.set(x, 7, 0)     // top-left
+		m.set(w-8+x, 7, 0) // top-right
+		m.set(x, w-8, 0)   // bottom-left
 	}
 	// Vertical separators (7 zeros).
 	for y := 0; y < 7; y++ {
-		m.set(7, y, 0)           // top-left
-		m.set(w-8, y, 0)         // top-right
-		m.set(7, w-7+y, 0)       // bottom-left
+		m.set(7, y, 0)     // top-left
+		m.set(w-8, y, 0)   // top-right
+		m.set(7, w-7+y, 0) // bottom-left
 	}
 
 	// Dark module (always 1) at column 8, row = size-8.
@@ -1429,6 +1430,9 @@ func (b *QRBarcode) GetMatrix() ([][]bool, int, int) {
 		text = b.DefaultValue()
 	}
 	ecLevel := qrECLevelFromString(b.ErrorCorrection)
+	if isSwissQRPayload(text) {
+		ecLevel = qrECM
+	}
 	matrix, err := encodeQR(text, ecLevel, b.Encoding)
 	if err != nil || len(matrix) == 0 {
 		// Return a 1×1 fallback so callers never receive nil.
@@ -1451,4 +1455,43 @@ func (b *QRBarcode) GetMatrix() ([][]bool, int, int) {
 	}
 	n := len(matrix)
 	return matrix, n, n
+}
+
+func isSwissQRPayload(text string) bool {
+	normalized := strings.ReplaceAll(text, "\r\n", "\n")
+	normalized = strings.ReplaceAll(normalized, "\r", "\n")
+	return strings.HasPrefix(normalized, "SPC")
+}
+
+func normalizeSwissQRPayload(text string) string {
+	if !isSwissQRPayload(text) {
+		return text
+	}
+
+	lines := strings.Split(strings.ReplaceAll(strings.ReplaceAll(text, "\r\n", "\n"), "\r", "\n"), "\n")
+	for len(lines) < 25 {
+		lines = append(lines, "")
+	}
+	if len(lines) < 23 {
+		return text
+	}
+
+	swiss := NewSwissQRBarcode()
+	swiss.Params = SwissQRParameters{
+		IBAN:                  lines[3],
+		CreditorName:          lines[5],
+		CreditorStreet:        lines[6],
+		CreditorCity:          lines[7],
+		CreditorPostalCode:    lines[8],
+		CreditorCountry:       lines[10],
+		Amount:                lines[17],
+		Currency:              lines[18],
+		ReferenceType:         lines[19],
+		Reference:             lines[20],
+		UnstructuredMessage:   lines[21],
+		TrailerEPD:            lines[22],
+		AlternativeProcedure1: lines[23],
+		AlternativeProcedure2: lines[24],
+	}
+	return swiss.FormatPayload()
 }

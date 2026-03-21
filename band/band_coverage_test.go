@@ -700,6 +700,15 @@ func deserializeDataBand(t *testing.T, xmlStr string) *band.DataBand {
 	if err := d.Deserialize(r); err != nil {
 		t.Fatalf("Deserialize: %v", err)
 	}
+	// Process child elements (e.g. <Sort>) via DeserializeChild.
+	for {
+		ct, childOK := r.NextChild()
+		if !childOK {
+			break
+		}
+		d.DeserializeChild(ct, r)
+		_ = r.FinishChild()
+	}
 	return d
 }
 
@@ -743,8 +752,9 @@ func TestDataBand_SerializeDeserialize_AllAttrs(t *testing.T) {
 		`ParentIdColumn="ParentID"`,
 		`Indent="15"`,
 		`KeepSummary="true"`,
-		`Name ASC`,
-		`Date DESC`,
+		`Expression="Name"`,
+		`Expression="Date"`,
+		`Descending="true"`,
 	} {
 		if !strings.Contains(xmlStr, want) {
 			t.Errorf("missing %q in:\n%s", want, xmlStr)
@@ -874,12 +884,14 @@ func TestDataBand_AddSort(t *testing.T) {
 
 func TestDataBand_Sort_WithExpression(t *testing.T) {
 	d := band.NewDataBand()
-	// Expression overrides Column during Serialize.
 	d.AddSort(band.SortSpec{Column: "Col", Expression: "[Total]", Order: band.SortOrderDescending})
 
 	xmlStr := serializeDataBand(t, d)
-	if !strings.Contains(xmlStr, "[Total] DESC") {
-		t.Errorf("expected '[Total] DESC' in sort output:\n%s", xmlStr)
+	if !strings.Contains(xmlStr, `Expression="[Total]"`) {
+		t.Errorf("expected Expression=[Total] in sort output:\n%s", xmlStr)
+	}
+	if !strings.Contains(xmlStr, `Descending="true"`) {
+		t.Errorf("expected Descending=true in sort output:\n%s", xmlStr)
 	}
 }
 

@@ -445,15 +445,25 @@ func (b *IntelligentMailBarcode) Render(width, height int) (image.Image, error) 
 		}
 	}
 
+	// When QuietZone is true, reserve one bar-width of whitespace at each end.
+	// C# BarcodeIntelligentMail.GetPattern(): bars = space + bars + space
+	// where space = "2" (a blank/space element in the pattern).
 	nBars := len(bars) // 65
-	barW := float64(width) / float64(nBars)
+	nSlots := nBars
+	quietSlots := 0
+	if b.QuietZone {
+		quietSlots = 1
+		nSlots = nBars + 2 // one extra slot on each side
+	}
+	barW := float64(width) / float64(nSlots)
 
 	// Compute vertical thirds.
 	third := height / 3
 
 	for i, barType := range bars {
-		x0 := int(float64(i) * barW)
-		x1 := int(float64(i+1) * barW)
+		slot := i + quietSlots
+		x0 := int(float64(slot) * barW)
+		x1 := int(float64(slot+1) * barW)
 		if x1 > width {
 			x1 = width
 		}

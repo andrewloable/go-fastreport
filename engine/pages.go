@@ -384,6 +384,13 @@ func (e *ReportEngine) showBand(b report.Base) {
 			Top:    e.curY,
 			Height: height,
 		}
+		// Set band kind so GetLastY can exclude PageFooter and Overlay bands,
+		// mirroring C# PreparedPage.GetLastY() checks.
+		if _, ok := b.(*band.PageFooterBand); ok {
+			pb.Kind = preview.PreparedBandKindPageFooter
+		} else if _, ok := b.(*band.OverlayBand); ok {
+			pb.Kind = preview.PreparedBandKindOverlay
+		}
 		// Populate band-level properties (width, fill, border) for background rendering.
 		populateBandProps(b, pb)
 		// Populate child objects from any band type that exposes Objects().

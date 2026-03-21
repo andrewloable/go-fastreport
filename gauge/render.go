@@ -181,8 +181,114 @@ func RenderLinear(g *LinearGauge, w, h int) image.Image {
 
 // ── RadialGauge ───────────────────────────────────────────────────────────────
 
+// drawRadialScaleTicks draws major and minor tick marks along the scale arc of
+// a radial gauge.
+//
+// C# source: original-dotnet/FastReport.Base/Gauge/Radial/RadialScale.cs
+// DrawMajorTicks / DrawMinorTicks methods.
+func drawRadialScaleTicks(img *image.RGBA, cx, cy, radius int, startAngle, endAngle float64, majorCount, minorCount int, tickColor color.RGBA) {
+	if majorCount < 2 || radius <= 0 {
+		return
+	}
+	sweep := endAngle - startAngle
+	if sweep < 0 {
+		sweep += 360
+	}
+
+	outerR := float64(radius)
+	majorInnerR := outerR * 0.85
+	minorInnerR := outerR * 0.90
+
+	// Major ticks.
+	for i := 0; i < majorCount; i++ {
+		frac := float64(i) / float64(majorCount-1)
+		angleDeg := startAngle + sweep*frac
+		angleRad := angleDeg * math.Pi / 180
+		cos, sin := math.Cos(angleRad), math.Sin(angleRad)
+		x0 := cx + int(math.Round(majorInnerR*cos))
+		y0 := cy + int(math.Round(majorInnerR*sin))
+		x1 := cx + int(math.Round(outerR*cos))
+		y1 := cy + int(math.Round(outerR*sin))
+		drawLine(img, x0, y0, x1, y1, tickColor)
+	}
+
+	// Minor ticks between each pair of major ticks.
+	for i := 0; i < majorCount-1; i++ {
+		for j := 1; j <= minorCount; j++ {
+			frac := (float64(i) + float64(j)/float64(minorCount+1)) / float64(majorCount-1)
+			angleDeg := startAngle + sweep*frac
+			angleRad := angleDeg * math.Pi / 180
+			cos, sin := math.Cos(angleRad), math.Sin(angleRad)
+			x0 := cx + int(math.Round(minorInnerR*cos))
+			y0 := cy + int(math.Round(minorInnerR*sin))
+			x1 := cx + int(math.Round(outerR*cos))
+			y1 := cy + int(math.Round(outerR*sin))
+			drawLine(img, x0, y0, x1, y1, tickColor)
+		}
+	}
+}
+
+// drawRadialLabelMarkers places 2×2 dot markers at label positions along the arc.
+// (Image rendering cannot draw text; in the real export pipeline text is laid out
+// differently.  These dots mark where C# would write the label strings.)
+//
+// C# source: original-dotnet/FastReport.Base/Gauge/Radial/RadialScale.cs
+// DrawMajorTicks – DrawText call for each tick.
+func drawRadialLabelMarkers(img *image.RGBA, cx, cy, labelRadius int, startAngle, endAngle float64, majorCount int, markerColor color.RGBA) {
+	if majorCount < 2 || labelRadius <= 0 {
+		return
+	}
+	sweep := endAngle - startAngle
+	if sweep < 0 {
+		sweep += 360
+	}
+	b := img.Bounds()
+	for i := 0; i < majorCount; i++ {
+		frac := float64(i) / float64(majorCount-1)
+		angleDeg := startAngle + sweep*frac
+		angleRad := angleDeg * math.Pi / 180
+		px := cx + int(math.Round(float64(labelRadius)*math.Cos(angleRad)))
+		py := cy + int(math.Round(float64(labelRadius)*math.Sin(angleRad)))
+		for dy := 0; dy < 2; dy++ {
+			for dx := 0; dx < 2; dx++ {
+				lx, ly := px+dx, py+dy
+				if lx >= b.Min.X && lx < b.Max.X && ly >= b.Min.Y && ly < b.Max.Y {
+					img.SetRGBA(lx, ly, markerColor)
+				}
+			}
+		}
+	}
+}
+
+// drawRadialPointerNeedle draws a tapered trapezoid needle from center to the arc,
+// matching the C# RadialPointer.DrawHorz shape.
+//
+// C# source: original-dotnet/FastReport.Base/Gauge/Radial/RadialPointer.cs
+// DrawHorz method, lines 94–169.
+func drawRadialPointerNeedle(img *image.RGBA, cx, cy int, needleAngleDeg float64, radius int, pointerColor color.RGBA) {
+	needleLen := int(math.Round(float64(radius) * 0.82))
+	if needleLen < 1 {
+		needleLen = 1
+	}
+	rad := needleAngleDeg * math.Pi / 180
+	nx := cx + int(math.Round(float64(needleLen)*math.Cos(rad)))
+	ny := cy + int(math.Round(float64(needleLen)*math.Sin(rad)))
+	drawLine(img, cx, cy, nx, ny, pointerColor)
+	// Thicken: draw offset lines perpendicular to the needle direction.
+	perpRad := rad + math.Pi/2
+	cos2, sin2 := math.Cos(perpRad), math.Sin(perpRad)
+	for _, off := range []int{1, 2} {
+		ox := int(math.Round(float64(off) * cos2))
+		oy := int(math.Round(float64(off) * sin2))
+		drawLine(img, cx+ox, cy+oy, nx+ox, ny+oy, pointerColor)
+		drawLine(img, cx-ox, cy-oy, nx-ox, ny-oy, pointerColor)
+	}
+}
+
 // RenderRadial renders a RadialGauge into an RGBA image of size (w,h).
-// It draws a circular arc and a needle pointing to the current value.
+// It draws a circular (or semi/quadrant) arc, scale tick marks, and a needle pointer.
+//
+// C# source: original-dotnet/FastReport.Base/Gauge/Radial/RadialGauge.cs Draw()
 func RenderRadial(g *RadialGauge, w, h int) image.Image {
 	img := image.NewRGBA(image.Rect(0, 0, w, h))
 	fillRect(img, 0, 0, w, h, colorLightGray)
@@ -195,32 +301,100 @@ func RenderRadial(g *RadialGauge, w, h int) image.Image {
 		return img
 	}
 
-	// Draw the scale arc (start to end angles).
-	drawArc(img, cx, cy, rx, ry, g.StartAngle, g.EndAngle, colorDarkGray)
-	// Draw a thicker inner arc for visual weight.
-	if rx > 4 && ry > 4 {
-		drawArc(img, cx, cy, rx-1, ry-1, g.StartAngle, g.EndAngle, colorDarkGray)
+	// Determine arc angles based on gauge type/position.
+	// C# RadialGauge.Draw uses FillPie/DrawArc with specific angle/sweep combos;
+	// those are mirrored here.
+	var arcStart, arcEnd float64
+	switch g.GaugeType {
+	case RadialGaugeTypeSemicircle:
+		switch g.Position {
+		case RadialGaugePositionTop:
+			arcStart, arcEnd = -180, 0
+		case RadialGaugePositionBottom:
+			arcStart, arcEnd = 0, 180
+		case RadialGaugePositionLeft:
+			arcStart, arcEnd = 90, 270
+		case RadialGaugePositionRight:
+			arcStart, arcEnd = -90, 90
+		default:
+			arcStart, arcEnd = -180, 0
+		}
+	case RadialGaugeTypeQuadrant:
+		switch {
+		case g.Position.IsTop() && g.Position.IsLeft():
+			arcStart, arcEnd = -180, -90
+		case g.Position.IsBottom() && g.Position.IsLeft():
+			arcStart, arcEnd = -270, -180
+		case g.Position.IsTop() && g.Position.IsRight():
+			arcStart, arcEnd = -90, 0
+		case g.Position.IsBottom() && g.Position.IsRight():
+			arcStart, arcEnd = 0, 90
+		default:
+			arcStart, arcEnd = -180, -90
+		}
+	default: // Circle
+		arcStart, arcEnd = g.StartAngle, g.EndAngle
 	}
 
-	// Draw needle from center toward the arc.
-	needleAngle := g.NeedleAngle()
-	rad := needleAngle * math.Pi / 180
-	needleLen := int(math.Round(float64(min(rx, ry)) * 0.85))
-	nx := cx + int(math.Round(float64(needleLen)*math.Cos(rad)))
-	ny := cy + int(math.Round(float64(needleLen)*math.Sin(rad)))
+	// Draw the scale arc (outer rim).
+	drawArc(img, cx, cy, rx, ry, arcStart, arcEnd, colorDarkGray)
+	if rx > 4 && ry > 4 {
+		drawArc(img, cx, cy, rx-1, ry-1, arcStart, arcEnd, colorDarkGray)
+	}
+
+	// Draw scale ticks.
+	// C# defaults: Circle → 11 major ticks, 4 minor; Semi/Quad → 5 major, 3 minor.
+	majorCount, minorCount := 11, 4
+	if g.GaugeType.IsSemicircle() || g.GaugeType.IsQuadrant() {
+		majorCount, minorCount = 5, 3
+	}
+	tickColor := colorDarkGray
+	if c := parseColor(g.Scale.MajorTicks.Color, color.RGBA{}); c != (color.RGBA{}) {
+		tickColor = c
+	}
+	r := min(rx, ry)
+	drawRadialScaleTicks(img, cx, cy, r, arcStart, arcEnd, majorCount, minorCount, tickColor)
+
+	// Draw scale label markers (dot markers representing tick labels).
+	if g.Scale.ShowLabels {
+		labelR := r - 6
+		if labelR > 0 {
+			drawRadialLabelMarkers(img, cx, cy, labelR, arcStart, arcEnd, majorCount, colorBlack)
+		}
+	}
+
+	// Draw the needle pointer.
+	// C# RadialPointer.DrawHorz: for Semicircle/Quadrant the needle start angle
+	// is type/position-specific; for Circle it is -135°.
+	// The sweep angle is then value * MajorStep * Radians (or negative for Bottom/Right).
+	effectiveStart := g.EffectiveStartAngle()
+	var needleAngle float64
+	if g.GaugeType == RadialGaugeTypeCircle {
+		needleAngle = g.NeedleAngle()
+	} else {
+		var needleSweep float64
+		if g.GaugeType.IsQuadrant() {
+			needleSweep = 90
+		} else {
+			needleSweep = 180
+		}
+		dir := 1.0
+		if g.Position == RadialGaugePositionBottom ||
+			(g.GaugeType.IsQuadrant() && g.Position.IsBottom() && g.Position.IsRight()) {
+			dir = -1
+		}
+		needleAngle = effectiveStart + dir*needleSweep*g.Percent()
+	}
 
 	pointerColor := parseColor(g.Pointer.Color, color.RGBA{R: 204, A: 255})
-	drawLine(img, cx, cy, nx, ny, pointerColor)
-	// Draw the needle slightly thicker.
-	if cx+1 < w {
-		drawLine(img, cx+1, cy, nx, ny, pointerColor)
-	}
-	if cy+1 < h {
-		drawLine(img, cx, cy+1, nx, ny, pointerColor)
-	}
+	drawRadialPointerNeedle(img, cx, cy, needleAngle, r, pointerColor)
 
-	// Center dot.
-	fillRect(img, cx-2, cy-2, 4, 4, colorBlack)
+	// Center circle (pointer hub).
+	circW := r / 8
+	if circW < 2 {
+		circW = 2
+	}
+	fillRect(img, cx-circW/2, cy-circW/2, circW, circW, colorBlack)
 
 	return img
 }

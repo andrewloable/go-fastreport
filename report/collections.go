@@ -1,6 +1,9 @@
 package report
 
-import "iter"
+import (
+	"iter"
+	"sort"
+)
 
 // ObjectCollection is a typed collection of Base objects.
 // It is the Go equivalent of FastReport.ObjectCollection and is used throughout
@@ -112,6 +115,25 @@ func (c *ObjectCollection) FindByName(name string) Base {
 		}
 	}
 	return nil
+}
+
+// SortByTop returns a new slice of objects sorted by their Top coordinate.
+// It is the Go equivalent of ReportComponentCollection.SortByTop().
+// Objects that do not expose Bounds are sorted as having Top = 0.
+func (c *ObjectCollection) SortByTop() []Base {
+	out := c.Slice()
+	sort.SliceStable(out, func(i, j int) bool {
+		var topI, topJ float32
+		type bounded interface{ Bounds() Rect }
+		if ci, ok := out[i].(bounded); ok {
+			topI = ci.Bounds().Top
+		}
+		if cj, ok := out[j].(bounded); ok {
+			topJ = cj.Bounds().Top
+		}
+		return topI < topJ
+	})
+	return out
 }
 
 // TypedCollection is a generic typed collection whose element type T must

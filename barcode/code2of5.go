@@ -103,7 +103,9 @@ func (b *Code2of5Barcode) GetPattern() (string, error) {
 	return interleavedEncode(text), nil
 }
 
-func (b *Code2of5Barcode) GetWideBarRatio() float32 { return 2 }
+// GetWideBarRatio returns the effective wide bar ratio, clamped to [2, 3].
+// C# Barcode2of5Interleaved: ratioMin=2, ratioMax=3; default WideBarRatio=2 (LinearBarcodeBase.cs:636).
+func (b *Code2of5Barcode) GetWideBarRatio() float32 { return b.clampedWBR(2) }
 
 // ── 2/5 Industrial ───────────────────────────────────────────────────────────
 
@@ -133,7 +135,9 @@ func (b *Code2of5IndustrialBarcode) GetPattern() (string, error) {
 	return sb.String(), nil
 }
 
-func (b *Code2of5IndustrialBarcode) GetWideBarRatio() float32 { return 2 }
+// GetWideBarRatio returns the effective wide bar ratio, clamped to [2, 3].
+// C# Barcode2of5Industrial inherits Barcode2of5Interleaved: ratioMin=2, ratioMax=3 (Barcode2of5.cs:78-79).
+func (b *Code2of5IndustrialBarcode) GetWideBarRatio() float32 { return b.clampedWBR(2) }
 
 // ── 2/5 Matrix ───────────────────────────────────────────────────────────────
 
@@ -169,8 +173,9 @@ func (b *Code2of5MatrixBarcode) GetPattern() (string, error) {
 	return sb.String(), nil
 }
 
-// GetWideBarRatio returns 2.25 per C# Barcode2of5.cs:487 (WideBarRatio=2.25F for Matrix 2/5).
-func (b *Code2of5MatrixBarcode) GetWideBarRatio() float32 { return 2.25 }
+// GetWideBarRatio returns the effective wide bar ratio, clamped to [2.25, 3.0].
+// C# Barcode2of5Matrix constructor: ratioMin=2.25, ratioMax=3.0, WideBarRatio=2.25 (Barcode2of5.cs:564-566).
+func (b *Code2of5MatrixBarcode) GetWideBarRatio() float32 { return b.clampedWBR(2.25) }
 
 // ── ITF-14 ───────────────────────────────────────────────────────────────────
 
@@ -215,10 +220,23 @@ func (b *ITF14Barcode) GetPattern() (string, error) {
 	return sb.String(), nil
 }
 
-// GetWideBarRatio returns 2.25 per C# Barcode2of5.cs:566 (WideBarRatio=2.25F for ITF-14).
-func (b *ITF14Barcode) GetWideBarRatio() float32 { return 2.25 }
+// GetWideBarRatio returns the effective wide bar ratio, clamped to [2.25, 3.0].
+// C# BarcodeITF14 constructor: ratioMin=2.25, ratioMax=3.0, WideBarRatio=2.25 (Barcode2of5.cs:485-487).
+func (b *ITF14Barcode) GetWideBarRatio() float32 { return b.clampedWBR(2.25) }
 
 // ── Deutsche Identcode ───────────────────────────────────────────────────────
+
+// insertAt inserts s into text at byte position pos.
+// Mirrors C# string.Insert(pos, s).
+func insertAt(text, s string, pos int) string {
+	if pos < 0 {
+		pos = 0
+	}
+	if pos > len(text) {
+		pos = len(text)
+	}
+	return text[:pos] + s + text[pos:]
+}
 
 func (b *DeutscheIdentcodeBarcode) GetPattern() (string, error) {
 	text := strings.ReplaceAll(strings.ReplaceAll(b.encodedText, ".", ""), " ", "")
@@ -239,10 +257,29 @@ func (b *DeutscheIdentcodeBarcode) GetPattern() (string, error) {
 			return "", fmt.Errorf("deutsche identcode: expected 12 digits (CalcCheckSum=false), got %d", len(text))
 		}
 	}
-	return interleavedEncode(text), nil
+	pattern := interleavedEncode(text)
+
+	// Format display text: insert dots and spaces as per Deutsche Post spec.
+	// C# BarcodeDeutscheIdentcode.GetPattern (Barcode2of5.cs:156-163):
+	//   base.text = text.Insert(2,".").Insert(6," ").Insert(10,".")
+	//   if !PrintCheckSum { strip last char } else { insert space at pos 14 }
+	display := insertAt(text, ".", 2) // "XX.XXXXXXXXX"
+	display = insertAt(display, " ", 6) // "XX.XXX XXXXXX"
+	display = insertAt(display, ".", 10) // "XX.XXX XXX.XX"
+	if !b.PrintCheckSum {
+		// strip the last character (the check digit)
+		display = display[:len(display)-1]
+	} else {
+		display = insertAt(display, " ", 14) // "XX.XXX XXX.XX X"
+	}
+	b.encodedText = display
+
+	return pattern, nil
 }
 
-func (b *DeutscheIdentcodeBarcode) GetWideBarRatio() float32 { return 3 }
+// GetWideBarRatio returns the effective wide bar ratio, clamped to [2.25, 3.5].
+// C# BarcodeDeutscheIdentcode constructor: ratioMin=2.25, ratioMax=3.5, WideBarRatio=3.0 (Barcode2of5.cs:191-193).
+func (b *DeutscheIdentcodeBarcode) GetWideBarRatio() float32 { return b.clampedWBR(3) }
 
 // ── Deutsche Leitcode ────────────────────────────────────────────────────────
 
@@ -265,7 +302,25 @@ func (b *DeutscheLeitcodeBarcode) GetPattern() (string, error) {
 			return "", fmt.Errorf("deutsche leitcode: expected 14 digits (CalcCheckSum=false), got %d", len(text))
 		}
 	}
-	return interleavedEncode(text), nil
+	pattern := interleavedEncode(text)
+
+	// Format display text: insert dots and spaces as per Deutsche Post spec.
+	// C# BarcodeDeutscheLeitcode.GetPattern (Barcode2of5.cs:301-308):
+	//   base.text = text.Insert(5,".").Insert(6," ").Insert(10,".").Insert(11," ")
+	//               .Insert(15,".").Insert(16," ").Insert(19," ")
+	// Note: unlike Identcode, Leitcode does not apply PrintCheckSum trimming here.
+	display := insertAt(text, ".", 5)   // after 5th digit
+	display = insertAt(display, " ", 6) // space after dot
+	display = insertAt(display, ".", 10)
+	display = insertAt(display, " ", 11)
+	display = insertAt(display, ".", 15)
+	display = insertAt(display, " ", 16)
+	display = insertAt(display, " ", 19)
+	b.encodedText = display
+
+	return pattern, nil
 }
 
-func (b *DeutscheLeitcodeBarcode) GetWideBarRatio() float32 { return 3 }
+// GetWideBarRatio returns the effective wide bar ratio, clamped to [2.25, 3.5].
+// C# BarcodeDeutscheLeitcode constructor: ratioMin=2.25, ratioMax=3.5, WideBarRatio=3.0 (Barcode2of5.cs:318-320).
+func (b *DeutscheLeitcodeBarcode) GetWideBarRatio() float32 { return b.clampedWBR(3) }

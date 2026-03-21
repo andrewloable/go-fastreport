@@ -659,7 +659,7 @@ func TestRFIDLabel_SerializeDeserialize_AllBanksAndPasswords(t *testing.T) {
 	orig.KillPasswordDataColumn = "KillCol"
 	orig.LockKillPassword = object.RFIDLockTypePermanentLock
 	orig.LockAccessPassword = object.RFIDLockTypeLock
-	orig.LockEPCBank = object.RFIDLockTypePermanentUnlock
+	orig.LockEPCBank = object.RFIDLockTypeLock // non-default to ensure LockEPCBlock= appears in XML
 	orig.LockUserBank = object.RFIDLockTypeLock
 	orig.UseAdjustForEPC = true
 	orig.RewriteEPCBank = true
@@ -673,14 +673,16 @@ func TestRFIDLabel_SerializeDeserialize_AllBanksAndPasswords(t *testing.T) {
 	_ = w.Flush()
 
 	xml := buf.String()
+	// C# key names: "EpcBank", "TidBank", "LockEPCBlock", "LockUserBlock", "RewriteEPCbank"
+	// (RFIDLabel.cs:463-498)
 	checks := []string{
-		`EPCBank.Data=`, `EPCBank.DataColumn=`, `EPCBank.Offset=`, `EPCBank.DataFormat=`,
-		`TIDBank.Data=`, `TIDBank.DataColumn=`, `TIDBank.Offset=`, `TIDBank.DataFormat=`,
+		`EpcBank.Data=`, `EpcBank.DataColumn=`, `EpcBank.Offset=`, `EpcBank.DataFormat=`,
+		`TidBank.Data=`, `TidBank.DataColumn=`, `TidBank.Offset=`, `TidBank.DataFormat=`,
 		`UserBank.Data=`, `UserBank.DataColumn=`,
 		`AccessPassword=`, `AccessPasswordDataColumn=`,
 		`KillPassword=`, `KillPasswordDataColumn=`,
-		`LockKillPassword=`, `LockAccessPassword=`, `LockEPCBank=`, `LockUserBank=`,
-		`UseAdjustForEPC="true"`, `RewriteEPCBank="true"`, `ErrorHandle=`,
+		`LockKillPassword=`, `LockAccessPassword=`, `LockEPCBlock=`, `LockUserBlock=`,
+		`UseAdjustForEPC="true"`, `RewriteEPCbank="true"`, `ErrorHandle=`,
 	}
 	for _, c := range checks {
 		if !strings.Contains(xml, c) {
@@ -724,7 +726,7 @@ func TestRFIDLabel_SerializeDeserialize_AllBanksAndPasswords(t *testing.T) {
 	if got.LockAccessPassword != object.RFIDLockTypeLock {
 		t.Errorf("LockAccessPassword: got %v", got.LockAccessPassword)
 	}
-	if got.LockEPCBank != object.RFIDLockTypePermanentUnlock {
+	if got.LockEPCBank != object.RFIDLockTypeLock {
 		t.Errorf("LockEPCBank: got %v", got.LockEPCBank)
 	}
 	if got.LockUserBank != object.RFIDLockTypeLock {

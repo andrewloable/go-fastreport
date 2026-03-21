@@ -90,7 +90,17 @@ func (r *Report) Calc(expression string) (any, error) {
 		}
 	}
 
-	return ev.Eval(goExpr)
+	val, err := ev.Eval(goExpr)
+	if err != nil {
+		return val, err
+	}
+	// Fire OnCustomCalc hook if set — mirrors C# Report.CustomCalc event which
+	// allows callers to override the resolved value after expression evaluation.
+	// C# ref: FastReport.Base/Report.cs, Calc() → CustomCalc event firing.
+	if r.OnCustomCalc != nil {
+		val = r.OnCustomCalc(expression, val)
+	}
+	return val, nil
 }
 
 // CalcText evaluates a text template that may contain multiple [bracket]

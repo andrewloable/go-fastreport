@@ -38,6 +38,7 @@ type fpxPage struct {
 
 type fpxBand struct {
 	Name    string
+	Kind    int // PreparedBandKind: 0=Normal, 1=PageFooter, 2=Overlay
 	Top     float32
 	Height  float32
 	Objects []fpxObject
@@ -133,17 +134,19 @@ func (pp *PreparedPages) Save(w io.Writer) error {
 }
 
 func encodeBlobStore(bs *BlobStore) fpxBlobStore {
+	n := bs.Count()
 	out := fpxBlobStore{
-		Index: make(map[string]int, len(bs.index)),
-		Blobs: make([][]byte, len(bs.blobs)),
+		Index: make(map[string]int, n),
+		Blobs: make([][]byte, n),
 	}
-	for k, v := range bs.index {
-		out.Index[k] = v
-	}
-	for i, b := range bs.blobs {
-		cp := make([]byte, len(b))
-		copy(cp, b)
+	for i := 0; i < n; i++ {
+		src := bs.Get(i)
+		cp := make([]byte, len(src))
+		copy(cp, src)
 		out.Blobs[i] = cp
+		if key := bs.GetSource(i); key != "" {
+			out.Index[key] = i
+		}
 	}
 	return out
 }
@@ -170,6 +173,7 @@ func encodeBands(bands []*PreparedBand) []fpxBand {
 	for i, b := range bands {
 		out[i] = fpxBand{
 			Name:    b.Name,
+			Kind:    int(b.Kind),
 			Top:     b.Top,
 			Height:  b.Height,
 			Objects: encodeObjects(b.Objects),
@@ -314,14 +318,15 @@ func Load(r io.Reader) (*PreparedPages, error) {
 }
 
 func decodeBlobStore(src fpxBlobStore, dst *BlobStore) {
-	dst.blobs = make([][]byte, len(src.Blobs))
+	// Build a reverse map: index → source key, so we can pass the key to AddOrUpdate.
+	idxToKey := make(map[int]string, len(src.Index))
+	for k, v := range src.Index {
+		idxToKey[v] = k
+	}
 	for i, b := range src.Blobs {
 		cp := make([]byte, len(b))
 		copy(cp, b)
-		dst.blobs[i] = cp
-	}
-	for k, v := range src.Index {
-		dst.index[k] = v
+		dst.AddOrUpdate(cp, idxToKey[i])
 	}
 }
 
@@ -350,6 +355,7 @@ func decodeBands(src []fpxBand) []*PreparedBand {
 	for i, fb := range src {
 		out[i] = &PreparedBand{
 			Name:    fb.Name,
+			Kind:    PreparedBandKind(fb.Kind),
 			Top:     fb.Top,
 			Height:  fb.Height,
 			Objects: decodeObjects(fb.Objects),

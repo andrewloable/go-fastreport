@@ -37,7 +37,9 @@ type PageColumns struct {
 
 // ReportPage represents a single page template in the report.
 // It holds bands that define what prints on each physical page.
-// It is the Go equivalent of FastReport.ReportPage.
+// It is the Go equivalent of FastReport.ReportPage, which inherits from
+// FastReport.PageBase (see original-dotnet/FastReport.Base/PageBase.cs and
+// original-dotnet/FastReport.Base/ReportPage.cs).
 type ReportPage struct {
 	report.BaseObject
 
@@ -46,10 +48,39 @@ type ReportPage struct {
 	// that are only shown when triggered interactively). Default is true.
 	visible bool
 
+	// --- PageBase fields (FastReport.Base/PageBase.cs) ---
+
+	// pageName is an explicit override for the page name shown in the preview
+	// navigator. When empty, Name() is used instead.
+	// Mirrors PageBase.PageName (internal).
+	pageName string
+
+	// needRefresh is set by Refresh() and Modify() to signal the preview window
+	// to repaint this page. Mirrors PageBase.NeedRefresh (internal).
+	needRefresh bool
+
+	// needModify is set by Modify() to signal that page content has changed and
+	// must be saved. Mirrors PageBase.NeedModify (internal).
+	needModify bool
+
+	// --- ReportPage fields ---
+
 	// Paper dimensions in millimetres.
 	PaperWidth  float32 // default 210 (A4)
 	PaperHeight float32 // default 297 (A4)
 	Landscape   bool
+
+	// RawPaperSize stores the RawKind value of the selected paper size.
+	// Used to distinguish papers with identical dimensions (e.g. "A3" vs
+	// "A3 with no margins"). Not required for rendering; FastReport uses
+	// PaperWidth/PaperHeight when this is 0.
+	// Mirrors FastReport.ReportPage.RawPaperSize.
+	RawPaperSize int
+
+	// ExportAlias is an optional page name override used during export.
+	// When set, exporters use this value instead of Name().
+	// Mirrors FastReport.ReportPage.ExportAlias.
+	ExportAlias string
 
 	// Margins in millimetres.
 	LeftMargin   float32 // default 10
@@ -80,6 +111,12 @@ type ReportPage struct {
 	ResetPageNumber    bool
 	StartOnOddPage     bool
 
+	// ExtraDesignWidth gives the page extra width in the report designer.
+	// Useful when working with Matrix or Table objects that extend beyond
+	// the normal page boundary. Not used at runtime.
+	// Mirrors FastReport.ReportPage.ExtraDesignWidth.
+	ExtraDesignWidth bool
+
 	// BackPage references another ReportPage by name. When set, the referenced
 	// page's content is rendered as a background layer behind this page's content.
 	// This mirrors FastReport's ReportPage.BackPage property.
@@ -107,6 +144,40 @@ type ReportPage struct {
 	// to fit all content. Mirrors FastReport's ReportPage.UnlimitedHeight.
 	UnlimitedHeight bool
 
+	// PrintOnRollPaper controls whether an unlimited-height page is printed
+	// on roll paper. Only meaningful when UnlimitedHeight is true.
+	// Mirrors FastReport.ReportPage.PrintOnRollPaper.
+	PrintOnRollPaper bool
+
+	// UnlimitedWidth, when true, allows the page to grow horizontally to
+	// fit all content. Mirrors FastReport.ReportPage.UnlimitedWidth.
+	UnlimitedWidth bool
+
+	// UnlimitedHeightValue is the current rendered height of an unlimited page
+	// in report units (pixels at 96 dpi). Set by the engine during report run.
+	// Mirrors FastReport.ReportPage.UnlimitedHeightValue.
+	UnlimitedHeightValue float32
+
+	// UnlimitedWidthValue is the current rendered width of an unlimited page
+	// in report units. Set by the engine during report run.
+	// Mirrors FastReport.ReportPage.UnlimitedWidthValue.
+	UnlimitedWidthValue float32
+
+	// Paper-source / printer-tray selectors.
+	// Default value 7 matches System.Drawing.Printing.PaperSourceKind.AutomaticFeed.
+	// These are only relevant when printing to a physical printer.
+	// Mirrors FastReport.ReportPage.FirstPageSource / OtherPagesSource / LastPageSource.
+	FirstPageSource  int // default 7
+	OtherPagesSource int // default 7
+	LastPageSource   int // default 7
+
+	// Duplex specifies the printer duplex mode for this page.
+	// Values mirror System.Drawing.Printing.Duplex: "Default", "Simplex",
+	// "Vertical" (long-edge), "Horizontal" (short-edge).
+	// Empty string is treated as "Default" at print time.
+	// Mirrors FastReport.ReportPage.Duplex.
+	Duplex string
+
 	// Watermark is the optional page watermark (text or image).
 	Watermark *Watermark
 
@@ -118,21 +189,38 @@ type ReportPage struct {
 func (*ReportPage) TypeName() string { return "ReportPage" }
 
 // NewReportPage creates a ReportPage with A4 defaults.
+// Default paper-source values (7) mirror System.Drawing.Printing.PaperSourceKind.AutomaticFeed,
+// matching FastReport's ReportPage constructor defaults.
 func NewReportPage() *ReportPage {
 	p := &ReportPage{
-		BaseObject:   *report.NewBaseObject(),
-		visible:      true,
-		PaperWidth:   210,
-		PaperHeight:  297,
-		LeftMargin:   10,
-		TopMargin:    10,
-		RightMargin:  10,
-		BottomMargin: 10,
+		BaseObject:       *report.NewBaseObject(),
+		visible:          true,
+		PaperWidth:       210,
+		PaperHeight:      297,
+		LeftMargin:       10,
+		TopMargin:        10,
+		RightMargin:      10,
+		BottomMargin:     10,
+		FirstPageSource:  7,
+		OtherPagesSource: 7,
+		LastPageSource:   7,
 	}
 	p.fill = &style.SolidFill{Color: style.ColorWhite}
 	p.Watermark = NewWatermark()
 	return p
 }
+
+// GetPaperWidth returns the page paper width in millimetres.
+// Satisfies export.ReportPageDims.
+func (p *ReportPage) GetPaperWidth() float32 { return p.PaperWidth }
+
+// GetPaperHeight returns the page paper height in millimetres.
+// Satisfies export.ReportPageDims.
+func (p *ReportPage) GetPaperHeight() float32 { return p.PaperHeight }
+
+// IsUnlimitedHeight reports whether the page has unlimited (dynamic) height.
+// Satisfies export.ReportPageDims.
+func (p *ReportPage) IsUnlimitedHeight() bool { return p.UnlimitedHeight }
 
 // Visible returns whether this page template is included in report output.
 // Pages with Visible=false are skipped by the engine (e.g. drill-down detail pages).
@@ -140,6 +228,52 @@ func (p *ReportPage) Visible() bool { return p.visible }
 
 // SetVisible controls whether this page template is included in report output.
 func (p *ReportPage) SetVisible(v bool) { p.visible = v }
+
+// --- PageBase methods (FastReport.Base/PageBase.cs) ---
+
+// PageName returns the display name used in the preview navigator.
+// When an explicit override has been set via SetPageName, that value is returned;
+// otherwise Name() is used as a fallback.
+// Mirrors FastReport.PageBase.PageName (internal getter).
+func (p *ReportPage) PageName() string {
+	if p.pageName != "" {
+		return p.pageName
+	}
+	return p.Name()
+}
+
+// SetPageName sets an explicit display-name override for the preview navigator.
+// Pass an empty string to revert to using Name().
+// Mirrors FastReport.PageBase.PageName (internal setter).
+func (p *ReportPage) SetPageName(name string) { p.pageName = name }
+
+// NeedRefresh reports whether Refresh() or Modify() has been called since the
+// last repaint. The preview controller is responsible for clearing this flag.
+// Mirrors FastReport.PageBase.NeedRefresh (internal).
+func (p *ReportPage) NeedRefresh() bool { return p.needRefresh }
+
+// NeedModify reports whether Modify() has been called, indicating that page
+// content has changed and the change must be saved to the prepared report.
+// The caller is responsible for clearing this flag after processing.
+// Mirrors FastReport.PageBase.NeedModify (internal).
+func (p *ReportPage) NeedModify() bool { return p.needModify }
+
+// Refresh signals the preview window to repaint this page.
+// It sets NeedRefresh to true without marking the content as changed.
+// Call this from interactive-object event handlers (MouseMove, MouseEnter, etc.)
+// when only a visual refresh is needed, not a content update.
+// Mirrors FastReport.PageBase.Refresh().
+func (p *ReportPage) Refresh() { p.needRefresh = true }
+
+// Modify signals that page content has changed and refreshes the preview window.
+// It sets both NeedModify and NeedRefresh to true.
+// Call this from interactive-object event handlers (Click, MouseDown, MouseUp)
+// when you want to change an object and have the preview reflect the change.
+// Mirrors FastReport.PageBase.Modify().
+func (p *ReportPage) Modify() {
+	p.needModify = true
+	p.needRefresh = true
+}
 
 // --- Band accessors ---
 
@@ -381,8 +515,41 @@ func (p *ReportPage) Serialize(w report.Writer) error {
 	if p.StartOnOddPage {
 		w.WriteBool("StartOnOddPage", true)
 	}
+	if p.RawPaperSize != 0 {
+		w.WriteInt("RawPaperSize", p.RawPaperSize)
+	}
+	if p.ExportAlias != "" {
+		w.WriteStr("ExportAlias", p.ExportAlias)
+	}
+	if p.ExtraDesignWidth {
+		w.WriteBool("ExtraDesignWidth", true)
+	}
 	if p.UnlimitedHeight {
 		w.WriteBool("UnlimitedHeight", true)
+	}
+	if p.PrintOnRollPaper {
+		w.WriteBool("PrintOnRollPaper", true)
+	}
+	if p.UnlimitedWidth {
+		w.WriteBool("UnlimitedWidth", true)
+	}
+	if p.UnlimitedHeightValue != 0 {
+		w.WriteFloat("UnlimitedHeightValue", p.UnlimitedHeightValue)
+	}
+	if p.UnlimitedWidthValue != 0 {
+		w.WriteFloat("UnlimitedWidthValue", p.UnlimitedWidthValue)
+	}
+	if p.FirstPageSource != 7 {
+		w.WriteInt("FirstPageSource", p.FirstPageSource)
+	}
+	if p.OtherPagesSource != 7 {
+		w.WriteInt("OtherPagesSource", p.OtherPagesSource)
+	}
+	if p.LastPageSource != 7 {
+		w.WriteInt("LastPageSource", p.LastPageSource)
+	}
+	if p.Duplex != "" && p.Duplex != "Default" {
+		w.WriteStr("Duplex", p.Duplex)
 	}
 	if p.OutlineExpression != "" {
 		w.WriteStr("OutlineExpression", p.OutlineExpression)
@@ -495,6 +662,8 @@ func (p *ReportPage) Deserialize(r report.Reader) error {
 	p.PaperWidth = r.ReadFloat("PaperWidth", 210)
 	p.PaperHeight = r.ReadFloat("PaperHeight", 297)
 	p.Landscape = r.ReadBool("Landscape", false)
+	p.RawPaperSize = r.ReadInt("RawPaperSize", 0)
+	p.ExportAlias = r.ReadStr("ExportAlias", "")
 	p.LeftMargin = r.ReadFloat("LeftMargin", 10)
 	p.TopMargin = r.ReadFloat("TopMargin", 10)
 	p.RightMargin = r.ReadFloat("RightMargin", 10)
@@ -504,7 +673,16 @@ func (p *ReportPage) Deserialize(r report.Reader) error {
 	p.PrintOnPreviousPage = r.ReadBool("PrintOnPreviousPage", false)
 	p.ResetPageNumber = r.ReadBool("ResetPageNumber", false)
 	p.StartOnOddPage = r.ReadBool("StartOnOddPage", false)
+	p.ExtraDesignWidth = r.ReadBool("ExtraDesignWidth", false)
 	p.UnlimitedHeight = r.ReadBool("UnlimitedHeight", false)
+	p.PrintOnRollPaper = r.ReadBool("PrintOnRollPaper", false)
+	p.UnlimitedWidth = r.ReadBool("UnlimitedWidth", false)
+	p.UnlimitedHeightValue = r.ReadFloat("UnlimitedHeightValue", 0)
+	p.UnlimitedWidthValue = r.ReadFloat("UnlimitedWidthValue", 0)
+	p.FirstPageSource = r.ReadInt("FirstPageSource", 7)
+	p.OtherPagesSource = r.ReadInt("OtherPagesSource", 7)
+	p.LastPageSource = r.ReadInt("LastPageSource", 7)
+	p.Duplex = r.ReadStr("Duplex", "")
 	p.OutlineExpression = r.ReadStr("OutlineExpression", "")
 	p.CreatePageEvent = r.ReadStr("CreatePageEvent", "")
 	p.StartPageEvent = r.ReadStr("StartPageEvent", "")

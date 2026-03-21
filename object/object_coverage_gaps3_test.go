@@ -289,8 +289,9 @@ func TestRFIDLabel_Deserialize_DefaultReader(t *testing.T) {
 	if rfid.EPCBank.Data != "" {
 		t.Errorf("EPCBank.Data: got %q, want empty", rfid.EPCBank.Data)
 	}
-	if rfid.LockEPCBank != RFIDLockTypeUnlock {
-		t.Errorf("LockEPCBank: got %v, want Unlock", rfid.LockEPCBank)
+	// Default lock is PermanentUnlock (C# LockType.Open, RFIDLabel.cs:524)
+	if rfid.LockEPCBank != RFIDLockTypePermanentUnlock {
+		t.Errorf("LockEPCBank: got %v, want PermanentUnlock (Open)", rfid.LockEPCBank)
 	}
 }
 
@@ -333,13 +334,14 @@ type rfidAllFieldsReader struct {
 
 func (r *rfidAllFieldsReader) ReadStr(name, def string) string {
 	switch name {
-	case "EPCBank.Data":
+	// C# bank prefix: "EpcBank", "TidBank", "UserBank" (RFIDLabel.cs:463-465)
+	case "EpcBank.Data":
 		return "EPC1"
-	case "EPCBank.DataColumn":
+	case "EpcBank.DataColumn":
 		return "epc_col"
-	case "TIDBank.Data":
+	case "TidBank.Data":
 		return "TID1"
-	case "TIDBank.DataColumn":
+	case "TidBank.DataColumn":
 		return "tid_col"
 	case "UserBank.Data":
 		return "USER1"
@@ -357,23 +359,25 @@ func (r *rfidAllFieldsReader) ReadStr(name, def string) string {
 
 func (r *rfidAllFieldsReader) ReadInt(name string, def int) int {
 	switch name {
-	case "EPCBank.Offset":
+	// C# bank prefix: "EpcBank", "TidBank", "UserBank" (RFIDLabel.cs:463-465)
+	case "EpcBank.Offset":
 		return 2
-	case "EPCBank.DataFormat":
+	case "EpcBank.DataFormat":
 		return int(RFIDBankFormatASCII)
-	case "TIDBank.Offset":
+	case "TidBank.Offset":
 		return 0
 	case "UserBank.Offset":
 		return 4
 	case "UserBank.DataFormat":
-		return int(RFIDBankFormatDecimal)
+		return int(RFIDBankFormatASCII)
 	case "LockKillPassword":
 		return int(RFIDLockTypeLock)
 	case "LockAccessPassword":
 		return int(RFIDLockTypePermanentUnlock)
-	case "LockEPCBank":
+	// C# serializes as "LockEPCBlock" / "LockUserBlock" (RFIDLabel.cs:482-484)
+	case "LockEPCBlock":
 		return int(RFIDLockTypePermanentLock)
-	case "LockUserBank":
+	case "LockUserBlock":
 		return int(RFIDLockTypePermanentLock)
 	case "ErrorHandle":
 		return int(RFIDErrorHandleError)
@@ -385,7 +389,8 @@ func (r *rfidAllFieldsReader) ReadBool(name string, def bool) bool {
 	switch name {
 	case "UseAdjustForEPC":
 		return true
-	case "RewriteEPCBank":
+	// C# key: "RewriteEPCbank" (lowercase b) (RFIDLabel.cs:498)
+	case "RewriteEPCbank":
 		return true
 	}
 	return def

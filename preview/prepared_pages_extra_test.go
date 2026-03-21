@@ -231,3 +231,107 @@ func TestPreparedPages_TrimTo_Negative(t *testing.T) {
 		t.Errorf("Count after TrimTo(-5) = %d, want 0", pp.Count())
 	}
 }
+
+// ── GetCachedPage / ClearPageCache / RemovePageCache ─────────────────────────
+// These methods delegate to the embedded PageCache (LRU) and are the Go
+// equivalents of C# PreparedPages.GetCachedPage / ClearPageCache / RemovePageCache.
+
+func TestPreparedPages_GetCachedPage_Valid(t *testing.T) {
+	pp := preview.New()
+	pp.AddPage(595, 842, 1)
+	pp.AddPage(595, 842, 2)
+
+	pg := pp.GetCachedPage(0)
+	if pg == nil {
+		t.Fatal("GetCachedPage(0) returned nil")
+	}
+	if pg.PageNo != 1 {
+		t.Errorf("PageNo = %d, want 1", pg.PageNo)
+	}
+}
+
+func TestPreparedPages_GetCachedPage_OutOfRange(t *testing.T) {
+	pp := preview.New()
+	if pg := pp.GetCachedPage(0); pg != nil {
+		t.Error("GetCachedPage on empty collection should return nil")
+	}
+}
+
+func TestPreparedPages_GetCachedPage_CachesResult(t *testing.T) {
+	pp := preview.New()
+	pp.AddPage(595, 842, 1)
+	pp.AddPage(595, 842, 2)
+	pp.AddPage(595, 842, 3)
+
+	// Access pages to populate the cache.
+	pg0a := pp.GetCachedPage(0)
+	pg0b := pp.GetCachedPage(0) // second call → cache hit, same pointer
+	if pg0a != pg0b {
+		t.Error("GetCachedPage(0) twice should return the same pointer (cache hit)")
+	}
+}
+
+func TestPreparedPages_ClearPageCache(t *testing.T) {
+	pp := preview.New()
+	pp.AddPage(595, 842, 1)
+	pp.AddPage(595, 842, 2)
+
+	// Warm the cache.
+	pp.GetCachedPage(0)
+	pp.GetCachedPage(1)
+
+	// ClearPageCache should not panic and the next call should still succeed.
+	pp.ClearPageCache()
+	pg := pp.GetCachedPage(0)
+	if pg == nil {
+		t.Fatal("GetCachedPage after ClearPageCache returned nil")
+	}
+}
+
+func TestPreparedPages_RemovePageCache(t *testing.T) {
+	pp := preview.New()
+	pp.AddPage(595, 842, 1)
+	pp.AddPage(595, 842, 2)
+	pp.AddPage(595, 842, 3)
+
+	// Warm the cache for pages 0, 1, 2.
+	pp.GetCachedPage(0)
+	pp.GetCachedPage(1)
+	pp.GetCachedPage(2)
+
+	// Remove entry for index 1.
+	pp.RemovePageCache(1)
+
+	// Page 1 should still be accessible via GetCachedPage (re-fetched from backing store).
+	pg := pp.GetCachedPage(1)
+	if pg == nil {
+		t.Fatal("GetCachedPage(1) after RemovePageCache returned nil")
+	}
+}
+
+func TestPreparedPages_RemovePageCache_Missing(t *testing.T) {
+	pp := preview.New()
+	pp.AddPage(595, 842, 1)
+	// RemovePageCache of an index not in the cache should be a no-op (not panic).
+	pp.RemovePageCache(99)
+}
+
+func TestPreparedPages_Clear_InvalidatesPageCache(t *testing.T) {
+	pp := preview.New()
+	pp.AddPage(595, 842, 1)
+	pp.AddPage(595, 842, 2)
+
+	// Warm the cache.
+	pp.GetCachedPage(0)
+	pp.GetCachedPage(1)
+
+	// Clear removes all pages and should also clear the cache.
+	pp.Clear()
+	if pp.Count() != 0 {
+		t.Errorf("Count after Clear = %d, want 0", pp.Count())
+	}
+	// GetCachedPage on empty collection must return nil (not a stale cache entry).
+	if pg := pp.GetCachedPage(0); pg != nil {
+		t.Error("GetCachedPage after Clear should return nil (cache invalidated)")
+	}
+}

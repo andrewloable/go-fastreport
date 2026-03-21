@@ -745,6 +745,12 @@ func (t *TextObject) Serialize(w report.Writer) error {
 			w.WriteInt("TextOutline.DashStyle", t.textOutline.DashStyle)
 		}
 	}
+	if len(t.highlights) > 0 {
+		coll := &conditionCollection{items: t.highlights}
+		if err := w.WriteObjectNamed("Highlight", coll); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -793,5 +799,67 @@ func (t *TextObject) Deserialize(r report.Reader) error {
 	}
 	t.textOutline.Width = r.ReadFloat("TextOutline.Width", 1)
 	t.textOutline.DashStyle = r.ReadInt("TextOutline.DashStyle", 0)
+	return nil
+}
+
+// conditionCollection is an internal helper that implements report.Serializable
+// for the HighlightCondition slice, matching the C# ConditionCollection which
+// implements IFRSerializable with ItemName="Highlight".
+type conditionCollection struct {
+	items []style.HighlightCondition
+}
+
+func (c *conditionCollection) Serialize(w report.Writer) error {
+	for _, cond := range c.items {
+		hc := &highlightConditionSerializable{c: cond}
+		if err := w.WriteObjectNamed("Condition", hc); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (c *conditionCollection) Deserialize(r report.Reader) error {
+	return nil
+}
+
+// highlightConditionSerializable wraps a HighlightCondition as report.Serializable.
+type highlightConditionSerializable struct {
+	c style.HighlightCondition
+}
+
+func (h *highlightConditionSerializable) Serialize(w report.Writer) error {
+	def := style.NewHighlightCondition()
+	if h.c.Expression != def.Expression {
+		w.WriteStr("Expression", h.c.Expression)
+	}
+	if h.c.Visible != def.Visible {
+		w.WriteBool("Visible", h.c.Visible)
+	}
+	if h.c.ApplyBorder != def.ApplyBorder {
+		w.WriteBool("ApplyBorder", h.c.ApplyBorder)
+	}
+	if h.c.ApplyFill != def.ApplyFill {
+		w.WriteBool("ApplyFill", h.c.ApplyFill)
+	}
+	if h.c.ApplyFont != def.ApplyFont {
+		w.WriteBool("ApplyFont", h.c.ApplyFont)
+	}
+	if h.c.ApplyTextFill != def.ApplyTextFill {
+		w.WriteBool("ApplyTextFill", h.c.ApplyTextFill)
+	}
+	if h.c.ApplyFill && h.c.FillColor != (color.RGBA{}) {
+		w.WriteStr("Fill.Color", utils.FormatColor(h.c.FillColor))
+	}
+	if h.c.ApplyTextFill {
+		w.WriteStr("TextFill.Color", utils.FormatColor(h.c.TextFillColor))
+	}
+	if h.c.ApplyFont {
+		w.WriteStr("Font", style.FontToStr(h.c.Font))
+	}
+	return nil
+}
+
+func (h *highlightConditionSerializable) Deserialize(r report.Reader) error {
 	return nil
 }

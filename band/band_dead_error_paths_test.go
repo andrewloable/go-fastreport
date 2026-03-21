@@ -773,7 +773,7 @@ func TestDataBand_Serialize_AllOptionalAttrs(t *testing.T) {
 		t.Errorf("DataBand.Serialize error: %v", err)
 	}
 	for _, key := range []string{
-		"Filter", "Sort",
+		"Filter",
 		"PrintIfDetailEmpty", "PrintIfDatasourceEmpty",
 		"KeepTogether", "KeepDetail",
 		"IdColumn", "ParentIdColumn",
@@ -782,6 +782,10 @@ func TestDataBand_Serialize_AllOptionalAttrs(t *testing.T) {
 		if _, ok := w.written[key]; !ok {
 			t.Errorf("expected attribute %q to be written", key)
 		}
+	}
+	// Sort is written as a child element via WriteObjectNamed, not as an attribute.
+	if _, ok := w.written["Sort"]; ok {
+		t.Error("Sort should NOT be written as an attribute; it is a child element now")
 	}
 }
 
@@ -793,7 +797,7 @@ func TestDataBand_Serialize_Defaults(t *testing.T) {
 	}
 	// No optional attributes should be written at defaults.
 	for _, key := range []string{
-		"Filter", "Sort",
+		"Filter",
 		"PrintIfDetailEmpty", "PrintIfDatasourceEmpty",
 		"KeepTogether", "KeepDetail",
 		"IdColumn", "ParentIdColumn",

@@ -45,6 +45,7 @@ func twoPageReport() *preview.PreparedPages {
 func TestImageExport_ProducesPNG(t *testing.T) {
 	pp := singlePageReport(400, 300, 50)
 	exp := imgexport.NewExporter()
+	exp.Format = imgexport.ImageFormatPNG
 
 	var buf bytes.Buffer
 	if err := exp.Export(pp, &buf); err != nil {
@@ -64,6 +65,7 @@ func TestImageExport_ProducesPNG(t *testing.T) {
 func TestImageExport_ImageDimensions(t *testing.T) {
 	pp := singlePageReport(500, 400, 100)
 	exp := imgexport.NewExporter()
+	exp.Format = imgexport.ImageFormatPNG
 
 	var buf bytes.Buffer
 	if err := exp.Export(pp, &buf); err != nil {
@@ -86,6 +88,7 @@ func TestImageExport_ImageDimensions(t *testing.T) {
 func TestImageExport_BackgroundIsWhite(t *testing.T) {
 	pp := singlePageReport(100, 100, 10)
 	exp := imgexport.NewExporter()
+	exp.Format = imgexport.ImageFormatPNG
 
 	var buf bytes.Buffer
 	if err := exp.Export(pp, &buf); err != nil {
@@ -105,6 +108,7 @@ func TestImageExport_BackgroundIsWhite(t *testing.T) {
 func TestImageExport_Scale(t *testing.T) {
 	pp := singlePageReport(200, 150, 30)
 	exp := imgexport.NewExporter()
+	exp.Format = imgexport.ImageFormatPNG
 	exp.Scale = 2.0
 
 	var buf bytes.Buffer
@@ -164,6 +168,7 @@ func TestImageExport_EmptyPages_NoError(t *testing.T) {
 func TestImageExport_CustomBackgroundColor(t *testing.T) {
 	pp := singlePageReport(100, 100, 10)
 	exp := imgexport.NewExporter()
+	exp.Format = imgexport.ImageFormatPNG
 	exp.BackgroundColor = color.RGBA{R: 0, G: 128, B: 0, A: 255} // green
 
 	var buf bytes.Buffer

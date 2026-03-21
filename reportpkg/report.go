@@ -77,10 +77,30 @@ type Report struct {
 	// FastReport OnFinishReport script event.
 	OnFinishReport func()
 
+	// OnCustomCalc is an optional hook called after Calc resolves a value from
+	// the expression environment. It receives the original expression string and
+	// the resolved value, and returns the (potentially overridden) value.
+	// When nil, the resolved value is used as-is.
+	//
+	// This is the Go equivalent of the C# Report.CustomCalc event
+	// (CustomCalcEventArgs.Expression / CalculatedObject).
+	// C# ref: FastReport.Base/Report.cs Calc() method.
+	OnCustomCalc func(expression string, value any) any
+
 	// BaseReportPath is the path to the base (parent) report file.
 	// When non-empty, the base report is loaded and merged into this report
 	// before the engine runs.
 	BaseReportPath string
+
+	// OnLoadBaseReport is an optional callback invoked when the report needs to
+	// load a base (parent) report from a file path. The callback receives the
+	// resolved file path and the current report, and returns the loaded base
+	// report or an error. When nil, the default file-system loader is used.
+	//
+	// This is the Go equivalent of the C# Report.LoadBaseReport event
+	// (CustomLoadEventArgs.FileName / Report).
+	// C# ref: FastReport.Base/Report.cs line ~1065.
+	OnLoadBaseReport func(fileName string, r *Report) (*Report, error)
 
 	// Settings holds global runtime settings for the report.
 	Settings *ReportSettings
@@ -241,6 +261,13 @@ func (r *Report) Serialize(w report.Writer) error {
 	// Write Styles child element when the stylesheet has entries.
 	if r.styles.Len() > 0 {
 		if err := w.WriteObject(&stylesSerializer{r.styles}); err != nil {
+			return err
+		}
+	}
+	// Write Dictionary child element when the dictionary has any entries.
+	// C# ref: FastReport.Report.Serialize — Dictionary.Serialize(Writer)
+	if hasDictionaryContent(r.dictionary) {
+		if err := w.WriteObject(&dictionarySerializer{r.dictionary}); err != nil {
 			return err
 		}
 	}

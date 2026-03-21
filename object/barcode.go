@@ -98,8 +98,24 @@ func (b *BarcodeObject) Deserialize(r report.Reader) error {
 
 // ── ZipCodeObject ─────────────────────────────────────────────────────────────
 
-// ZipCodeObject renders a Russian postal (GOST R 51506-99) or US POSTNET zip code.
-// It is the Go equivalent of FastReport.ZipCodeObject.
+// ZipCodeObject default values matching FastReport .NET ZipCodeObject constructor.
+// C# Units.Centimeters = 37.8 px, Units.Millimeters = 3.78 px (Utils/Units.cs).
+// ZipCodeObject.cs: segmentWidth = Units.Centimeters * 0.5f = 18.9
+//                   segmentHeight = Units.Centimeters * 1    = 37.8
+//                   spacing       = Units.Centimeters * 0.9f = 34.02
+//                   text          = "123456"
+//                   Border.Width  = 3
+const (
+	zipDefaultSegmentWidth  float32 = 18.9
+	zipDefaultSegmentHeight float32 = 37.8
+	zipDefaultSpacing       float32 = 34.02
+	zipDefaultText                  = "123456"
+	zipDefaultSegmentCount          = 6
+)
+
+// ZipCodeObject renders a Russian postal (GOST R 51506-99) zip code barcode.
+// It is the Go equivalent of FastReport.ZipCodeObject, which complies with
+// GOST R 51506-99.
 type ZipCodeObject struct {
 	report.ReportComponentBase
 
@@ -110,10 +126,13 @@ type ZipCodeObject struct {
 	// expression is an expression that evaluates to the zip code value.
 	expression string
 	// segmentWidth is the width of a single digit segment in pixels.
+	// Default: 18.9 px (Units.Centimeters * 0.5f).
 	segmentWidth float32
 	// segmentHeight is the height of a single digit segment in pixels.
+	// Default: 37.8 px (Units.Centimeters * 1).
 	segmentHeight float32
 	// spacing is the spacing between segment origins in pixels.
+	// Default: 34.02 px (Units.Centimeters * 0.9f).
 	spacing float32
 	// segmentCount is the number of zip code digit segments (default 6).
 	segmentCount int
@@ -124,10 +143,23 @@ type ZipCodeObject struct {
 }
 
 // NewZipCodeObject creates a ZipCodeObject with defaults matching FastReport .NET.
+// C# ZipCodeObject constructor (ZipCodeObject.cs line 362-378):
+//
+//	segmentWidth  = Units.Centimeters * 0.5f  // 18.9 px
+//	segmentHeight = Units.Centimeters * 1     // 37.8 px
+//	spacing       = Units.Centimeters * 0.9f  // 34.02 px
+//	segmentCount  = 6
+//	showMarkers   = true
+//	showGrid      = true
+//	text          = "123456"
 func NewZipCodeObject() *ZipCodeObject {
 	return &ZipCodeObject{
 		ReportComponentBase: *report.NewReportComponentBase(),
-		segmentCount:        6,
+		text:                zipDefaultText,
+		segmentWidth:        zipDefaultSegmentWidth,
+		segmentHeight:       zipDefaultSegmentHeight,
+		spacing:             zipDefaultSpacing,
+		segmentCount:        zipDefaultSegmentCount,
 		showMarkers:         true,
 		showGrid:            true,
 	}
@@ -188,11 +220,13 @@ func (z *ZipCodeObject) ShowGrid() bool { return z.showGrid }
 func (z *ZipCodeObject) SetShowGrid(v bool) { z.showGrid = v }
 
 // Serialize writes ZipCodeObject properties that differ from defaults.
+// Mirrors C# ZipCodeObject.Serialize (ZipCodeObject.cs line 295-320):
+// only writes attributes that differ from the default instance.
 func (z *ZipCodeObject) Serialize(w report.Writer) error {
 	if err := z.ReportComponentBase.Serialize(w); err != nil {
 		return err
 	}
-	if z.text != "" {
+	if z.text != zipDefaultText {
 		w.WriteStr("Text", z.text)
 	}
 	if z.dataColumn != "" {
@@ -201,16 +235,16 @@ func (z *ZipCodeObject) Serialize(w report.Writer) error {
 	if z.expression != "" {
 		w.WriteStr("Expression", z.expression)
 	}
-	if z.segmentWidth != 0 {
+	if z.segmentWidth != zipDefaultSegmentWidth {
 		w.WriteFloat("SegmentWidth", z.segmentWidth)
 	}
-	if z.segmentHeight != 0 {
+	if z.segmentHeight != zipDefaultSegmentHeight {
 		w.WriteFloat("SegmentHeight", z.segmentHeight)
 	}
-	if z.spacing != 0 {
+	if z.spacing != zipDefaultSpacing {
 		w.WriteFloat("Spacing", z.spacing)
 	}
-	if z.segmentCount != 6 {
+	if z.segmentCount != zipDefaultSegmentCount {
 		w.WriteInt("SegmentCount", z.segmentCount)
 	}
 	if !z.showMarkers {
@@ -222,19 +256,34 @@ func (z *ZipCodeObject) Serialize(w report.Writer) error {
 	return nil
 }
 
-// Deserialize reads ZipCodeObject properties.
+// Deserialize reads ZipCodeObject properties, using C# defaults as fallback
+// when attributes are absent from the FRX file.
 func (z *ZipCodeObject) Deserialize(r report.Reader) error {
 	if err := z.ReportComponentBase.Deserialize(r); err != nil {
 		return err
 	}
-	z.text = r.ReadStr("Text", "")
+	z.text = r.ReadStr("Text", zipDefaultText)
 	z.dataColumn = r.ReadStr("DataColumn", "")
 	z.expression = r.ReadStr("Expression", "")
-	z.segmentWidth = r.ReadFloat("SegmentWidth", 0)
-	z.segmentHeight = r.ReadFloat("SegmentHeight", 0)
-	z.spacing = r.ReadFloat("Spacing", 0)
-	z.segmentCount = r.ReadInt("SegmentCount", 6)
+	z.segmentWidth = r.ReadFloat("SegmentWidth", zipDefaultSegmentWidth)
+	z.segmentHeight = r.ReadFloat("SegmentHeight", zipDefaultSegmentHeight)
+	z.spacing = r.ReadFloat("Spacing", zipDefaultSpacing)
+	z.segmentCount = r.ReadInt("SegmentCount", zipDefaultSegmentCount)
 	z.showMarkers = r.ReadBool("ShowMarkers", true)
 	z.showGrid = r.ReadBool("ShowGrid", true)
 	return nil
+}
+
+// GetExpressions returns the list of expressions that need to be evaluated
+// by the report engine. Mirrors C# ZipCodeObject.GetExpressions()
+// (ZipCodeObject.cs line 325-335).
+func (z *ZipCodeObject) GetExpressions() []string {
+	var exprs []string
+	if z.dataColumn != "" {
+		exprs = append(exprs, z.dataColumn)
+	}
+	if z.expression != "" {
+		exprs = append(exprs, z.expression)
+	}
+	return exprs
 }

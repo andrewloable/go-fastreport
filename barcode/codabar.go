@@ -92,4 +92,6 @@ func (b *CodabarBarcode) GetPattern() (string, error) {
 	return sb.String(), nil
 }
 
-func (b *CodabarBarcode) GetWideBarRatio() float32 { return 2 }
+// GetWideBarRatio returns the effective wide bar ratio, clamped to [2, 3].
+// C# BarcodeCodabar constructor: ratioMin=2, ratioMax=3 (BarcodeCodabar.cs:141-142).
+func (b *CodabarBarcode) GetWideBarRatio() float32 { return b.clampedWBR(2) }

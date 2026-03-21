@@ -100,3 +100,42 @@ func (sp *SourcePages) RemoveLast() {
 		sp.entries = sp.entries[:len(sp.entries)-1]
 	}
 }
+
+// IndexOf returns the zero-based position in the entries slice for the entry
+// whose sourceIdx equals srcIdx. Returns -1 if no such entry exists.
+//
+// This mirrors C# SourcePages.IndexOf(ReportPage page) → pages.IndexOf(page),
+// adapted for Go's index-based storage (source page indices rather than
+// ReportPage object references).
+func (sp *SourcePages) IndexOf(srcIdx int) int {
+	for i, e := range sp.entries {
+		if e.sourceIdx == srcIdx {
+			return i
+		}
+	}
+	return -1
+}
+
+// Get returns the sourceIdx of the entry at position pos (zero-based).
+// Returns -1 if pos is out of range.
+//
+// This mirrors C# SourcePages.this[int index] → pages[index], adapted
+// for Go's index-based storage: instead of returning a ReportPage object,
+// it returns the source page index stored at that position.
+func (sp *SourcePages) Get(pos int) int {
+	if pos < 0 || pos >= len(sp.entries) {
+		return -1
+	}
+	return sp.entries[pos].sourceIdx
+}
+
+// Dispose releases all entries. It is the Go equivalent of C#
+// SourcePages.Dispose() which calls Clear(). In Go, memory is managed by
+// the garbage collector, so this is equivalent to calling Clear().
+func (sp *SourcePages) Dispose() {
+	sp.Clear()
+}
+
+// ApplyPageSize is a no-op stub matching C# SourcePages.ApplyPageSize(),
+// which has an empty body. Retained for API completeness.
+func (sp *SourcePages) ApplyPageSize() {}

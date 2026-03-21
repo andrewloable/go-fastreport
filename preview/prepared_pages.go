@@ -20,41 +20,6 @@ const (
 	AddPageActionAdd
 )
 
-// ── BlobStore ─────────────────────────────────────────────────────────────────
-
-// BlobStore stores binary blobs (e.g. images) referenced by prepared pages.
-type BlobStore struct {
-	blobs [][]byte
-	index map[string]int // name → index
-}
-
-// NewBlobStore creates an empty BlobStore.
-func NewBlobStore() *BlobStore {
-	return &BlobStore{index: make(map[string]int)}
-}
-
-// Add stores blob data under name and returns its integer index.
-func (b *BlobStore) Add(name string, data []byte) int {
-	if idx, ok := b.index[name]; ok {
-		return idx
-	}
-	idx := len(b.blobs)
-	b.blobs = append(b.blobs, data)
-	b.index[name] = idx
-	return idx
-}
-
-// Get returns the blob at the given index, or nil if out of range.
-func (b *BlobStore) Get(idx int) []byte {
-	if idx < 0 || idx >= len(b.blobs) {
-		return nil
-	}
-	return b.blobs[idx]
-}
-
-// Count returns the number of stored blobs.
-func (b *BlobStore) Count() int { return len(b.blobs) }
-
 // ── Bookmark ──────────────────────────────────────────────────────────────────
 
 // Bookmark is a named navigation point within the prepared pages.
@@ -66,8 +31,10 @@ type Bookmark struct {
 
 // Bookmarks is a collection of Bookmark entries.
 type Bookmarks struct {
-	items []*Bookmark
-	index map[string]int // name → slice index
+	items          []*Bookmark
+	index          map[string]int // name → slice index
+	firstPassItems []*Bookmark    // saved by ClearFirstPass for GetPageNo fallback
+	firstPassIndex map[string]int // index for firstPassItems
 }
 
 // NewBookmarks creates an empty Bookmarks collection.
@@ -121,12 +88,38 @@ func (bk *Bookmarks) Shift(fromIndex int, newY float32) {
 }
 
 // GetPageNo returns the 1-based page number for the named bookmark, or 0 if not found.
+// If not found in the active items, falls back to the saved first-pass items.
+// C# equivalent: Bookmarks.GetPageNo — searches items then firstPassItems.
 func (bk *Bookmarks) GetPageNo(name string) int {
 	b := bk.Find(name)
 	if b == nil {
+		// Fall back to first-pass items saved by ClearFirstPass.
+		if idx, ok := bk.firstPassIndex[name]; ok && idx < len(bk.firstPassItems) {
+			return bk.firstPassItems[idx].PageIdx + 1
+		}
 		return 0
 	}
 	return b.PageIdx + 1
+}
+
+// Clear removes all active bookmarks.
+// The first-pass items (saved by ClearFirstPass) are preserved as the fallback.
+// C# equivalent: Bookmarks.Clear() → items.Clear()
+func (bk *Bookmarks) Clear() {
+	bk.items = bk.items[:0]
+	bk.index = make(map[string]int)
+}
+
+// ClearFirstPass saves the current active items as the first-pass fallback, then
+// resets the active items to a new empty list.
+// After this call, GetPageNo will search the new active list first, then fall back
+// to the saved first-pass items.
+// C# equivalent: Bookmarks.ClearFirstPass() → firstPassItems = items; items = new List()
+func (bk *Bookmarks) ClearFirstPass() {
+	bk.firstPassItems = bk.items
+	bk.firstPassIndex = bk.index
+	bk.items = nil
+	bk.index = make(map[string]int)
 }
 
 // ── OutlineItem ───────────────────────────────────────────────────────────────
@@ -267,12 +260,42 @@ func (o *Outline) ClearFirstPass() {
 	o.LevelRoot()
 }
 
+// Clear removes all children from the root and resets the cursor to root.
+// C# equivalent: Outline.Clear() → rootItem.Clear(); LevelRoot()
+func (o *Outline) Clear() {
+	o.Root.Children = nil
+	o.LevelRoot()
+}
+
+// IsEmpty reports whether the outline has no top-level items.
+// C# equivalent: Outline.IsEmpty → rootItem.Count == 0
+func (o *Outline) IsEmpty() bool {
+	return len(o.Root.Children) == 0
+}
+
 // ── PreparedBand ──────────────────────────────────────────────────────────────
+
+// PreparedBandKind classifies the source band type stored in PreparedBand.
+// Used by GetLastY to exclude PageFooter and Overlay bands, mirroring the C#
+// PreparedPage.GetLastY() check: !(obj is PageFooterBand) && !(obj is OverlayBand).
+type PreparedBandKind int
+
+const (
+	// PreparedBandKindNormal is the default for all regular bands (data, header, footer sub-types, etc.).
+	PreparedBandKindNormal PreparedBandKind = iota
+	// PreparedBandKindPageFooter marks a PageFooterBand; excluded from GetLastY.
+	PreparedBandKindPageFooter
+	// PreparedBandKindOverlay marks an OverlayBand; excluded from GetLastY.
+	PreparedBandKindOverlay
+)
 
 // PreparedBand is a rendered band snapshot stored inside a PreparedPage.
 type PreparedBand struct {
 	// Name is the source band's name.
 	Name string
+	// Kind classifies the source band type (Normal, PageFooter, Overlay).
+	// Set by the engine when building the PreparedBand; used by GetLastY.
+	Kind PreparedBandKind
 	// Left is the X position on the page in pixels (column offset).
 	Left float32
 	// Top is the Y position on the page in pixels.
@@ -325,6 +348,20 @@ const (
 	// HTML exporters convert RTF to HTML; PDF/image exporters render plain text
 	// after stripping RTF control words via utils.StripRTF.
 	ObjectTypeRTF
+)
+
+// MergeMode controls how adjacent text objects with the same content are
+// merged. Mirrors FastReport.MergeMode flags (bitfield: Vertical=2, Horizontal=1).
+// C# source: FastReport.Base/Object/TextObject.cs MergeMode enum.
+type MergeMode int
+
+const (
+	// MergeModeNone disables merging (default).
+	MergeModeNone MergeMode = 0
+	// MergeModeHorizontal merges horizontally adjacent objects.
+	MergeModeHorizontal MergeMode = 1
+	// MergeModeVertical merges vertically adjacent objects.
+	MergeModeVertical MergeMode = 2
 )
 
 // DuplicatesMode controls how consecutive objects with the same name and text
@@ -404,6 +441,13 @@ type PreparedObject struct {
 	HyperlinkKind int
 	// HyperlinkValue is the resolved hyperlink target (URL, page number string, bookmark name).
 	HyperlinkValue string
+	// HyperlinkTarget is the anchor target attribute (e.g. "_blank" for new tab).
+	// Corresponds to C# Hyperlink.Target / OpenLinkInNewTab.
+	HyperlinkTarget string
+	// Bookmark is the anchor name for this object. When non-empty the HTML exporter
+	// emits <a name="..."></a> before the object div, matching C# ExportObject behaviour.
+	// C# reference: HTMLExportLayers.cs ExportObject → obj.Bookmark → <a name="...">.
+	Bookmark string
 
 	// TextRenderType mirrors object.TextRenderType and controls how the Text
 	// field is interpreted by exporters.
@@ -422,6 +466,10 @@ type PreparedObject struct {
 	RTL bool
 	// Clip indicates whether the object should clip its content.
 	Clip bool
+	// MergeMode controls merging of adjacent objects with equal text.
+	// MergeModeNone (0) means no merging (default).
+	// C# source: TextObject.MergeMode (TextObject.cs)
+	MergeMode MergeMode
 }
 
 // ── PreparedWatermark ─────────────────────────────────────────────────────────
@@ -498,19 +546,36 @@ type PreparedPages struct {
 	Outline       *Outline
 	BlobStore     *BlobStore
 
+	// pageCache is the LRU page cache. It is invalidated on structural
+	// changes (ModifyPage, RemovePage, CopyPage, ApplyWatermark) so that
+	// callers using GetCachedPage always see up-to-date data.
+	// C# equivalent: PreparedPages.pageCache field.
+	pageCache *PageCache
+
 	// cut bands held between CutObjects and PasteObjects (keep-together).
 	cutBands []*PreparedBand
+
+	// firstPassPage and firstPassPosition record the page index and band
+	// count at the start of the current double-pass cycle, used by
+	// ClearFirstPass to restore the collection to that checkpoint.
+	// C# equivalent: firstPassPage / firstPassPosition fields.
+	firstPassPage     int
+	firstPassPosition int
 }
 
 // New creates an empty PreparedPages collection.
 func New() *PreparedPages {
-	return &PreparedPages{
+	pp := &PreparedPages{
 		curPage:       -1,
 		addPageAction: AddPageActionAdd,
 		Bookmarks:     NewBookmarks(),
 		Outline:       NewOutline(),
 		BlobStore:     NewBlobStore(),
 	}
+	// pageCache is initialised after pp is constructed so NewPageCache can
+	// hold a back-reference to pp (C# equivalent: pageCache = new PageCache(this)).
+	pp.pageCache = NewPageCache(pp, 0)
+	return pp
 }
 
 // Count returns the number of prepared pages.
@@ -563,6 +628,15 @@ func (pp *PreparedPages) AddBand(b *PreparedBand) error {
 		return fmt.Errorf("PreparedPages: no current page")
 	}
 	pg.AddBand(b)
+	return nil
+}
+
+// AddObject appends a PreparedObject to an existing PreparedBand.
+func (pp *PreparedPages) AddObject(b *PreparedBand, obj PreparedObject) error {
+	if b == nil {
+		return fmt.Errorf("PreparedPages: nil band")
+	}
+	b.Objects = append(b.Objects, obj)
 	return nil
 }
 
@@ -639,10 +713,98 @@ func (pp *PreparedPages) TrimTo(n int) {
 	}
 }
 
-// Clear removes all pages.
+// Clear removes all pages, bookmarks, outline items, and blobs, and invalidates
+// the page cache. This mirrors C# PreparedPages.Clear() which calls
+// sourcePages.Clear(), pageCache.Clear(), bookmarks.Clear(), outline.Clear(),
+// blobStore.Clear(), and resets curPage to 0 (Go uses -1 for "no current page").
 func (pp *PreparedPages) Clear() {
 	pp.pages = pp.pages[:0]
 	pp.curPage = -1
+	pp.pageCache.Clear()
+	pp.Bookmarks.Clear()
+	pp.Outline.Clear()
+	pp.BlobStore.Clear()
+}
+
+// PrepareToFirstPass records the current page and band-count checkpoint for
+// use by ClearFirstPass during double-pass report generation. It also calls
+// Outline.PrepareToFirstPass() to save the outline cursor position.
+// C# equivalent: PreparedPages.PrepareToFirstPass()
+func (pp *PreparedPages) PrepareToFirstPass() {
+	pp.firstPassPage = pp.curPage
+	pp.firstPassPosition = pp.CurPosition()
+	pp.Outline.PrepareToFirstPass()
+}
+
+// ClearFirstPass rolls back the prepared pages to the checkpoint saved by
+// PrepareToFirstPass. It removes all pages after firstPassPage, trims
+// firstPassPage's bands back to firstPassPosition, and calls
+// Bookmarks.ClearFirstPass() and Outline.ClearFirstPass().
+// C# equivalent: PreparedPages.ClearFirstPass()
+func (pp *PreparedPages) ClearFirstPass() {
+	pp.Bookmarks.ClearFirstPass()
+	pp.Outline.ClearFirstPass()
+
+	// Remove all pages after firstPassPage.
+	for pp.firstPassPage < len(pp.pages)-1 {
+		pp.pages = pp.pages[:len(pp.pages)-1]
+	}
+
+	// If position is at beginning (page 0, position 0), remove page 0 entirely.
+	if pp.firstPassPage == 0 && pp.firstPassPosition == 0 {
+		if len(pp.pages) > 0 {
+			pp.pages = pp.pages[:0]
+		}
+	}
+
+	// Delete bands on firstPassPage beyond firstPassPosition.
+	if pp.firstPassPage >= 0 && pp.firstPassPage < len(pp.pages) {
+		pg := pp.pages[pp.firstPassPage]
+		if pp.firstPassPosition < len(pg.Bands) {
+			pg.Bands = pg.Bands[:pp.firstPassPosition]
+		}
+	}
+
+	pp.curPage = pp.firstPassPage
+	if pp.curPage >= len(pp.pages) {
+		pp.curPage = len(pp.pages) - 1
+	}
+	pp.pageCache.Clear()
+}
+
+// GetLastY returns the maximum (Top + Height) value among all non-PageFooter,
+// non-Overlay bands on the current page. Returns 0 if there is no current page.
+// C# equivalent: PreparedPages.GetLastY() → preparedPages[CurPage].GetLastY()
+func (pp *PreparedPages) GetLastY() float32 {
+	pg := pp.CurrentPage()
+	if pg == nil {
+		return 0
+	}
+	var result float32
+	for _, b := range pg.Bands {
+		if b.Kind == PreparedBandKindPageFooter || b.Kind == PreparedBandKindOverlay {
+			continue
+		}
+		if bottom := b.Top + b.Height; bottom > result {
+			result = bottom
+		}
+	}
+	return result
+}
+
+// ContainsBand reports whether any band on the current page has the given name.
+// C# equivalent: PreparedPages.ContainsBand(string bandName)
+func (pp *PreparedPages) ContainsBand(name string) bool {
+	pg := pp.CurrentPage()
+	if pg == nil {
+		return false
+	}
+	for _, b := range pg.Bands {
+		if b.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 // AddBookmark adds a navigation bookmark.
@@ -652,4 +814,27 @@ func (pp *PreparedPages) AddBookmark(name string, offsetY float32) {
 		PageIdx: pp.curPage,
 		OffsetY: offsetY,
 	})
+}
+
+// GetCachedPage returns the PreparedPage at index via the LRU page cache.
+// Frequently accessed pages are served from memory; less-recently-used pages
+// are evicted when the cache reaches its capacity limit (default 50).
+// Returns nil if index is out of range.
+// C# equivalent: PreparedPages.GetCachedPage(int index) → pageCache.Get(index)
+func (pp *PreparedPages) GetCachedPage(index int) *PreparedPage {
+	return pp.pageCache.Get(index)
+}
+
+// ClearPageCache evicts all pages from the LRU cache. Called after structural
+// changes (RemovePage, CopyPage, ApplyWatermark) that invalidate cached data.
+// C# equivalent: PreparedPages.ClearPageCache() → pageCache.Clear()
+func (pp *PreparedPages) ClearPageCache() {
+	pp.pageCache.Clear()
+}
+
+// RemovePageCache evicts the entry for index from the LRU cache. Called after
+// ModifyPage so that the next GetCachedPage call returns fresh data.
+// C# equivalent: PreparedPages.RemovePageCache(int index) → pageCache.Remove(index)
+func (pp *PreparedPages) RemovePageCache(index int) {
+	pp.pageCache.Remove(index)
 }

@@ -925,7 +925,9 @@ func All() map[string]any {
 		"ToWordsSp":      NumToWordsSp,
 		"ToWordsUkr":     NumToWordsUk,
 		// Letters / Roman
-		"ToLetters": NumToLetters,
-		"Roman":     ToRoman,
+		"ToLetters":      ToLetters,
+		"ToLettersEn":    ToLettersEn,
+		"ToLettersRu":    ToLettersRu,
+		"Roman":          ToRoman,
 	}
 }

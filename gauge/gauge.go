@@ -167,6 +167,12 @@ func (g *GaugeObject) Percent() float64 {
 	return (g.value - g.Minimum) / span
 }
 
+// Vertical reports whether the gauge is taller than it is wide.
+// Mirrors C# GaugeObject.Vertical property: Width < Height.
+func (g *GaugeObject) Vertical() bool {
+	return g.Width() < g.Height()
+}
+
 // Serialize writes GaugeObject properties that differ from defaults.
 func (g *GaugeObject) Serialize(w report.Writer) error {
 	if err := g.ReportComponentBase.Serialize(w); err != nil {
@@ -338,6 +344,10 @@ func (g *LinearGauge) Deserialize(r report.Reader) error {
 // ── RadialGauge ───────────────────────────────────────────────────────────────
 
 // RadialGauge is a circular dial gauge.
+// It supports three shape types (Circle, Semicircle, Quadrant) and four position
+// orientations (Top, Bottom, Left, Right) that mirror C# RadialGauge.
+//
+// C# source: original-dotnet/FastReport.Base/Gauge/Radial/RadialGauge.cs
 type RadialGauge struct {
 	GaugeObject
 
@@ -345,14 +355,36 @@ type RadialGauge struct {
 	StartAngle float64
 	// EndAngle is the angle (degrees) at which the scale ends (default: 135).
 	EndAngle float64
+
+	// GaugeType controls the shape of the dial (Circle / Semicircle / Quadrant).
+	// Mirrors C# RadialGauge.Type.  Default: RadialGaugeTypeCircle.
+	GaugeType RadialGaugeType
+
+	// Position controls the flat-edge orientation for Semicircle and Quadrant types.
+	// Mirrors C# RadialGauge.Position.  Default: RadialGaugePositionNone.
+	Position RadialGaugePosition
+
+	// SemicircleOffsetRatio is a multiplier for the straight-edge fill offset used
+	// when rendering Semicircle Left/Right orientations.
+	// Mirrors C# RadialGauge.SemicircleOffsetRatio.  Default: 1.
+	SemicircleOffsetRatio float64
+
+	// GradientAutoRotate, when true, rotates the pointer fill gradient automatically
+	// to match the needle angle.
+	// Mirrors C# RadialPointer.GradientAutoRotate.  Default: true.
+	GradientAutoRotate bool
 }
 
 // NewRadialGauge creates a RadialGauge with a 270-degree sweep (–135° to +135°).
 func NewRadialGauge() *RadialGauge {
 	return &RadialGauge{
-		GaugeObject: *NewGaugeObject(),
-		StartAngle:  -135,
-		EndAngle:    135,
+		GaugeObject:           *NewGaugeObject(),
+		StartAngle:            -135,
+		EndAngle:              135,
+		GaugeType:             RadialGaugeTypeCircle,
+		Position:              RadialGaugePositionNone,
+		SemicircleOffsetRatio: 1,
+		GradientAutoRotate:    true,
 	}
 }
 
@@ -369,6 +401,16 @@ func (g *RadialGauge) NeedleAngle() float64 {
 	return g.StartAngle + sweep*g.Percent()
 }
 
+// EffectiveStartAngle returns the needle start angle that matches the C# pointer
+// rendering logic for the current GaugeType / Position combination.
+// When the type is Circle, it falls back to StartAngle.
+func (g *RadialGauge) EffectiveStartAngle() float64 {
+	if g.GaugeType == RadialGaugeTypeCircle {
+		return g.StartAngle
+	}
+	return radialStartAngleFor(g.GaugeType, g.Position)
+}
+
 // Serialize writes RadialGauge properties.
 func (g *RadialGauge) Serialize(w report.Writer) error {
 	if err := g.GaugeObject.Serialize(w); err != nil {
@@ -380,6 +422,18 @@ func (g *RadialGauge) Serialize(w report.Writer) error {
 	if g.EndAngle != 135 {
 		w.WriteFloat("EndAngle", float32(g.EndAngle))
 	}
+	if g.GaugeType != RadialGaugeTypeCircle {
+		w.WriteInt("GaugeType", int(g.GaugeType))
+	}
+	if g.Position != RadialGaugePositionNone {
+		w.WriteInt("Position", int(g.Position))
+	}
+	if g.SemicircleOffsetRatio != 1 {
+		w.WriteFloat("SemicircleOffsetRatio", float32(g.SemicircleOffsetRatio))
+	}
+	if !g.GradientAutoRotate {
+		w.WriteBool("GradientAutoRotate", false)
+	}
 	return nil
 }
 
@@ -390,6 +444,10 @@ func (g *RadialGauge) Deserialize(r report.Reader) error {
 	}
 	g.StartAngle = float64(r.ReadFloat("StartAngle", -135))
 	g.EndAngle = float64(r.ReadFloat("EndAngle", 135))
+	g.GaugeType = RadialGaugeType(r.ReadInt("GaugeType", int(RadialGaugeTypeCircle)))
+	g.Position = RadialGaugePosition(r.ReadInt("Position", int(RadialGaugePositionNone)))
+	g.SemicircleOffsetRatio = float64(r.ReadFloat("SemicircleOffsetRatio", 1))
+	g.GradientAutoRotate = r.ReadBool("GradientAutoRotate", true)
 	return nil
 }
 

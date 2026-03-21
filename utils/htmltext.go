@@ -7,6 +7,19 @@ import (
 	"github.com/andrewloable/go-fastreport/style"
 )
 
+// BaselineType indicates character vertical placement relative to the line baseline.
+// Mirrors HtmlTextRenderer.BaseLine in C# (HtmlTextRenderer.cs, line 1304).
+type BaselineType int
+
+const (
+	// BaselineNormal is the default baseline (no vertical shift).
+	BaselineNormal BaselineType = iota
+	// BaselineSubscript places the run below the normal baseline (via <sub>).
+	BaselineSubscript
+	// BaselineSuperscript places the run above the normal baseline (via <sup>).
+	BaselineSuperscript
+)
+
 // HtmlRun is a styled run of text produced by the HTML text renderer.
 // It represents a contiguous span of text with uniform styling.
 type HtmlRun struct {
@@ -16,12 +29,18 @@ type HtmlRun struct {
 	Font style.Font
 	// Color is the text foreground color.
 	Color color.RGBA
+	// BackgroundColor is the text background highlight color (from CSS background-color).
+	// An alpha of 0 means no background is applied.
+	BackgroundColor color.RGBA
 	// Underline indicates underlined text.
 	Underline bool
 	// Strikeout indicates struck-out text.
 	Strikeout bool
 	// LineBreak is true when this run ends with an explicit line break.
 	LineBreak bool
+	// Baseline indicates subscript/superscript placement.
+	// Mirrors HtmlTextRenderer.BaseLine (HtmlTextRenderer.cs, line 1304).
+	Baseline BaselineType
 }
 
 // HtmlLine is one visual line produced by the HTML text renderer.
@@ -99,12 +118,16 @@ func (r *HtmlTextRenderer) MeasureHeight(width float32) float32 {
 
 // styleState holds the current formatting context during parsing.
 type styleState struct {
-	font      style.Font
-	clr       color.RGBA
-	bold      bool
-	italic    bool
-	underline bool
-	strike    bool
+	font            style.Font
+	clr             color.RGBA
+	backgroundColor color.RGBA // CSS background-color; zero alpha = none
+	bold            bool
+	italic          bool
+	underline       bool
+	strike          bool
+	// baseline is the subscript/superscript placement for <sub>/<sup> tags.
+	// Mirrors HtmlTextRenderer.BaseLine (HtmlTextRenderer.cs, line 1304).
+	baseline BaselineType
 }
 
 func (r *HtmlTextRenderer) parse(src string) {
@@ -134,11 +157,13 @@ func (r *HtmlTextRenderer) parse(src string) {
 			f.Style |= style.FontStyleItalic
 		}
 		currentLine.Runs = append(currentLine.Runs, HtmlRun{
-			Text:      text,
-			Font:      f,
-			Color:     cur.clr,
-			Underline: cur.underline,
-			Strikeout: cur.strike,
+			Text:            text,
+			Font:            f,
+			Color:           cur.clr,
+			BackgroundColor: cur.backgroundColor,
+			Underline:       cur.underline,
+			Strikeout:       cur.strike,
+			Baseline:        cur.baseline,
 		})
 		currentRun.Reset()
 	}
@@ -159,10 +184,11 @@ func (r *HtmlTextRenderer) parse(src string) {
 				i++
 				continue
 			}
-			tag := src[i+1 : i+end]
+			rawTag := strings.TrimSpace(src[i+1 : i+end])
 			i += end + 1
-			lower := strings.ToLower(strings.TrimSpace(tag))
-			r.applyTag(lower, &stack, &cur, flush, newLine)
+			lower := strings.ToLower(rawTag)
+			// Pass rawTag so attribute values (e.g. font names) preserve their case.
+			r.applyTag(lower, rawTag, &stack, &cur, flush, newLine)
 		} else if src[i] == '&' {
 			// Parse entity.
 			semi := strings.IndexByte(src[i:], ';')
@@ -200,7 +226,8 @@ func (r *HtmlTextRenderer) parse(src string) {
 }
 
 func (r *HtmlTextRenderer) applyTag(
-	tag string,
+	tag string, // lowercased tag for name matching
+	rawTag string, // original tag preserving attribute value case
 	stack *[]styleState,
 	cur *styleState,
 	flush func(),
@@ -237,9 +264,18 @@ func (r *HtmlTextRenderer) applyTag(
 		cur.underline = true
 	case "s", "strike", "del":
 		cur.strike = true
+	case "sub":
+		// Subscript: mirrors HtmlTextRenderer.cs case "sub" (line 1012).
+		cur.baseline = BaselineSubscript
+	case "sup":
+		// Superscript: mirrors HtmlTextRenderer.cs case "sup" (line 1016).
+		cur.baseline = BaselineSuperscript
 	case "font", "span":
-		// Parse simple attributes: color="…" size="…" style="…"
-		attrs := parseAttrs(tag[len(tagName):])
+		// Parse attributes from the original (case-preserving) raw tag so that
+		// font names and colors are not forced to lower-case.
+		rawTagName := strings.Fields(rawTag)[0]
+		attrStr := rawTag[len(rawTagName):]
+		attrs := parseAttrs(attrStr)
 		if c, ok := attrs["color"]; ok {
 			if parsed, err := ParseColor(c); err == nil {
 				cur.clr = parsed
@@ -250,6 +286,11 @@ func (r *HtmlTextRenderer) applyTag(
 			if _, err := parseFloat(sz, &s); err == nil && s > 0 {
 				cur.font.Size = s
 			}
+		}
+		if face, ok := attrs["face"]; ok && face != "" {
+			// <font face="Arial"> sets the font family name.
+			// Mirrors HtmlTextRenderer.cs font tag handling.
+			cur.font.Name = strings.ReplaceAll(face, "'", "")
 		}
 		if styleAttr, ok := attrs["style"]; ok {
 			applyInlineStyle(styleAttr, cur)
@@ -295,6 +336,7 @@ func parseAttrs(attrStr string) map[string]string {
 }
 
 // applyInlineStyle applies CSS inline style properties to the current state.
+// Mirrors HtmlTextRenderer.cs CssStyle() (line 574).
 func applyInlineStyle(styleStr string, cur *styleState) {
 	for _, decl := range strings.Split(styleStr, ";") {
 		parts := strings.SplitN(decl, ":", 2)
@@ -305,23 +347,96 @@ func applyInlineStyle(styleStr string, cur *styleState) {
 		val := strings.TrimSpace(parts[1])
 		switch prop {
 		case "color":
-			if parsed, err := ParseColor(val); err == nil {
+			if parsed, ok := parseCSSColor(val); ok {
 				cur.clr = parsed
 			}
+		case "background-color":
+			// CSS background-color: mirrors CssStyle() "background-color" (line 670).
+			if parsed, ok := parseCSSColor(val); ok {
+				cur.backgroundColor = parsed
+			}
 		case "font-size":
+			// Supports pt, px, em units. Mirrors CssStyle() "font-size" (line 609).
 			var s float32
-			if _, err := parseFloat(strings.TrimSuffix(val, "pt"), &s); err == nil && s > 0 {
-				cur.font.Size = s
+			switch {
+			case strings.HasSuffix(val, "px"):
+				if _, err := parseFloat(strings.TrimSuffix(val, "px"), &s); err == nil && s > 0 {
+					// 0.75 = 96dpi px → pt conversion (same as C# "px" branch, line 612)
+					cur.font.Size = s * 0.75
+				}
+			case strings.HasSuffix(val, "em"):
+				if _, err := parseFloat(strings.TrimSuffix(val, "em"), &s); err == nil && s > 0 {
+					// em is relative: scale the current font size (C# line 616)
+					cur.font.Size = cur.font.Size * s
+				}
+			default:
+				if _, err := parseFloat(strings.TrimSuffix(val, "pt"), &s); err == nil && s > 0 {
+					cur.font.Size = s
+				}
+			}
+		case "font-family":
+			// Mirrors CssStyle() "font-family" (line 618).
+			if val != "" {
+				cur.font.Name = strings.ReplaceAll(val, "'", "")
 			}
 		case "font-weight":
-			cur.bold = val == "bold" || val == "700" || val == "800" || val == "900"
+			cur.bold = strings.Contains(val, "bold") || val == "700" || val == "800" || val == "900"
 		case "font-style":
-			cur.italic = val == "italic" || val == "oblique"
+			cur.italic = strings.Contains(val, "italic") || strings.Contains(val, "oblique")
 		case "text-decoration":
 			cur.underline = strings.Contains(val, "underline")
 			cur.strike = strings.Contains(val, "line-through")
 		}
 	}
+}
+
+// parseCSSColor parses a CSS color value string into color.RGBA.
+// Supports: #hex, rgb(), rgba(), named colors, and decimal ARGB.
+// Mirrors HtmlTextRenderer.cs CssStyle() "color" / "background-color" blocks (line 626).
+func parseCSSColor(val string) (color.RGBA, bool) {
+	val = strings.TrimSpace(val)
+	// Try rgb(r, g, b) format (C# line 649).
+	if strings.HasPrefix(val, "rgba(") || strings.HasPrefix(val, "rgba (") {
+		inner := val[strings.Index(val, "(")+1:]
+		inner = strings.TrimSuffix(inner, ")")
+		parts := strings.Split(inner, ",")
+		if len(parts) == 4 {
+			var r, g, b, a float32
+			if _, err := parseFloat(strings.TrimSpace(parts[0]), &r); err == nil {
+				if _, err := parseFloat(strings.TrimSpace(parts[1]), &g); err == nil {
+					if _, err := parseFloat(strings.TrimSpace(parts[2]), &b); err == nil {
+						if _, err := parseFloat(strings.TrimSpace(parts[3]), &a); err == nil {
+							return color.RGBA{
+								R: uint8(r),
+								G: uint8(g),
+								B: uint8(b),
+								A: uint8(a * 255),
+							}, true
+						}
+					}
+				}
+			}
+		}
+	} else if strings.HasPrefix(val, "rgb(") || strings.HasPrefix(val, "rgb (") {
+		inner := val[strings.Index(val, "(")+1:]
+		inner = strings.TrimSuffix(inner, ")")
+		parts := strings.Split(inner, ",")
+		if len(parts) == 3 {
+			var r, g, b float32
+			if _, err := parseFloat(strings.TrimSpace(parts[0]), &r); err == nil {
+				if _, err := parseFloat(strings.TrimSpace(parts[1]), &g); err == nil {
+					if _, err := parseFloat(strings.TrimSpace(parts[2]), &b); err == nil {
+						return color.RGBA{R: uint8(r), G: uint8(g), B: uint8(b), A: 255}, true
+					}
+				}
+			}
+		}
+	}
+	// Fall back to ParseColor for hex, named, and decimal ARGB.
+	if parsed, err := ParseColor(val); err == nil {
+		return parsed, true
+	}
+	return color.RGBA{}, false
 }
 
 // parseFloat parses a float32 from s, writing to *out. Returns (n, nil) on success.

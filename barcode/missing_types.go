@@ -305,9 +305,13 @@ type Code2of5IndustrialBarcode struct {
 }
 
 // NewCode2of5IndustrialBarcode creates a Code2of5IndustrialBarcode.
+// C# Barcode2of5Industrial inherits Barcode2of5Interleaved: ratioMin=2, ratioMax=3 (Barcode2of5.cs:78-79).
 func NewCode2of5IndustrialBarcode() *Code2of5IndustrialBarcode {
+	b := newBaseBarcodeImpl(BarcodeTypeCode2of5Industrial)
+	b.ratioMin = 2
+	b.ratioMax = 3
 	return &Code2of5IndustrialBarcode{
-		BaseBarcodeImpl: newBaseBarcodeImpl(BarcodeTypeCode2of5Industrial),
+		BaseBarcodeImpl: b,
 		CalcChecksum:    true,
 	}
 }
@@ -347,9 +351,13 @@ type Code2of5MatrixBarcode struct {
 }
 
 // NewCode2of5MatrixBarcode creates a Code2of5MatrixBarcode.
+// C# Barcode2of5Matrix constructor: ratioMin=2.25, ratioMax=3.0, WideBarRatio=2.25 (Barcode2of5.cs:564-566).
 func NewCode2of5MatrixBarcode() *Code2of5MatrixBarcode {
+	b := newBaseBarcodeImpl(BarcodeTypeCode2of5Matrix)
+	b.ratioMin = 2.25
+	b.ratioMax = 3.0
 	return &Code2of5MatrixBarcode{
-		BaseBarcodeImpl: newBaseBarcodeImpl(BarcodeTypeCode2of5Matrix),
+		BaseBarcodeImpl: b,
 		CalcChecksum:    true,
 	}
 }
@@ -391,9 +399,13 @@ type ITF14Barcode struct {
 }
 
 // NewITF14Barcode creates an ITF14Barcode.
+// C# BarcodeITF14 constructor: ratioMin=2.25, ratioMax=3.0, WideBarRatio=2.25 (Barcode2of5.cs:485-487).
 func NewITF14Barcode() *ITF14Barcode {
+	b := newBaseBarcodeImpl(BarcodeTypeITF14)
+	b.ratioMin = 2.25
+	b.ratioMax = 3.0
 	return &ITF14Barcode{
-		BaseBarcodeImpl:        newBaseBarcodeImpl(BarcodeTypeITF14),
+		BaseBarcodeImpl:        b,
 		DrawVerticalBearerBars: true, // C# default: true (Barcode2of5.cs:332)
 		CalcChecksum:           true,
 	}
@@ -427,7 +439,8 @@ func (i *ITF14Barcode) Encode(text string) error {
 	return nil
 }
 
-// Render renders the ITF-14 barcode using the native pattern-based renderer.
+// Render renders the ITF-14 barcode with bearer bars and formatted display text.
+// Ported from C# BarcodeITF14.DrawBarcode + DrawText (Barcode2of5.cs:399-476).
 func (i *ITF14Barcode) Render(width, height int) (image.Image, error) {
 	if i.encodedText == "" {
 		return nil, fmt.Errorf("itf14: Encode must be called before Render")
@@ -436,7 +449,13 @@ func (i *ITF14Barcode) Render(width, height int) (image.Image, error) {
 	if err != nil {
 		return nil, err
 	}
-	return DrawLinearBarcode(pattern, i.encodedText, width, height, true, i.GetWideBarRatio()), nil
+	// Format display text with spaces between groups.
+	// C# BarcodeITF14.DrawText (Barcode2of5.cs:401-403):
+	//   data.Insert(1, " ").Insert(4, " ").Insert(10, " ").Insert(16, " ")
+	displayText := ITF14FormatDisplayText(i.encodedText)
+	return DrawLinearBarcodeITF14(
+		pattern, displayText, width, height, true, i.GetWideBarRatio(), i.DrawVerticalBearerBars,
+	), nil
 }
 
 // ── DeutscheIdentcodeBarcode ──────────────────────────────────────────────────
@@ -445,18 +464,32 @@ func (i *ITF14Barcode) Render(width, height int) (image.Image, error) {
 type DeutscheIdentcodeBarcode struct {
 	BaseBarcodeImpl
 	CalcChecksum bool // C# LinearBarcodeBase.CalcCheckSum default true
+	// PrintCheckSum controls whether the check digit is included in the
+	// human-readable display text. Default true.
+	// C# BarcodeDeutscheIdentcode.PrintCheckSum (Barcode2of5.cs:93).
+	// Serialised as Barcode.DrawVerticalBearerBars in the FRX attribute (C# naming quirk).
+	PrintCheckSum bool
 }
 
 // NewDeutscheIdentcodeBarcode creates a DeutscheIdentcodeBarcode.
+// C# BarcodeDeutscheIdentcode constructor: ratioMin=2.25, ratioMax=3.5, WideBarRatio=3.0 (Barcode2of5.cs:191-193).
 func NewDeutscheIdentcodeBarcode() *DeutscheIdentcodeBarcode {
+	b := newBaseBarcodeImpl(BarcodeTypeDeutscheIdentcode)
+	b.ratioMin = 2.25
+	b.ratioMax = 3.5
 	return &DeutscheIdentcodeBarcode{
-		BaseBarcodeImpl: newBaseBarcodeImpl(BarcodeTypeDeutscheIdentcode),
+		BaseBarcodeImpl: b,
 		CalcChecksum:    true,
+		PrintCheckSum:   true, // C# BarcodeDeutscheIdentcode() default (Barcode2of5.cs:194)
 	}
 }
 
 // SetCalcCheckSum implements calcCheckSumSetter for FRX deserialization.
 func (d *DeutscheIdentcodeBarcode) SetCalcCheckSum(v bool) { d.CalcChecksum = v }
+
+// SetPrintCheckSum sets the PrintCheckSum flag from FRX deserialization.
+// C# BarcodeDeutscheIdentcode serialises this as Barcode.DrawVerticalBearerBars (Barcode2of5.cs:183).
+func (d *DeutscheIdentcodeBarcode) SetPrintCheckSum(v bool) { d.PrintCheckSum = v }
 
 // DefaultValue returns a sample 11-digit Identcode value.
 func (d *DeutscheIdentcodeBarcode) DefaultValue() string { return "12345123456" }
@@ -494,18 +527,32 @@ func (d *DeutscheIdentcodeBarcode) Render(width, height int) (image.Image, error
 type DeutscheLeitcodeBarcode struct {
 	BaseBarcodeImpl
 	CalcChecksum bool // C# LinearBarcodeBase.CalcCheckSum default true
+	// PrintCheckSum controls whether the check digit is included in the
+	// human-readable display text. Default true.
+	// C# BarcodeDeutscheLeitcode.PrintCheckSum (Barcode2of5.cs:215).
+	// Serialised as Barcode.DrawVerticalBearerBars in the FRX attribute (C# naming quirk).
+	PrintCheckSum bool
 }
 
 // NewDeutscheLeitcodeBarcode creates a DeutscheLeitcodeBarcode.
+// C# BarcodeDeutscheLeitcode constructor: ratioMin=2.25, ratioMax=3.5, WideBarRatio=3.0 (Barcode2of5.cs:318-320).
 func NewDeutscheLeitcodeBarcode() *DeutscheLeitcodeBarcode {
+	b := newBaseBarcodeImpl(BarcodeTypeDeutscheLeitcode)
+	b.ratioMin = 2.25
+	b.ratioMax = 3.5
 	return &DeutscheLeitcodeBarcode{
-		BaseBarcodeImpl: newBaseBarcodeImpl(BarcodeTypeDeutscheLeitcode),
+		BaseBarcodeImpl: b,
 		CalcChecksum:    true,
+		PrintCheckSum:   true, // C# BarcodeDeutscheLeitcode() default (Barcode2of5.cs:316)
 	}
 }
 
 // SetCalcCheckSum implements calcCheckSumSetter for FRX deserialization.
 func (d *DeutscheLeitcodeBarcode) SetCalcCheckSum(v bool) { d.CalcChecksum = v }
+
+// SetPrintCheckSum sets the PrintCheckSum flag from FRX deserialization.
+// C# BarcodeDeutscheLeitcode serialises this as Barcode.DrawVerticalBearerBars (Barcode2of5.cs:244).
+func (d *DeutscheLeitcodeBarcode) SetPrintCheckSum(v bool) { d.PrintCheckSum = v }
 
 // DefaultValue returns a sample 13-digit Leitcode value.
 func (d *DeutscheLeitcodeBarcode) DefaultValue() string { return "1234512312312" }
@@ -638,9 +685,13 @@ type Code39ExtendedBarcode struct {
 
 // NewCode39ExtendedBarcode creates a Code39ExtendedBarcode.
 // C# LinearBarcodeBase default: calcCheckSum=true (LinearBarcodeBase.cs:637).
+// C# Barcode39 constructor (base): ratioMin=2, ratioMax=3 (Barcode39.cs:137-138).
 func NewCode39ExtendedBarcode() *Code39ExtendedBarcode {
+	b := newBaseBarcodeImpl(BarcodeTypeCode39Extended)
+	b.ratioMin = 2
+	b.ratioMax = 3
 	return &Code39ExtendedBarcode{
-		BaseBarcodeImpl: newBaseBarcodeImpl(BarcodeTypeCode39Extended),
+		BaseBarcodeImpl: b,
 		CalcChecksum:    true,
 	}
 }

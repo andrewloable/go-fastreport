@@ -603,3 +603,158 @@ func UPCE0DrawText(pattern string) CustomTextDrawFunc {
 		drawStringInRange(img, barData[6:7], x1, x2, textTop, textH)
 	}
 }
+
+// ── ITF-14 bearer bar rendering ───────────────────────────────────────────────
+
+// ITF14FormatDisplayText formats a 14-digit ITF-14 string with spaces for
+// human-readable display below the barcode.
+// Ported from C# BarcodeITF14.DrawText (Barcode2of5.cs:401-403):
+//
+//	data.Insert(1, " ").Insert(4, " ").Insert(10, " ").Insert(16, " ")
+//
+// Example: "12345678901231" → "1 23 45678 90123 1"
+// Cumulative-insert trace on 14-char input:
+//
+//	Insert at 1:  groups from orig [0:1], [1:14]     → orig[0] + " " + …
+//	Insert at 4:  groups from orig [0:1], [1:3], [3:14]
+//	Insert at 10: groups from orig [0:1], [1:3], [3:8], [8:14]
+//	Insert at 16: groups from orig [0:1], [1:3], [3:8], [8:13], [13:14]
+func ITF14FormatDisplayText(text string) string {
+	if len(text) < 14 {
+		return text
+	}
+	// Original digit groups (C# trace, positions are on the running string):
+	//   Insert at 1:  split after orig index 0       → group sizes: 1
+	//   Insert at 4:  split after orig index 2       → group sizes: 1, 2
+	//   Insert at 10: split after orig index 7       → group sizes: 1, 2, 5
+	//   Insert at 16: split after orig index 12      → group sizes: 1, 2, 5, 5, 1
+	return text[0:1] + " " + text[1:3] + " " + text[3:8] + " " + text[8:13] + " " + text[13:14]
+}
+
+// DrawLinearBarcodeITF14 renders an ITF-14 barcode with bearer bars.
+// It calls DrawLinearBarcodeCustomText for the bars and text, then overlays
+// the horizontal bearer bars (always drawn) and optional vertical bearer bars.
+//
+// Ported from C# BarcodeITF14.DrawBarcode (Barcode2of5.cs:427-476):
+//   - Bearer bar thickness = WideBarRatio * 2 * zoom
+//   - Horizontal bars: top and bottom, spanning the full barArea width
+//   - Vertical bars: left and right, spanning the full barArea height
+//     (only when drawVerticalBearerBars is true)
+//
+// The barArea in C# is the bar-only region (excludes text area). In our
+// renderer the bar area occupies the top portion of the image; the text
+// area (if any) is below it.
+func DrawLinearBarcodeITF14(pattern, displayText string, width, height int,
+	showText bool, wideBarRatio float32, drawVertBearerBars bool) image.Image {
+
+	img := DrawLinearBarcodeCustomText(
+		pattern, displayText, width, height, showText, wideBarRatio, nil,
+	)
+
+	rgba, ok := img.(*image.RGBA)
+	if !ok {
+		// Convert to RGBA if the renderer returned a different type.
+		bounds := img.Bounds()
+		rgba = image.NewRGBA(bounds)
+		draw.Draw(rgba, bounds, img, bounds.Min, draw.Src)
+	}
+
+	if width <= 0 || height <= 0 || len(pattern) == 0 {
+		return rgba
+	}
+	if wideBarRatio <= 0 {
+		wideBarRatio = 2.0
+	}
+
+	modules := MakeModules(wideBarRatio)
+	originalWidth := GetPatternWidth(pattern, modules)
+	if originalWidth <= 0 {
+		return rgba
+	}
+	zoom := float32(width) / originalWidth
+
+	// Bearer bar thickness: WideBarRatio * 2 * zoom.
+	// C# Barcode2of5.cs:450: float bearerWidth = WideBarRatio * 2 * zoom
+	bearerThickness := int(math.Round(float64(wideBarRatio * 2 * zoom)))
+	if bearerThickness < 1 {
+		bearerThickness = 1
+	}
+
+	// Bar area height (pixels): same calculation as DrawLinearBarcode.
+	const fontHeight float32 = 14
+	barAreaH := float32(height) / zoom
+	if showText && displayText != "" {
+		barAreaH -= fontHeight
+		if barAreaH < 1 {
+			barAreaH = 1
+		}
+	}
+	barAreaPx := int(math.Round(float64(barAreaH * zoom)))
+	if barAreaPx > height {
+		barAreaPx = height
+	}
+
+	black := color.Black
+
+	// Draw horizontal bearer bars: top edge and bottom edge of the bar area.
+	// C# Barcode2of5.cs:462-463:
+	//   g.DrawLine(pen, x0, y01-0.5F, x1, y01-0.5F)   // top
+	//   g.DrawLine(pen, x0, y11, x1, y11)               // bottom
+	// y01 = bearerWidth/2, y11 = barArea.Bottom*zoom - bearerWidth/2
+	// So top bar centre = bearerThickness/2, bottom bar centre = barAreaPx - bearerThickness/2.
+
+	// Top bearer bar.
+	topY0 := 0
+	topY1 := bearerThickness
+	if topY1 > barAreaPx {
+		topY1 = barAreaPx
+	}
+	for y := topY0; y < topY1; y++ {
+		for x := 0; x < width; x++ {
+			rgba.Set(x, y, black)
+		}
+	}
+
+	// Bottom bearer bar.
+	botY1 := barAreaPx
+	botY0 := barAreaPx - bearerThickness
+	if botY0 < 0 {
+		botY0 = 0
+	}
+	for y := botY0; y < botY1; y++ {
+		for x := 0; x < width; x++ {
+			rgba.Set(x, y, black)
+		}
+	}
+
+	// Vertical bearer bars (optional).
+	// C# Barcode2of5.cs:464-468:
+	//   if (this.drawVerticalBearerBars)
+	//   { g.DrawLine(pen, x01-0.5F, y0, x01-0.5F, y1)   // left
+	//     g.DrawLine(pen, x11, y0, x11, y1) }             // right
+	if drawVertBearerBars {
+		// Left vertical bar.
+		leftX1 := bearerThickness
+		if leftX1 > width {
+			leftX1 = width
+		}
+		for y := 0; y < barAreaPx; y++ {
+			for x := 0; x < leftX1; x++ {
+				rgba.Set(x, y, black)
+			}
+		}
+
+		// Right vertical bar.
+		rightX0 := width - bearerThickness
+		if rightX0 < 0 {
+			rightX0 = 0
+		}
+		for y := 0; y < barAreaPx; y++ {
+			for x := rightX0; x < width; x++ {
+				rgba.Set(x, y, black)
+			}
+		}
+	}
+
+	return rgba
+}

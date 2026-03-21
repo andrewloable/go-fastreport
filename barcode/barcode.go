@@ -90,6 +90,9 @@ type BaseBarcodeImpl struct {
 	// is present in the FRX file. A zero value means "use the type's default".
 	// C# LinearBarcodeBase: barcode.WideBarRatio = Reader.ReadFloat("Barcode.WideBarRatio", 2)
 	wideBarRatioOverride float32
+	// showText is propagated from BarcodeObject.ShowText before CalcBounds.
+	// Used by 2D barcodes to add font height to the bounds.
+	showText bool
 }
 
 // SetWideBarRatio overrides the WideBarRatio for this barcode instance.
@@ -98,6 +101,13 @@ func (b *BaseBarcodeImpl) SetWideBarRatio(v float32) { b.wideBarRatioOverride = 
 
 // WBROverride returns the FRX-deserialized WideBarRatio override (0 if not set).
 func (b *BaseBarcodeImpl) WBROverride() float32 { return b.wideBarRatioOverride }
+
+// SetShowText propagates the BarcodeObject.ShowText flag to the barcode implementation.
+// Used by 2D barcodes to include font height in CalcBounds.
+func (b *BaseBarcodeImpl) SetShowText(v bool) { b.showText = v }
+
+// GetShowText returns the showText flag.
+func (b *BaseBarcodeImpl) GetShowText() bool { return b.showText }
 
 // Render returns an error indicating the barcode type must provide its own Render.
 // Concrete types override this by implementing Render via pattern or matrix rendering.
@@ -121,8 +131,8 @@ func newBaseBarcodeImpl(t BarcodeType) BaseBarcodeImpl {
 // Type implements BarcodeBase.
 func (b *BaseBarcodeImpl) Type() BarcodeType { return b.barcodeType }
 
-// DefaultValue returns a generic sample string.
-func (b *BaseBarcodeImpl) DefaultValue() string { return "12345" }
+// DefaultValue returns the C# BarcodeBase.GetDefaultValue() default: "12345678".
+func (b *BaseBarcodeImpl) DefaultValue() string { return "12345678" }
 
 // CalcBounds returns (0, 0) by default; concrete types override as needed.
 func (b *BaseBarcodeImpl) CalcBounds() (float32, float32) { return 0, 0 }
@@ -135,12 +145,24 @@ func (b *BaseBarcodeImpl) EncodedText() string { return b.encodedText }
 // -----------------------------------------------------------------------
 
 // Code128Barcode implements Code128 symbology.
-type Code128Barcode struct{ BaseBarcodeImpl }
+type Code128Barcode struct {
+	BaseBarcodeImpl
+	// AutoEncode enables automatic Code128 subcode selection (A/B/C).
+	// C# Barcode128.AutoEncode default is true (Barcode128.cs:591).
+	AutoEncode bool
+}
 
 // NewCode128Barcode creates a Code128Barcode.
 func NewCode128Barcode() *Code128Barcode {
-	return &Code128Barcode{BaseBarcodeImpl: newBaseBarcodeImpl(BarcodeTypeCode128)}
+	return &Code128Barcode{
+		BaseBarcodeImpl: newBaseBarcodeImpl(BarcodeTypeCode128),
+		AutoEncode:      true, // C# Barcode128 default
+	}
 }
+
+// SetAutoEncode implements autoEncodeSetter for FRX deserialization.
+// C# Barcode.AutoEncode attribute controls automatic Code128 subcode selection.
+func (c *Code128Barcode) SetAutoEncode(v bool) { c.AutoEncode = v }
 
 // Encode validates and stores text for Code128 encoding.
 func (c *Code128Barcode) Encode(text string) error {
@@ -176,9 +198,17 @@ type Code39Barcode struct {
 }
 
 // NewCode39Barcode creates a Code39Barcode.
+// C# LinearBarcodeBase default: calcCheckSum=true (LinearBarcodeBase.cs:637).
 func NewCode39Barcode() *Code39Barcode {
-	return &Code39Barcode{BaseBarcodeImpl: newBaseBarcodeImpl(BarcodeTypeCode39)}
+	return &Code39Barcode{
+		BaseBarcodeImpl: newBaseBarcodeImpl(BarcodeTypeCode39),
+		CalcChecksum:    true,
+	}
 }
+
+// SetCalcCheckSum implements calcCheckSumSetter for FRX deserialization.
+// C# Barcode.CalcCheckSum attribute controls whether a check digit is appended.
+func (c *Code39Barcode) SetCalcCheckSum(v bool) { c.CalcChecksum = v }
 
 // Encode validates and stores text for Code39 encoding.
 func (c *Code39Barcode) Encode(text string) error {
@@ -205,21 +235,37 @@ func (c *Code39Barcode) Render(width, height int) (image.Image, error) {
 	return DrawLinearBarcode(pattern, c.encodedText, width, height, true, c.GetWideBarRatio()), nil
 }
 
-// DefaultValue returns a sample Code39 value.
-func (c *Code39Barcode) DefaultValue() string { return "CODE39" }
+// DefaultValue returns the C# BarcodeBase.GetDefaultValue() default: "12345678".
+func (c *Code39Barcode) DefaultValue() string { return "12345678" }
 
 // QRBarcode implements QR Code 2D symbology.
 type QRBarcode struct {
 	BaseBarcodeImpl
 	// ErrorCorrection is the QR error correction level (L/M/Q/H).
-	ErrorCorrection string // default "M"
+	// C# BarcodeQR.ErrorCorrection default is M (BarcodeQR.cs).
+	ErrorCorrection string
+	// QuietZone adds a 4-module white border around the QR matrix.
+	// C# BarcodeQR.QuietZone default is true (BarcodeQR.cs:902).
+	QuietZone bool
+	// Encoding is the QR character encoding (UTF8, ISO8859_1, Shift_JIS, etc.).
+	// C# QRCodeEncoding enum, default UTF8 (BarcodeQR.cs:153).
+	Encoding string
+	// ShowMarker controls whether finder-pattern markers are drawn.
+	// C# BarcodeQR.showMarker, default false (BarcodeQR.cs:281).
+	ShowMarker bool
+	// Shape is the module shape: "Rectangle" or "Circle".
+	// C# QrModuleShape enum, default Rectangle (BarcodeQR.cs:173).
+	Shape string
 }
 
 // NewQRBarcode creates a QRBarcode.
 func NewQRBarcode() *QRBarcode {
 	return &QRBarcode{
 		BaseBarcodeImpl: newBaseBarcodeImpl(BarcodeTypeQR),
-		ErrorCorrection: "M",
+		ErrorCorrection: "L", // C# BarcodeQR.cs:143 [DefaultValue(QRCodeErrorCorrection.L)]
+		QuietZone:       true,       // C# BarcodeQR default
+		Encoding:        "UTF8",     // C# QRCodeEncoding.UTF8 default
+		Shape:           "Rectangle", // C# QrModuleShape.Rectangle default
 	}
 }
 
@@ -276,6 +322,52 @@ type BarcodeObject struct {
 	allowExpressions bool
 	// brackets is the expression delimiter (default "[,]").
 	brackets string
+	// trim trims leading/trailing whitespace from barcode text before encoding.
+	// C# LinearBarcodeBase.Trim (default=true).
+	trim bool
+	// horzAlign is the horizontal alignment within the object bounds.
+	// C# BarcodeObject.HorzAlign, default Left (BarcodeObject.cs:119).
+	horzAlign BarcodeHorzAlign
+	// showMarker controls whether finder markers are shown (e.g. QR corner squares).
+	// C# BarcodeObject.ShowMarker, default false (BarcodeObject.cs:329).
+	showMarker bool
+}
+
+// BarcodeHorzAlign is the horizontal alignment of the barcode within its bounds.
+// C# BarcodeObject.Alignment enum (BarcodeObject.cs:60).
+type BarcodeHorzAlign int
+
+const (
+	// BarcodeHorzAlignLeft aligns the barcode to the left edge (default).
+	BarcodeHorzAlignLeft BarcodeHorzAlign = iota
+	// BarcodeHorzAlignCenter centers the barcode horizontally.
+	BarcodeHorzAlignCenter
+	// BarcodeHorzAlignRight aligns the barcode to the right edge.
+	BarcodeHorzAlignRight
+)
+
+// barcodeHorzAlignStr converts a BarcodeHorzAlign to its FRX enum string.
+func barcodeHorzAlignStr(a BarcodeHorzAlign) string {
+	switch a {
+	case BarcodeHorzAlignCenter:
+		return "Center"
+	case BarcodeHorzAlignRight:
+		return "Right"
+	default:
+		return "Left"
+	}
+}
+
+// parseBarcodeHorzAlign converts an FRX enum string to BarcodeHorzAlign.
+func parseBarcodeHorzAlign(s string) BarcodeHorzAlign {
+	switch s {
+	case "Center":
+		return BarcodeHorzAlignCenter
+	case "Right":
+		return BarcodeHorzAlignRight
+	default:
+		return BarcodeHorzAlignLeft
+	}
 }
 
 // Padding holds interior spacing around the barcode.
@@ -291,15 +383,17 @@ func (p Padding) Vertical() float32 { return p.Top + p.Bottom }
 
 // NewBarcodeObject creates a BarcodeObject with defaults.
 // AutoSize defaults to true, matching C# BarcodeObject (BarcodeObject.cs:689).
+// C# BarcodeObject constructor: Barcode = new Barcode39() (BarcodeObject.cs:688).
 func NewBarcodeObject() *BarcodeObject {
 	return &BarcodeObject{
 		ReportComponentBase: *report.NewReportComponentBase(),
-		Barcode:             NewCode128Barcode(),
+		Barcode:             NewCode39Barcode(),
 		autoSize:            true,
 		showText:            true,
 		zoom:                1.0,
-		allowExpressions:    true,
+		allowExpressions:    false, // C# BarcodeObject.cs:232 [DefaultValue(false)]
 		brackets:            "[,]",
+		trim:                true, // C# LinearBarcodeBase default
 	}
 }
 
@@ -365,6 +459,24 @@ func (b *BarcodeObject) NoDataText() string { return b.noDataText }
 // SetNoDataText sets the no-data text.
 func (b *BarcodeObject) SetNoDataText(s string) { b.noDataText = s }
 
+// Trim returns whether whitespace is trimmed from barcode text before encoding.
+func (b *BarcodeObject) Trim() bool { return b.trim }
+
+// SetTrim sets the trim flag.
+func (b *BarcodeObject) SetTrim(v bool) { b.trim = v }
+
+// HorzAlign returns the horizontal alignment of the barcode within its bounds.
+func (b *BarcodeObject) HorzAlign() BarcodeHorzAlign { return b.horzAlign }
+
+// SetHorzAlign sets the horizontal alignment.
+func (b *BarcodeObject) SetHorzAlign(a BarcodeHorzAlign) { b.horzAlign = a }
+
+// ShowMarker returns whether finder-pattern markers are shown.
+func (b *BarcodeObject) ShowMarker() bool { return b.showMarker }
+
+// SetShowMarker sets the show-marker flag.
+func (b *BarcodeObject) SetShowMarker(v bool) { b.showMarker = v }
+
 // AllowExpressions returns whether expressions are evaluated in text.
 func (b *BarcodeObject) AllowExpressions() bool { return b.allowExpressions }
 
@@ -377,7 +489,8 @@ func (b *BarcodeObject) Brackets() string { return b.brackets }
 // SetBrackets sets the delimiter.
 func (b *BarcodeObject) SetBrackets(s string) { b.brackets = s }
 
-// UpdateAutoSize resizes the BarcodeObject to fit the barcode's natural dimensions.
+// UpdateAutoSize resizes the BarcodeObject to fit the barcode's natural dimensions,
+// then applies horizontal alignment via RelocateAlign().
 // Mirrors C# BarcodeObject.UpdateAutoSize() (BarcodeObject.cs:390-412) and
 // C# LinearBarcodeBase.CalcBounds() ShowText extra-padding logic (LinearBarcodeBase.cs:435-452).
 // Called after Encode() so that CalcBounds() can use the encoded data.
@@ -385,6 +498,14 @@ func (b *BarcodeObject) UpdateAutoSize() {
 	if b.Barcode == nil {
 		return
 	}
+	// Propagate ShowText flag to the barcode implementation so 2D CalcBounds
+	// can include font height. C# Barcode2DBase.CalcBounds() reads showText
+	// and adds FontHeight when true.
+	type showTextSetter interface{ SetShowText(bool) }
+	if sts, ok := b.Barcode.(showTextSetter); ok {
+		sts.SetShowText(b.showText)
+	}
+
 	w, h := b.Barcode.CalcBounds()
 	if w == 0 && h == 0 {
 		return // barcode type doesn't support CalcBounds, keep FRX dimensions
@@ -417,6 +538,12 @@ func (b *BarcodeObject) UpdateAutoSize() {
 	if !b.autoSize {
 		return
 	}
+
+	// Save original bounds for RelocateAlign().
+	// C# BarcodeObject.DrawBarcode(): origRect set before UpdateAutoSize() call.
+	origLeft := b.Left()
+	origWidth := b.Width()
+
 	if b.angle == 0 || b.angle == 180 {
 		b.SetWidth(w + b.padding.Horizontal())
 		if h > 0 {
@@ -427,6 +554,15 @@ func (b *BarcodeObject) UpdateAutoSize() {
 		if h > 0 {
 			b.SetWidth(h + b.padding.Horizontal())
 		}
+	}
+
+	// RelocateAlign: shift Left to honour HorzAlign within original bounds.
+	// C# BarcodeObject.RelocateAlign() (BarcodeObject.cs:417-435).
+	switch b.horzAlign {
+	case BarcodeHorzAlignCenter:
+		b.SetLeft(origLeft + (origWidth-b.Width())/2)
+	case BarcodeHorzAlignRight:
+		b.SetLeft(origLeft + origWidth - b.Width())
 	}
 }
 
@@ -481,6 +617,21 @@ func (b *BarcodeObject) Serialize(w report.Writer) error {
 	if b.brackets != "[,]" {
 		w.WriteStr("Brackets", b.brackets)
 	}
+	// Padding: C# BarcodeObject.cs:533.
+	if b.padding.Left != 0 || b.padding.Top != 0 || b.padding.Right != 0 || b.padding.Bottom != 0 {
+		w.WriteFloat("Padding.Left", b.padding.Left)
+		w.WriteFloat("Padding.Top", b.padding.Top)
+		w.WriteFloat("Padding.Right", b.padding.Right)
+		w.WriteFloat("Padding.Bottom", b.padding.Bottom)
+	}
+	// HorzAlign: default Left (BarcodeObject.cs:119).
+	if b.horzAlign != BarcodeHorzAlignLeft {
+		w.WriteStr("HorzAlign", barcodeHorzAlignStr(b.horzAlign))
+	}
+	// ShowMarker: default false (BarcodeObject.cs:329).
+	if b.showMarker {
+		w.WriteBool("ShowMarker", true)
+	}
 	return nil
 }
 
@@ -499,9 +650,73 @@ func (b *BarcodeObject) Deserialize(r report.Reader) error {
 	}
 	// Read barcode-specific properties (prefixed with "Barcode.").
 	if b.Barcode != nil {
-		if qrbc, ok := b.Barcode.(*QRBarcode); ok {
+		switch bc := b.Barcode.(type) {
+		case *QRBarcode:
+			// ErrorCorrection: level string ("L"/"M"/"Q"/"H"), default "M".
 			if ec := r.ReadStr("Barcode.ErrorCorrection", ""); ec != "" {
-				qrbc.ErrorCorrection = ec
+				bc.ErrorCorrection = ec
+			}
+			// QuietZone default is true per C# BarcodeQR.cs:902.
+			bc.QuietZone = r.ReadBool("Barcode.QuietZone", true)
+			// Encoding: QR character set (UTF8, ISO8859_1, …), default "UTF8".
+			// C# QRCodeEncoding enum (BarcodeQR.cs:153).
+			if enc := r.ReadStr("Barcode.Encoding", ""); enc != "" {
+				bc.Encoding = enc
+			}
+			// ShowMarker: QR-specific marker display, default false.
+			bc.ShowMarker = r.ReadBool("Barcode.ShowMarker", false)
+			// Shape: module shape ("Rectangle"/"Circle"), default "Rectangle".
+			if sh := r.ReadStr("Barcode.Shape", ""); sh != "" {
+				bc.Shape = sh
+			}
+		case *AztecBarcode:
+			// ErrorCorrection for Aztec is an integer percentage (default 33).
+			// C# BarcodeAztec.ErrorCorrectionPercent serialised as prefix+"ErrorCorrection"
+			// using WriteInt (BarcodeAztec.cs:86).
+			bc.MinECCPercent = r.ReadInt("Barcode.ErrorCorrection", 33)
+		case *PDF417Barcode:
+			// C# BarcodePDF417 properties (BarcodePDF417.cs:1478-1496).
+			bc.AspectRatio = r.ReadFloat("Barcode.AspectRatio", 0.5)
+			bc.Columns = r.ReadInt("Barcode.Columns", 0)
+			bc.Rows = r.ReadInt("Barcode.Rows", 0)
+			bc.CodePage = r.ReadInt("Barcode.CodePage", 437)
+			if cm := r.ReadStr("Barcode.CompactionMode", ""); cm != "" {
+				bc.CompactionMode = cm
+			}
+			if ec := r.ReadStr("Barcode.ErrorCorrection", ""); ec != "" {
+				bc.ErrorCorrection = ec
+			}
+			// PixelSize is serialised as "Width, Height" by C# WriteValue(Size).
+			// We read Width and Height separately using common FRX patterns.
+			// C# default: Size{2,8} (BarcodePDF417.cs:1551).
+			bc.PixelSizeWidth = r.ReadInt("Barcode.PixelSize.Width", 2)
+			bc.PixelSizeHeight = r.ReadInt("Barcode.PixelSize.Height", 8)
+		case *DataMatrixBarcode:
+			// C# BarcodeDatamatrix properties (BarcodeDatamatrix.cs:1060-1073).
+			if ss := r.ReadStr("Barcode.SymbolSize", ""); ss != "" {
+				bc.SymbolSize = ss
+			}
+			if enc := r.ReadStr("Barcode.Encoding", ""); enc != "" {
+				bc.Encoding = enc
+			}
+			bc.CodePage = r.ReadInt("Barcode.CodePage", 1252)
+			bc.PixelSize = r.ReadInt("Barcode.PixelSize", 3)
+			bc.AutoEncode = r.ReadBool("Barcode.AutoEncode", true)
+		case *MaxiCodeBarcode:
+			// Mode: MaxiCode encoding mode 2-6, default 4.
+			// C# BarcodeMaxiCode.cs:43: Mode = 4; serialised as WriteInt (line 127).
+			bc.Mode = r.ReadInt("Barcode.Mode", 4)
+		case *ITF14Barcode:
+			// DrawVerticalBearerBars: default true.
+			// C# BarcodeITF14.drawVerticalBearerBars=true (Barcode2of5.cs:332).
+			bc.DrawVerticalBearerBars = r.ReadBool("Barcode.DrawVerticalBearerBars", true)
+		case *CodabarBarcode:
+			// StartChar/StopChar: C# BarcodeCodabar.cs:63,71 (default A/B).
+			if s := r.ReadStr("Barcode.StartChar", ""); s != "" && len(s) == 1 {
+				bc.StartChar = s[0]
+			}
+			if s := r.ReadStr("Barcode.StopChar", ""); s != "" && len(s) == 1 {
+				bc.StopChar = s[0]
 			}
 		}
 		// FRX stores the WideBarRatio override as Barcode.WideBarRatio="2.25".
@@ -512,6 +727,18 @@ func (b *BarcodeObject) Deserialize(r report.Reader) error {
 			if setter, ok := b.Barcode.(wbrSetter); ok {
 				setter.SetWideBarRatio(wbr)
 			}
+		}
+		// CalcCheckSum: C# LinearBarcodeBase default is true (LinearBarcodeBase.cs:637).
+		// FRX writes the attribute only when it differs from the default.
+		calcCS := r.ReadBool("Barcode.CalcCheckSum", true)
+		type calcCheckSumSetter interface{ SetCalcCheckSum(bool) }
+		if setter, ok := b.Barcode.(calcCheckSumSetter); ok {
+			setter.SetCalcCheckSum(calcCS)
+		}
+		// AutoEncode: C# Barcode128.AutoEncode default is true (Barcode128.cs:591).
+		type autoEncodeSetter interface{ SetAutoEncode(bool) }
+		if setter, ok := b.Barcode.(autoEncodeSetter); ok {
+			setter.SetAutoEncode(r.ReadBool("Barcode.AutoEncode", true))
 		}
 	}
 	b.angle = r.ReadInt("Angle", 0)
@@ -525,6 +752,17 @@ func (b *BarcodeObject) Deserialize(r report.Reader) error {
 	b.noDataText = r.ReadStr("NoDataText", "")
 	b.allowExpressions = r.ReadBool("AllowExpressions", true)
 	b.brackets = r.ReadStr("Brackets", "[,]")
+	// Trim: C# LinearBarcodeBase default is true (LinearBarcodeBase.cs:638).
+	b.trim = r.ReadBool("Barcode.Trim", true)
+	// Padding: C# BarcodeObject.cs:533.
+	b.padding.Left = r.ReadFloat("Padding.Left", 0)
+	b.padding.Top = r.ReadFloat("Padding.Top", 0)
+	b.padding.Right = r.ReadFloat("Padding.Right", 0)
+	b.padding.Bottom = r.ReadFloat("Padding.Bottom", 0)
+	// HorzAlign: default Left (BarcodeObject.cs:119).
+	b.horzAlign = parseBarcodeHorzAlign(r.ReadStr("HorzAlign", "Left"))
+	// ShowMarker: default false (BarcodeObject.cs:329).
+	b.showMarker = r.ReadBool("ShowMarker", false)
 	return nil
 }
 
@@ -554,7 +792,9 @@ func (e *EAN13Barcode) Encode(text string) error {
 	return nil
 }
 
-// Render renders the EAN-13 barcode using the native pattern-based renderer.
+// Render renders the EAN-13 barcode using the native pattern-based renderer
+// with custom text positioning: first digit outside left guard, then two
+// groups of 6 digits under the left and right halves.
 func (e *EAN13Barcode) Render(width, height int) (image.Image, error) {
 	if e.encodedText == "" {
 		return nil, fmt.Errorf("ean13: Encode must be called before Render")
@@ -563,7 +803,7 @@ func (e *EAN13Barcode) Render(width, height int) (image.Image, error) {
 	if err != nil {
 		return nil, err
 	}
-	return DrawLinearBarcode(pattern, e.encodedText, width, height, true, e.GetWideBarRatio()), nil
+	return DrawLinearBarcodeCustomText(pattern, e.encodedText, width, height, true, e.GetWideBarRatio(), EAN13DrawText(pattern)), nil
 }
 
 // DefaultValue returns a sample EAN-13 value.
@@ -576,7 +816,8 @@ func (e *EAN13Barcode) DefaultValue() string { return "590123412345" }
 // AztecBarcode implements Aztec 2D symbology.
 type AztecBarcode struct {
 	BaseBarcodeImpl
-	// MinECCPercent is the minimum error correction percentage (default 23).
+	// MinECCPercent is the minimum error correction percentage.
+	// C# BarcodeAztec.ErrorCorrectionPercent default is 33 (BarcodeAztec.cs:35).
 	MinECCPercent int
 	// UserSpecifiedLayers configures compact/full Aztec layers (0 = auto).
 	UserSpecifiedLayers int
@@ -586,7 +827,7 @@ type AztecBarcode struct {
 func NewAztecBarcode() *AztecBarcode {
 	return &AztecBarcode{
 		BaseBarcodeImpl:     newBaseBarcodeImpl(BarcodeTypeAztec),
-		MinECCPercent:       23,
+		MinECCPercent:       33, // C# BarcodeAztec.cs:35 — default is 33
 		UserSpecifiedLayers: 0,
 	}
 }
@@ -621,9 +862,31 @@ func (a *AztecBarcode) DefaultValue() string { return "Aztec" }
 type PDF417Barcode struct {
 	BaseBarcodeImpl
 	// Columns is the number of data columns (0 = auto).
+	// C# BarcodePDF417.Columns default is 0 (BarcodePDF417.cs:624).
 	Columns int
+	// Rows is the number of data rows (0 = auto).
+	// C# BarcodePDF417.Rows default is 0 (BarcodePDF417.cs:639).
+	Rows int
 	// SecurityLevel is the error correction level 0-8 (default 2).
 	SecurityLevel int
+	// AspectRatio controls width:height ratio when Columns/Rows are 0.
+	// C# BarcodePDF417.AspectRatio default is 0.5 (BarcodePDF417.cs:609).
+	AspectRatio float32
+	// CodePage is the code page for text conversion.
+	// C# BarcodePDF417.CodePage default is 437 (BarcodePDF417.cs:663).
+	CodePage int
+	// CompactionMode controls encoding compaction: "Auto", "Text", "Numeric", "Binary".
+	// C# PDF417CompactionMode enum, default Auto (BarcodePDF417.cs:673).
+	CompactionMode string
+	// ErrorCorrection is the error correction level: "Auto", "L0"–"L8".
+	// C# PDF417ErrorCorrection enum, default Auto (BarcodePDF417.cs:649).
+	ErrorCorrection string
+	// PixelSizeWidth is the horizontal pixel size.
+	// C# BarcodePDF417.PixelSize.Width default is 2 (BarcodePDF417.cs:1551).
+	PixelSizeWidth int
+	// PixelSizeHeight is the vertical pixel size.
+	// C# BarcodePDF417.PixelSize.Height default is 8 (BarcodePDF417.cs:1551).
+	PixelSizeHeight int
 }
 
 // NewPDF417Barcode creates a PDF417Barcode.
@@ -631,7 +894,14 @@ func NewPDF417Barcode() *PDF417Barcode {
 	return &PDF417Barcode{
 		BaseBarcodeImpl: newBaseBarcodeImpl(BarcodeTypePDF417),
 		Columns:         0,
+		Rows:            0,
 		SecurityLevel:   2,
+		AspectRatio:     0.5,
+		CodePage:        437,
+		CompactionMode:  "Auto",
+		ErrorCorrection: "Auto",
+		PixelSizeWidth:  2,
+		PixelSizeHeight: 8,
 	}
 }
 
@@ -706,7 +976,8 @@ func (c *Code93Barcode) DefaultValue() string { return "12345678" }
 type Code2of5Barcode struct {
 	BaseBarcodeImpl
 	// Interleaved selects Interleaved 2-of-5 (default: true).
-	Interleaved bool
+	Interleaved  bool
+	CalcChecksum bool // C# LinearBarcodeBase.CalcCheckSum default true
 }
 
 // NewCode2of5Barcode creates a Code2of5Barcode with defaults.
@@ -714,8 +985,12 @@ func NewCode2of5Barcode() *Code2of5Barcode {
 	return &Code2of5Barcode{
 		BaseBarcodeImpl: newBaseBarcodeImpl(BarcodeTypeCode2of5),
 		Interleaved:     true,
+		CalcChecksum:    true,
 	}
 }
+
+// SetCalcCheckSum implements calcCheckSumSetter for FRX deserialization.
+func (c *Code2of5Barcode) SetCalcCheckSum(v bool) { c.CalcChecksum = v }
 
 // Encode validates and stores the text for later rendering.
 func (c *Code2of5Barcode) Encode(text string) error {
@@ -750,11 +1025,21 @@ func (c *Code2of5Barcode) DefaultValue() string { return "12345670" }
 // CodabarBarcode implements Codabar symbology.
 type CodabarBarcode struct {
 	BaseBarcodeImpl
+	// StartChar is the start character (A, B, C, or D).
+	// C# BarcodeCodabar.cs:63 [DefaultValue(CodabarChar.A)].
+	StartChar byte
+	// StopChar is the stop character (A, B, C, or D).
+	// C# BarcodeCodabar.cs:71 [DefaultValue(CodabarChar.B)].
+	StopChar byte
 }
 
 // NewCodabarBarcode creates a CodabarBarcode.
 func NewCodabarBarcode() *CodabarBarcode {
-	return &CodabarBarcode{BaseBarcodeImpl: newBaseBarcodeImpl(BarcodeTypeCodabar)}
+	return &CodabarBarcode{
+		BaseBarcodeImpl: newBaseBarcodeImpl(BarcodeTypeCodabar),
+		StartChar:       'A', // C# default: CodabarChar.A
+		StopChar:        'B', // C# default: CodabarChar.B
+	}
 }
 
 // Encode stores the text for later rendering.
@@ -775,8 +1060,8 @@ func (c *CodabarBarcode) Render(width, height int) (image.Image, error) {
 	return DrawLinearBarcode(pattern, c.encodedText, width, height, true, c.GetWideBarRatio()), nil
 }
 
-// DefaultValue returns a sample Codabar value.
-func (c *CodabarBarcode) DefaultValue() string { return "A12345B" }
+// DefaultValue returns the C# BarcodeBase.GetDefaultValue() default: "12345678".
+func (c *CodabarBarcode) DefaultValue() string { return "12345678" }
 
 // -----------------------------------------------------------------------
 // DataMatrixBarcode — DataMatrix 2D symbology
@@ -785,11 +1070,33 @@ func (c *CodabarBarcode) DefaultValue() string { return "A12345B" }
 // DataMatrixBarcode implements DataMatrix 2D symbology.
 type DataMatrixBarcode struct {
 	BaseBarcodeImpl
+	// SymbolSize is the DataMatrix symbol size: "Auto", "10x10", etc.
+	// C# DatamatrixSymbolSize enum, default Auto (BarcodeDatamatrix.cs:326).
+	SymbolSize string
+	// Encoding is the DataMatrix encoding mode: "Auto", "Ascii", "C40", etc.
+	// C# DatamatrixEncoding enum, default Auto (BarcodeDatamatrix.cs:336).
+	Encoding string
+	// CodePage is the code page for text conversion.
+	// C# BarcodeDatamatrix.CodePage default is 1252 (BarcodeDatamatrix.cs:350).
+	CodePage int
+	// PixelSize is the pixel size for rendering.
+	// C# BarcodeDatamatrix.PixelSize default is 3 (BarcodeDatamatrix.cs:360).
+	PixelSize int
+	// AutoEncode enables automatic encoding mode selection.
+	// C# BarcodeDatamatrix.AutoEncode default is true (BarcodeDatamatrix.cs:370).
+	AutoEncode bool
 }
 
 // NewDataMatrixBarcode creates a DataMatrixBarcode.
 func NewDataMatrixBarcode() *DataMatrixBarcode {
-	return &DataMatrixBarcode{BaseBarcodeImpl: newBaseBarcodeImpl(BarcodeTypeDataMatrix)}
+	return &DataMatrixBarcode{
+		BaseBarcodeImpl: newBaseBarcodeImpl(BarcodeTypeDataMatrix),
+		SymbolSize:      "Auto",
+		Encoding:        "Auto",
+		CodePage:        1252,
+		PixelSize:       3,
+		AutoEncode:      true,
+	}
 }
 
 // Encode stores the text for later rendering.
@@ -827,9 +1134,11 @@ func NewBarcodeByType(t BarcodeType) BarcodeBase {
 	case BarcodeTypeCode128C:
 		return NewCode128CBarcode()
 	case BarcodeTypeGS1_128:
-		return NewGS1Barcode()
+		return NewGS1_128Barcode()
 	case BarcodeTypeCode39:
 		return NewCode39Barcode()
+	case BarcodeTypeCode39Extended:
+		return NewCode39ExtendedBarcode()
 	case BarcodeTypeQR:
 		return NewQRBarcode()
 	case BarcodeTypeEAN13:

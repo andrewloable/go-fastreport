@@ -86,6 +86,45 @@ func TestProcess_MacroSubstitution_Page2(t *testing.T) {
 	}
 }
 
+func TestProcess_MacroSubstitution_SystemVariableTokens(t *testing.T) {
+	// The engine injects "[PAGE#]" and "[TOTALPAGES#]" as literal bracket
+	// tokens into text objects. The postprocessor must replace them with the
+	// actual page/total strings, matching C# PreparedPagePostprocessor behavior.
+	pp := preview.New()
+	pp.AddPage(595, 842, 1)
+	_ = pp.AddBand(&preview.PreparedBand{
+		Name:   "b",
+		Top:    0,
+		Height: 20,
+		Objects: []preview.PreparedObject{
+			{Kind: preview.ObjectTypeText, Text: "Page [PAGE#] of [TOTALPAGES#]"},
+		},
+	})
+	pp.AddPage(595, 842, 2)
+	_ = pp.AddBand(&preview.PreparedBand{
+		Name:   "b2",
+		Top:    0,
+		Height: 20,
+		Objects: []preview.PreparedObject{
+			{Kind: preview.ObjectTypeText, Text: "[PAGE#]/[TOTALPAGES#]"},
+		},
+	})
+	pp.AddPage(595, 842, 3)
+
+	preview.NewPostprocessor(pp).Process()
+
+	// Page 1
+	pg1 := pp.GetPage(0)
+	if txt := pg1.Bands[0].Objects[0].Text; txt != "Page 1 of 3" {
+		t.Errorf("page 1 text = %q, want %q", txt, "Page 1 of 3")
+	}
+	// Page 2
+	pg2 := pp.GetPage(1)
+	if txt := pg2.Bands[0].Objects[0].Text; txt != "2/3" {
+		t.Errorf("page 2 text = %q, want %q", txt, "2/3")
+	}
+}
+
 func TestProcess_Duplicates_Clear(t *testing.T) {
 	pp := preview.New()
 	pp.AddPage(595, 842, 1)

@@ -82,6 +82,9 @@ type Report struct {
 	// before the engine runs.
 	BaseReportPath string
 
+	// Settings holds global runtime settings for the report.
+	Settings *ReportSettings
+
 	// ExportsOptions holds report-level export UI configuration.
 	ExportsOptions *export.ExportsOptions
 
@@ -102,6 +105,7 @@ func NewReport() *Report {
 		BaseObject:        *report.NewBaseObject(),
 		dictionary:        data.NewDictionary(),
 		styles:            style.NewStyleSheet(),
+		Settings:          NewReportSettings(),
 		InitialPageNumber: 1,
 		ExportsOptions:    export.NewExportsOptions(),
 	}

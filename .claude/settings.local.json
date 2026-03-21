@@ -76,7 +76,30 @@
       "Bash(head -20 grep -n \"CalcBounds\\\\|PixelSize\\\\|pixelSize\" /Volumes/mandark-1Tb/projects/loabletech/go-fastreport/original-dotnet/FastReport.Base/Barcode/BarcodeQR.cs)",
       "Bash(head -10 grep -n \"CalcBounds\\\\|PixelSize\\\\|pixelSize\" /Volumes/mandark-1Tb/projects/loabletech/go-fastreport/original-dotnet/FastReport.Base/Barcode/BarcodeDatamatrix.cs)",
       "Bash(head -10 grep -rn \"func New.*HTML\\\\|func New.*Export\" /Volumes/mandark-1Tb/projects/loabletech/go-fastreport/export/html/*.go)",
-      "Bash(bd blocked:*)"
+      "Bash(bd blocked:*)",
+      "Bash(cat:*)",
+      "Bash(bash /tmp/check_frx_widths.sh)",
+      "Bash(head -10 grep -n \"Code93Extended\\\\|Code39Extended\\\\|Code93\" /Volumes/mandark-1Tb/projects/loabletech/go-fastreport/barcode/missing_types.go)",
+      "Bash(head -20 echo --- grep -n \"PixelSize\\\\|Columns\\\\|Rows\\\\|SecurityLevel\\\\|CompactionMode\\\\|AspectRatio\\\\|CodePage\" /Volumes/mandark-1Tb/projects/loabletech/go-fastreport/original-dotnet/FastReport.Base/Barcode/BarcodePDF417.cs)",
+      "Bash(for f:*)",
+      "Bash(do echo:*)",
+      "Read(//private/tmp/claude-501/-Volumes-mandark-1Tb-projects-loabletech-go-fastreport/842f5901-5e2f-4937-b7d9-3d583bfb55c5/tasks/**)",
+      "Bash(done)",
+      "Bash(grep -c '\"\"type\"\":\"\"result\"\"' /private/tmp/claude-501/-Volumes-mandark-1Tb-projects-loabletech-go-fastreport/842f5901-5e2f-4937-b7d9-3d583bfb55c5/tasks/a7355e29eb4c11966.output)",
+      "Bash(grep -c '\"\"type\"\":\"\"result\"\"' /private/tmp/claude-501/-Volumes-mandark-1Tb-projects-loabletech-go-fastreport/842f5901-5e2f-4937-b7d9-3d583bfb55c5/tasks/abcd1fd40bf4acf51.output)",
+      "Bash(grep -c '\"\"type\"\":\"\"result\"\"' /private/tmp/claude-501/-Volumes-mandark-1Tb-projects-loabletech-go-fastreport/842f5901-5e2f-4937-b7d9-3d583bfb55c5/tasks/a8e50ae505e030fa4.output)",
+      "Bash(grep -c '\"\"type\"\":\"\"result\"\"' /private/tmp/claude-501/-Volumes-mandark-1Tb-projects-loabletech-go-fastreport/842f5901-5e2f-4937-b7d9-3d583bfb55c5/tasks/a8eee43af4c243b13.output)",
+      "Bash(grep -c '\"\"type\"\":\"\"result\"\"' /private/tmp/claude-501/-Volumes-mandark-1Tb-projects-loabletech-go-fastreport/842f5901-5e2f-4937-b7d9-3d583bfb55c5/tasks/a746a7d2fdc6be027.output)",
+      "Bash(/tmp/extract_funcs.sh:*)",
+      "Bash(chmod +x /tmp/extract_funcs.sh)",
+      "Bash(bash /tmp/extract_funcs.sh)",
+      "Bash(/tmp/compare_funcs.py:*)",
+      "Bash(/tmp/final_report.md:*)",
+      "Bash(sed 's/.*`\\\\\\(.*\\\\\\)`.*/\\\\1/')",
+      "Bash(for id:*)",
+      "Bash(do)",
+      "Bash(while read:*)",
+      "Bash(do grep:*)"
     ]
   }
 }

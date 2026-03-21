@@ -883,12 +883,23 @@ func (e *ReportEngine) buildPreparedObject(obj report.Base) *preview.PreparedObj
 
 	case *barcode.BarcodeObject:
 		po.Kind = preview.ObjectTypePicture
-		// Evaluate the barcode text from expression or static text.
-		text := v.Expression()
-		if text == "" {
-			text = v.Text()
+		// Evaluate the barcode text: DataColumn → Expression → Text.
+		// C# BarcodeObject.GetDataShared() (BarcodeObject.cs:601-604):
+		//   if DataColumn != "" → Report.GetColumnValue(DataColumn)
+		//   else if Expression != "" → Report.Calc(Expression)
+		//   else evaluate bracket expressions in Text
+		var text string
+		if col := v.DataColumn(); col != "" {
+			text = e.evalText("[" + col + "]")
+		} else if v.Expression() != "" {
+			text = e.evalText(v.Expression())
+		} else {
+			text = e.evalText(v.Text())
 		}
-		text = e.evalText(text)
+		// Apply Trim: C# LinearBarcodeBase.Initialize() trims whitespace when Trim=true.
+		if v.Trim() {
+			text = strings.TrimSpace(text)
+		}
 		if text == "" && !v.HideIfNoData() {
 			text = v.NoDataText()
 		}

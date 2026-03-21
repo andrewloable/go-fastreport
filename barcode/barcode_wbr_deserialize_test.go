@@ -125,6 +125,9 @@ func TestDeserialize_WideBarRatio_Matrix25_FRX(t *testing.T) {
 		floats: map[string]float32{
 			"Barcode.WideBarRatio": 2.25,
 		},
+		bools: map[string]bool{
+			"Barcode.CalcCheckSum": false, // C# Barcode.frx Barcode21 has CalcCheckSum=false
+		},
 	}
 	if err := obj.Deserialize(r); err != nil {
 		t.Fatalf("Deserialize: %v", err)

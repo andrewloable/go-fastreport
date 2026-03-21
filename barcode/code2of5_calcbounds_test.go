@@ -86,12 +86,12 @@ func TestCode2of5_Pattern_12345670(t *testing.T) {
 
 // ── 2/5 Industrial ────────────────────────────────────────────────────────────
 
-// TestCode2of5Industrial_DefaultValue asserts DefaultValue="123456".
+// TestCode2of5Industrial_DefaultValue asserts DefaultValue="12345678" (C# BarcodeBase.GetDefaultValue).
 func TestCode2of5Industrial_DefaultValue(t *testing.T) {
 	b := barcode.NewCode2of5IndustrialBarcode()
 	got := b.DefaultValue()
-	if got != "123456" {
-		t.Errorf("DefaultValue = %q, want \"123456\"", got)
+	if got != "12345678" {
+		t.Errorf("DefaultValue = %q, want \"12345678\"", got)
 	}
 }
 
@@ -110,7 +110,9 @@ func TestCode2of5Industrial_GetWideBarRatio(t *testing.T) {
 // 8 digits × 12 module units + start(8) + stop(8) = 112 module units × 1.25 = 140px.
 func TestCode2of5Industrial_UpdateAutoSize_12345678(t *testing.T) {
 	obj := barcode.NewBarcodeObject()
-	obj.Barcode = barcode.NewCode2of5IndustrialBarcode()
+	ind := barcode.NewCode2of5IndustrialBarcode()
+	ind.CalcChecksum = false // C# Barcode.frx Barcode20 has CalcCheckSum=false
+	obj.Barcode = ind
 	if err := obj.Barcode.Encode("12345678"); err != nil {
 		t.Fatalf("Encode: %v", err)
 	}
@@ -159,7 +161,9 @@ func TestCode2of5Matrix_GetWideBarRatio(t *testing.T) {
 // 8 digits × 8.5 module units + start(8.375) + stop(7.375) = 83.75 × 1.25 = 104.69px.
 func TestCode2of5Matrix_UpdateAutoSize_12345678(t *testing.T) {
 	obj := barcode.NewBarcodeObject()
-	obj.Barcode = barcode.NewCode2of5MatrixBarcode()
+	mat := barcode.NewCode2of5MatrixBarcode()
+	mat.CalcChecksum = false // C# Barcode.frx Barcode21 has CalcCheckSum=false
+	obj.Barcode = mat
 	if err := obj.Barcode.Encode("12345678"); err != nil {
 		t.Fatalf("Encode: %v", err)
 	}

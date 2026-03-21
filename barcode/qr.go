@@ -1189,8 +1189,15 @@ func qrAppendAlphanumericBytes(content string, bv *qrBitVector) error {
 	return nil
 }
 
-func qrAppend8BitBytes(content string, bv *qrBitVector) {
-	// Use ISO-8859-1 byte encoding (one byte per rune, values 0-255).
+func qrAppend8BitBytes(content string, bv *qrBitVector, charset string) {
+	if charset == "ISO8859_1" || charset == "ISO-8859-1" {
+		// ISO-8859-1: each rune maps to a single byte (truncate to low 8 bits).
+		for _, r := range content {
+			bv.appendBits(int(r&0xFF), 8)
+		}
+		return
+	}
+	// Default: ISO-8859-1 byte encoding for runes < 256, UTF-8 fallback otherwise.
 	for _, r := range content {
 		if r < 256 {
 			bv.appendBits(int(r), 8)
@@ -1205,17 +1212,17 @@ func qrAppend8BitBytes(content string, bv *qrBitVector) {
 	}
 }
 
-func qrAppendBytes(content string, mode qrMode, bv *qrBitVector) error {
+func qrAppendBytes(content string, mode qrMode, bv *qrBitVector, charset string) error {
 	switch mode {
 	case qrModeNumeric:
 		qrAppendNumericBytes(content, bv)
 	case qrModeAlphanumeric:
 		return qrAppendAlphanumericBytes(content, bv)
 	case qrModeByte:
-		qrAppend8BitBytes(content, bv)
+		qrAppend8BitBytes(content, bv, charset)
 	default:
 		// Kanji mode not implemented (fallback to Byte).
-		qrAppend8BitBytes(content, bv)
+		qrAppend8BitBytes(content, bv, charset)
 	}
 	return nil
 }
@@ -1323,7 +1330,10 @@ func qrInterleave(bits *qrBitVector, numTotalBytes, numDataBytes, numRSBlocks in
 // encodeQR encodes content as a QR code and returns the module matrix.
 // Each element matrix[row][col] is true for a dark module.
 // The matrix is always square (rows == cols == dimension).
-func encodeQR(content string, ecLevel qrECLevel) ([][]bool, error) {
+// charset controls byte encoding: "ISO8859_1" or "ISO-8859-1" forces single-byte
+// ISO-8859-1 encoding; any other value (including "" and "UTF8") uses default
+// UTF-8 encoding. See C# BarcodeQR.cs GetEncoding().
+func encodeQR(content string, ecLevel qrECLevel, charset string) ([][]bool, error) {
 	if content == "" {
 		return nil, fmt.Errorf("qr: content must not be empty")
 	}
@@ -1335,7 +1345,7 @@ func encodeQR(content string, ecLevel qrECLevel) ([][]bool, error) {
 
 	// Step 2: Encode data bits.
 	dataBits := newQRBitVector()
-	if err := qrAppendBytes(content, mode, dataBits); err != nil {
+	if err := qrAppendBytes(content, mode, dataBits, charset); err != nil {
 		return nil, err
 	}
 	numInputBytes := dataBits.sizeInBytes()
@@ -1412,16 +1422,32 @@ func encodeQR(content string, ecLevel qrECLevel) ([][]bool, error) {
 
 // GetMatrix encodes b.encodedText as a QR code and returns (matrix, rows, cols).
 // Implements Matrix2DProvider for QRBarcode.
+// When QuietZone is true, a 4-module white border is added per C# BarcodeQR.cs:851.
 func (b *QRBarcode) GetMatrix() ([][]bool, int, int) {
 	text := b.encodedText
 	if text == "" {
 		text = b.DefaultValue()
 	}
 	ecLevel := qrECLevelFromString(b.ErrorCorrection)
-	matrix, err := encodeQR(text, ecLevel)
+	matrix, err := encodeQR(text, ecLevel, b.Encoding)
 	if err != nil || len(matrix) == 0 {
 		// Return a 1×1 fallback so callers never receive nil.
 		return [][]bool{{true}}, 1, 1
+	}
+	if b.QuietZone {
+		// Add a 4-module quiet zone border (all false/white) around the matrix.
+		// C# BarcodeQR.cs:845: quiet = QuietZone ? 4 : 0
+		const quiet = 4
+		n := len(matrix)
+		newSize := n + 2*quiet
+		bordered := make([][]bool, newSize)
+		for i := range bordered {
+			bordered[i] = make([]bool, newSize)
+		}
+		for r, row := range matrix {
+			copy(bordered[r+quiet][quiet:], row)
+		}
+		return bordered, newSize, newSize
 	}
 	n := len(matrix)
 	return matrix, n, n

@@ -1,6 +1,11 @@
 package data
 
-import "iter"
+import (
+	"iter"
+	"strconv"
+
+	"github.com/andrewloable/go-fastreport/report"
+)
 
 // ColumnFormat specifies how a column's value is formatted.
 type ColumnFormat int
@@ -24,6 +29,23 @@ const (
 	ColumnFormatBoolean
 )
 
+// columnFormatNames maps ColumnFormat values to their FRX string representation
+// for serialization. The index matches the iota value.
+var columnFormatNames = [...]string{
+	"Auto", "General", "Number", "Currency",
+	"Date", "Time", "Percent", "Boolean",
+}
+
+// parseColumnFormat converts an FRX string to a ColumnFormat value.
+func parseColumnFormat(s string) ColumnFormat {
+	for i, name := range columnFormatNames {
+		if name == s {
+			return ColumnFormat(i)
+		}
+	}
+	return ColumnFormatAuto
+}
+
 // DataColumn represents a single data column in a data source.
 // It is the Go equivalent of FastReport.Data.Column.
 type DataColumn struct {
@@ -42,24 +64,137 @@ type DataColumn struct {
 	// Enabled controls whether the column is active.
 	Enabled bool
 	// PropName is the bound business-object property name.
+	// When empty it defaults to the same value as Name.
 	PropName string
+	// Tag holds arbitrary runtime metadata (not serialized).
+	// C# ref: FastReport.Data.Column.Tag (internal)
+	Tag any
+	// parent points to the owning DataColumn when this is a nested child.
+	// Used by FullName() to build the dot-separated qualified name.
+	parent *DataColumn
 	// columns holds nested child columns (for hierarchical data).
 	columns *ColumnCollection
 }
 
 // NewDataColumn creates a DataColumn with the given name and enabled=true.
+// PropName is initialised to name (matching C# Column constructor + SetName).
 func NewDataColumn(name string) *DataColumn {
 	return &DataColumn{
-		Name:    name,
-		Alias:   name,
-		Enabled: true,
+		Name:     name,
+		Alias:    name,
+		PropName: name,
+		Enabled:  true,
 	}
 }
 
+// SetName sets the column's Name and, when PropName was previously synced with
+// Name (or empty), keeps PropName in sync. This mirrors C# Column.SetName.
+func (c *DataColumn) SetName(name string) {
+	if c.PropName == "" || c.PropName == c.Name {
+		c.PropName = name
+	}
+	if c.Alias == "" || c.Alias == c.Name {
+		c.Alias = name
+	}
+	c.Name = name
+}
+
+// Parent returns the owning DataColumn for nested columns, or nil for
+// top-level columns.
+func (c *DataColumn) Parent() *DataColumn { return c.parent }
+
+// SetParent sets the owning parent column.
+func (c *DataColumn) SetParent(p *DataColumn) { c.parent = p }
+
+// FullName returns the dot-separated qualified name of this column,
+// walking up through parent columns. For a top-level column this is just
+// the Alias; for nested columns it is "Parent.Child".
+// C# ref: FastReport.Data.Column.FullName
+func (c *DataColumn) FullName() string {
+	if c.parent != nil {
+		return c.parent.FullName() + "." + c.Alias
+	}
+	return c.Alias
+}
+
+// GetExpressions returns the list of expressions used by this column.
+// For calculated columns it returns a single-element slice containing the
+// Expression; for regular columns it returns nil.
+// C# ref: FastReport.Data.Column.GetExpressions()
+func (c *DataColumn) GetExpressions() []string {
+	if c.Calculated && c.Expression != "" {
+		return []string{c.Expression}
+	}
+	return nil
+}
+
+// Serialize writes the column's non-default properties to w.
+// C# ref: FastReport.Data.Column.Serialize(FRWriter)
+func (c *DataColumn) Serialize(w report.Writer) error {
+	// Name is written as an XML attribute by the caller (FRWriter framework);
+	// we write the additional properties.
+	if c.Alias != "" && c.Alias != c.Name {
+		w.WriteStr("Alias", c.Alias)
+	}
+	if !c.Enabled {
+		w.WriteBool("Enabled", false)
+	}
+	if c.DataType != "" {
+		w.WriteStr("DataType", c.DataType)
+	}
+	if c.PropName != "" && c.PropName != c.Name {
+		w.WriteStr("PropName", c.PropName)
+	}
+	if c.Format != ColumnFormatAuto {
+		w.WriteStr("Format", columnFormatNames[c.Format])
+	}
+	if c.Calculated {
+		w.WriteBool("Calculated", true)
+		w.WriteStr("Expression", c.Expression)
+	}
+	return nil
+}
+
+// Deserialize reads the column's properties from r.
+// C# ref: FastReport.Data.Column — properties auto-read by FRReader;
+// Go requires explicit reads.
+func (c *DataColumn) Deserialize(r report.Reader) error {
+	c.Alias = r.ReadStr("Alias", c.Name)
+	c.Enabled = r.ReadBool("Enabled", true)
+	c.DataType = r.ReadStr("DataType", c.DataType)
+	propName := r.ReadStr("PropName", "")
+	if propName != "" {
+		c.PropName = propName
+	}
+	fmtStr := r.ReadStr("Format", "")
+	if fmtStr != "" {
+		c.Format = parseColumnFormat(fmtStr)
+	}
+	c.Calculated = r.ReadBool("Calculated", false)
+	if c.Calculated {
+		c.Expression = r.ReadStr("Expression", "")
+	} else {
+		// Expression can exist even when Calculated is false (e.g. saved but
+		// toggled off); read it to avoid losing data on round-trip.
+		c.Expression = r.ReadStr("Expression", c.Expression)
+	}
+	return nil
+}
+
+// ColumnFormatString returns the FRX string representation of a ColumnFormat.
+func ColumnFormatString(f ColumnFormat) string {
+	if int(f) >= 0 && int(f) < len(columnFormatNames) {
+		return columnFormatNames[f]
+	}
+	return strconv.Itoa(int(f))
+}
+
 // Columns returns the nested column collection, creating it on first access.
+// The collection's owner is set to c so that added children get their parent
+// pointer set automatically.
 func (c *DataColumn) Columns() *ColumnCollection {
 	if c.columns == nil {
-		c.columns = NewColumnCollection()
+		c.columns = &ColumnCollection{owner: c}
 	}
 	return c.columns
 }
@@ -72,15 +207,22 @@ func (c *DataColumn) HasColumns() bool {
 // ColumnCollection is an ordered collection of DataColumns.
 type ColumnCollection struct {
 	items []*DataColumn
+	// owner is the DataColumn that owns this collection (for setting parent pointers).
+	// Nil for top-level (free-standing) collections.
+	owner *DataColumn
 }
 
-// NewColumnCollection creates an empty ColumnCollection.
+// NewColumnCollection creates an empty ColumnCollection with no owner.
 func NewColumnCollection() *ColumnCollection {
 	return &ColumnCollection{}
 }
 
-// Add appends col to the collection.
+// Add appends col to the collection. If the collection has an owner (i.e. it
+// belongs to a DataColumn's Columns()), the child's parent pointer is set.
 func (cc *ColumnCollection) Add(col *DataColumn) {
+	if cc.owner != nil {
+		col.parent = cc.owner
+	}
 	cc.items = append(cc.items, col)
 }
 
@@ -133,6 +275,17 @@ func (cc *ColumnCollection) FindByAlias(alias string) *DataColumn {
 			if found := col.Columns().FindByAlias(alias); found != nil {
 				return found
 			}
+		}
+	}
+	return nil
+}
+
+// FindByPropName returns the first column whose PropName matches, or nil.
+// C# ref: FastReport.Data.Column.FindByPropName(string)
+func (cc *ColumnCollection) FindByPropName(propName string) *DataColumn {
+	for _, col := range cc.items {
+		if col.PropName == propName {
+			return col
 		}
 	}
 	return nil

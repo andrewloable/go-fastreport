@@ -87,9 +87,18 @@ func (b *Code2of5Barcode) GetPattern() (string, error) {
 	if text == "" {
 		return "", fmt.Errorf("code2of5: empty input")
 	}
-	// Pad to even length
-	if len(text)%2 != 0 {
-		text = "0" + text
+	// C# Barcode2of5Interleaved.GetPattern (Barcode2of5.cs:39-49):
+	// CalcCheckSum=true: strip first digit if even-length, then append mod-10 checksum.
+	// CalcCheckSum=false: pad to even length with leading zero.
+	if b.CalcChecksum {
+		if len(text)%2 == 0 {
+			text = text[1:] // strip first digit to make odd
+		}
+		text = CheckSumModulo10(text) // appends check digit → even length
+	} else {
+		if len(text)%2 != 0 {
+			text = "0" + text
+		}
 	}
 	return interleavedEncode(text), nil
 }
@@ -102,6 +111,11 @@ func (b *Code2of5IndustrialBarcode) GetPattern() (string, error) {
 	text := strings.TrimSpace(b.encodedText)
 	if text == "" {
 		return "", fmt.Errorf("code2of5industrial: empty input")
+	}
+	// C# Barcode2of5Industrial.GetPattern (Barcode2of5.cs:501-504):
+	// appends Modulo-10 checksum only when CalcCheckSum is true.
+	if b.CalcChecksum {
+		text = CheckSumModulo10(text)
 	}
 	var sb strings.Builder
 	sb.WriteString("606050") // start
@@ -127,6 +141,11 @@ func (b *Code2of5MatrixBarcode) GetPattern() (string, error) {
 	text := strings.TrimSpace(b.encodedText)
 	if text == "" {
 		return "", fmt.Errorf("code2of5matrix: empty input")
+	}
+	// C# Barcode2of5Matrix.GetPattern (Barcode2of5.cs:533-536):
+	// appends Modulo-10 checksum only when CalcCheckSum is true.
+	if b.CalcChecksum {
+		text = CheckSumModulo10(text)
 	}
 	var sb strings.Builder
 	sb.WriteString("705050") // start
@@ -156,8 +175,15 @@ func (b *Code2of5MatrixBarcode) GetWideBarRatio() float32 { return 2.25 }
 // ── ITF-14 ───────────────────────────────────────────────────────────────────
 
 func (b *ITF14Barcode) GetPattern() (string, error) {
-	// Pad to 13, append checksum → 14 digits
-	text := CheckSumModulo10(code2of5setLen(strings.TrimSpace(b.encodedText), 13))
+	// C# BarcodeITF14.GetPattern (Barcode2of5.cs:367-371):
+	// when CalcCheckSum=true: DoCheckSumming(text, 14) (pad to 13 + checksum)
+	// when CalcCheckSum=false: SetLen(14) (pad/truncate to 14, no checksum)
+	var text string
+	if b.CalcChecksum {
+		text = CheckSumModulo10(code2of5setLen(strings.TrimSpace(b.encodedText), 13))
+	} else {
+		text = code2of5setLen(strings.TrimSpace(b.encodedText), 14)
+	}
 
 	var sb strings.Builder
 	// 14 leading quiet zone / bearer bar markers
@@ -196,13 +222,22 @@ func (b *ITF14Barcode) GetWideBarRatio() float32 { return 2.25 }
 
 func (b *DeutscheIdentcodeBarcode) GetPattern() (string, error) {
 	text := strings.ReplaceAll(strings.ReplaceAll(b.encodedText, ".", ""), " ", "")
-	switch len(text) {
-	case 11:
-		text = deutscheChecksum(text)
-	case 12:
-		// already includes check digit
-	default:
-		return "", fmt.Errorf("deutsche identcode: expected 11 or 12 digits, got %d", len(text))
+	// C# BarcodeDeutscheIdentcode.GetPattern (Barcode2of5.cs:122-134):
+	// CalcCheckSum=true + 11 digits → compute checksum → 12 digits
+	// CalcCheckSum=false → require exactly 12 digits (with pre-computed check digit)
+	if b.CalcChecksum {
+		switch len(text) {
+		case 11:
+			text = deutscheChecksum(text)
+		case 12:
+			// already includes check digit
+		default:
+			return "", fmt.Errorf("deutsche identcode: expected 11 or 12 digits, got %d", len(text))
+		}
+	} else {
+		if len(text) != 12 {
+			return "", fmt.Errorf("deutsche identcode: expected 12 digits (CalcCheckSum=false), got %d", len(text))
+		}
 	}
 	return interleavedEncode(text), nil
 }
@@ -213,13 +248,22 @@ func (b *DeutscheIdentcodeBarcode) GetWideBarRatio() float32 { return 3 }
 
 func (b *DeutscheLeitcodeBarcode) GetPattern() (string, error) {
 	text := strings.ReplaceAll(strings.ReplaceAll(b.encodedText, ".", ""), " ", "")
-	switch len(text) {
-	case 13:
-		text = deutscheChecksum(text)
-	case 14:
-		// already includes check digit
-	default:
-		return "", fmt.Errorf("deutsche leitcode: expected 13 or 14 digits, got %d", len(text))
+	// C# BarcodeDeutscheLeitcode.GetPattern (Barcode2of5.cs:267-279):
+	// CalcCheckSum=true + 13 digits → compute checksum → 14 digits
+	// CalcCheckSum=false → require exactly 14 digits
+	if b.CalcChecksum {
+		switch len(text) {
+		case 13:
+			text = deutscheChecksum(text)
+		case 14:
+			// already includes check digit
+		default:
+			return "", fmt.Errorf("deutsche leitcode: expected 13 or 14 digits, got %d", len(text))
+		}
+	} else {
+		if len(text) != 14 {
+			return "", fmt.Errorf("deutsche leitcode: expected 14 digits (CalcCheckSum=false), got %d", len(text))
+		}
 	}
 	return interleavedEncode(text), nil
 }

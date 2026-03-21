@@ -424,7 +424,13 @@ func code128GetPattern(msg string) (string, error) {
 // ── Code128Barcode (Auto) ────────────────────────────────────────────────────
 
 func (b *Code128Barcode) GetPattern() (string, error) {
-	msg := c128AutoEncode(b.encodedText)
+	var msg string
+	if b.AutoEncode {
+		msg = c128AutoEncode(b.encodedText)
+	} else {
+		// Manual mode: use text as-is (caller must embed &A;/&B;/&C; codes).
+		msg = b.encodedText
+	}
 	return code128GetPattern(msg)
 }
 

@@ -103,8 +103,8 @@ func NewIntelligentMailBarcode() *IntelligentMailBarcode {
 	return &IntelligentMailBarcode{BaseBarcodeImpl: newBaseBarcodeImpl(BarcodeTypeIntelligentMail)}
 }
 
-// DefaultValue returns a sample 31-digit IMb value.
-func (b *IntelligentMailBarcode) DefaultValue() string { return "01234567094987654321012345678" }
+// DefaultValue returns "12345678901234567890" matching C# BarcodeIntelligentMail.GetDefaultValue().
+func (b *IntelligentMailBarcode) DefaultValue() string { return "12345678901234567890" }
 
 // Encode validates the IMb digit string (must be 20, 25, 29, or 31 digits).
 func (b *IntelligentMailBarcode) Encode(text string) error {
@@ -140,7 +140,8 @@ const (
 // MSIBarcode implements the MSI Modified Plessey barcode.
 type MSIBarcode struct {
 	BaseBarcodeImpl
-	CheckDigit MSICheckDigit
+	CheckDigit   MSICheckDigit
+	CalcChecksum bool // C# LinearBarcodeBase.CalcCheckSum default true
 }
 
 // NewMSIBarcode creates an MSIBarcode.
@@ -148,11 +149,15 @@ func NewMSIBarcode() *MSIBarcode {
 	return &MSIBarcode{
 		BaseBarcodeImpl: newBaseBarcodeImpl(BarcodeTypeMSI),
 		CheckDigit:      MSICheckDigitMod10,
+		CalcChecksum:    true,
 	}
 }
 
-// DefaultValue returns a sample MSI value.
-func (b *MSIBarcode) DefaultValue() string { return "12345" }
+// SetCalcCheckSum implements calcCheckSumSetter for FRX deserialization.
+func (b *MSIBarcode) SetCalcCheckSum(v bool) { b.CalcChecksum = v }
+
+// DefaultValue returns the C# BarcodeBase.GetDefaultValue() default: "12345678".
+func (b *MSIBarcode) DefaultValue() string { return "12345678" }
 
 // Encode validates and stores the MSI value (digits only).
 func (b *MSIBarcode) Encode(text string) error {
@@ -255,8 +260,8 @@ func NewPharmacodeBarcode() *PharmacodeBarcode {
 	return &PharmacodeBarcode{BaseBarcodeImpl: newBaseBarcodeImpl(BarcodeTypePharmacode)}
 }
 
-// DefaultValue returns a sample Pharmacode value.
-func (b *PharmacodeBarcode) DefaultValue() string { return "1234" }
+// DefaultValue returns the C# BarcodeBase.GetDefaultValue() default: "12345678".
+func (b *PharmacodeBarcode) DefaultValue() string { return "12345678" }
 
 // Encode validates and stores the Pharmacode value (integer 3–131070).
 func (b *PharmacodeBarcode) Encode(text string) error {
@@ -312,8 +317,8 @@ func NewPlesseyBarcode() *PlesseyBarcode {
 	return &PlesseyBarcode{BaseBarcodeImpl: newBaseBarcodeImpl(BarcodeTypePlessey)}
 }
 
-// DefaultValue returns a sample Plessey value.
-func (b *PlesseyBarcode) DefaultValue() string { return "1234" }
+// DefaultValue returns the C# BarcodeBase.GetDefaultValue() default: "12345678".
+func (b *PlesseyBarcode) DefaultValue() string { return "12345678" }
 
 // Encode validates that text contains only hex digits (0-9, A-F).
 func (b *PlesseyBarcode) Encode(text string) error {
@@ -470,10 +475,14 @@ func NewPostNetBarcode() *PostNetBarcode {
 	return &PostNetBarcode{BaseBarcodeImpl: newBaseBarcodeImpl(BarcodeTypePostNet)}
 }
 
-// DefaultValue returns a sample 5-digit ZIP code.
-func (b *PostNetBarcode) DefaultValue() string { return "90210" }
+// DefaultValue returns "12345678" matching C# BarcodeBase.GetDefaultValue().
+// C# BarcodePostNet does not override GetDefaultValue(), so the base class default
+// "12345678" is used. C# PostNet accepts any number of digits without length validation.
+func (b *PostNetBarcode) DefaultValue() string { return "12345678" }
 
-// Encode validates POSTNET input (5, 9, or 11 digits).
+// Encode validates POSTNET input (digits only, any count).
+// C# BarcodePostNet.GetPattern() iterates text chars without length checks,
+// so we accept any positive number of digits to match.
 func (b *PostNetBarcode) Encode(text string) error {
 	digits := strings.ReplaceAll(text, "-", "")
 	for _, ch := range digits {
@@ -481,13 +490,11 @@ func (b *PostNetBarcode) Encode(text string) error {
 			return fmt.Errorf("postnet: only digits allowed, found %q", ch)
 		}
 	}
-	switch len(digits) {
-	case 5, 9, 11:
-		b.encodedText = digits
-		return nil
-	default:
-		return fmt.Errorf("postnet: expected 5, 9, or 11 digits, got %d", len(digits))
+	if len(digits) == 0 {
+		return fmt.Errorf("postnet: at least one digit required")
 	}
+	b.encodedText = digits
+	return nil
 }
 
 // Render draws the POSTNET tall/short bar pattern.
@@ -681,7 +688,7 @@ func (b *SwissQRBarcode) GetMatrix() ([][]bool, int, int) {
 	if text == "" {
 		text = b.FormatPayload()
 	}
-	matrix, err := encodeQR(text, qrECM)
+	matrix, err := encodeQR(text, qrECM, "")
 	if err != nil || len(matrix) == 0 {
 		return [][]bool{{true}}, 1, 1
 	}

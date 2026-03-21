@@ -41,24 +41,41 @@ func codabarFindItem(c string) int {
 	return -1
 }
 
+// isCodabarStartStop reports whether ch is a valid Codabar start/stop character (A-D).
+func isCodabarStartStop(ch byte) bool {
+	return ch == 'A' || ch == 'B' || ch == 'C' || ch == 'D'
+}
+
 func (b *CodabarBarcode) GetPattern() (string, error) {
 	text := strings.ToUpper(b.encodedText)
-	if len(text) < 2 {
-		// Ensure at least start and stop chars
-		text = "A" + text + "B"
+
+	// C# BarcodeCodabar.GetPattern() always prepends StartChar and appends
+	// StopChar around the data text (BarcodeCodabar.cs:89-113).
+	// Use the struct's StartChar/StopChar properties.
+	startCh := b.StartChar
+	if !isCodabarStartStop(startCh) {
+		startCh = 'A'
+	}
+	stopCh := b.StopChar
+	if !isCodabarStartStop(stopCh) {
+		stopCh = 'B'
+	}
+
+	// Strip any existing start/stop characters from the data text.
+	if len(text) >= 2 && isCodabarStartStop(text[0]) && isCodabarStartStop(text[len(text)-1]) {
+		text = text[1 : len(text)-1]
 	}
 
 	var sb strings.Builder
 
-	// Start char (first char of encoded text, must be A/B/C/D)
-	startChar := string(text[0])
-	if idx := codabarFindItem(startChar); idx >= 0 {
+	// Start character
+	if idx := codabarFindItem(string(startCh)); idx >= 0 {
 		sb.WriteString(tabelleCB[idx].data)
 		sb.WriteByte('0')
 	}
 
-	// Data chars (everything between start and stop)
-	for i := 1; i < len(text)-1; i++ {
+	// Data characters
+	for i := 0; i < len(text); i++ {
 		idx := codabarFindItem(string(text[i]))
 		if idx < 0 {
 			continue
@@ -67,9 +84,8 @@ func (b *CodabarBarcode) GetPattern() (string, error) {
 		sb.WriteByte('0')
 	}
 
-	// Stop char (last char of encoded text, must be A/B/C/D)
-	stopChar := string(text[len(text)-1])
-	if idx := codabarFindItem(stopChar); idx >= 0 {
+	// Stop character
+	if idx := codabarFindItem(string(stopCh)); idx >= 0 {
 		sb.WriteString(tabelleCB[idx].data)
 	}
 

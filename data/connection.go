@@ -181,6 +181,13 @@ type TableDataSource struct {
 	storeData bool
 	// connection is the owning DataConnectionBase.
 	connection *DataConnectionBase
+	// ignoreConnection, when true, causes the data source to use externally-provided
+	// data instead of querying the database through the connection.
+	// C# ref: FastReport.Data.TableDataSource.ignoreConnection
+	ignoreConnection bool
+	// forceLoadData forces data reload even if already cached.
+	// C# ref: FastReport.Data.DataSourceBase.ForceLoadData
+	forceLoadData bool
 }
 
 // NewTableDataSource creates a TableDataSource with the given name.
@@ -216,11 +223,91 @@ func (t *TableDataSource) StoreData() bool { return t.storeData }
 // SetStoreData sets the store-data flag.
 func (t *TableDataSource) SetStoreData(v bool) { t.storeData = v }
 
+// IgnoreConnection returns whether the data source ignores its connection and
+// uses externally-provided data instead of querying the database.
+// C# ref: FastReport.Data.TableDataSource.IgnoreConnection
+func (t *TableDataSource) IgnoreConnection() bool { return t.ignoreConnection }
+
+// SetIgnoreConnection sets the ignore-connection flag.
+func (t *TableDataSource) SetIgnoreConnection(v bool) { t.ignoreConnection = v }
+
+// ForceLoadData returns whether data is force-reloaded even if already cached.
+// C# ref: FastReport.Data.DataSourceBase.ForceLoadData
+func (t *TableDataSource) ForceLoadData() bool { return t.forceLoadData }
+
+// SetForceLoadData sets the force-load-data flag.
+func (t *TableDataSource) SetForceLoadData(v bool) { t.forceLoadData = v }
+
 // Connection returns the owning DataConnectionBase.
-func (t *TableDataSource) Connection() *DataConnectionBase { return t.connection }
+// When IgnoreConnection is true, Connection returns nil (matching C# behaviour).
+func (t *TableDataSource) Connection() *DataConnectionBase {
+	if t.ignoreConnection {
+		return nil
+	}
+	return t.connection
+}
+
+// InitSchema discovers the table schema without loading data.
+// It executes the select command (or a SELECT * FROM tableName) wrapped in a
+// LIMIT 0 subquery to obtain column metadata, and populates t.columns.
+// C# ref: FastReport.Data.TableDataSource.InitSchema()
+func (t *TableDataSource) InitSchema() error {
+	if t.connection == nil || t.connection.DB() == nil {
+		return nil // no connection, skip schema discovery
+	}
+	query := t.selectCommand
+	if query == "" {
+		if t.tableName == "" {
+			return nil
+		}
+		query = "SELECT * FROM " + t.tableName
+	}
+	// Use LIMIT 0 to get column metadata without loading data.
+	schemaQuery := "SELECT * FROM (" + query + ") AS _schema LIMIT 0"
+	rows, err := t.connection.DB().Query(schemaQuery)
+	if err != nil {
+		// Fallback: try the original query.
+		rows, err = t.connection.DB().Query(query)
+		if err != nil {
+			return nil // silently skip on error
+		}
+	}
+	defer rows.Close()
+	colNames, err := rows.Columns()
+	if err != nil {
+		return nil
+	}
+	t.columns = make([]Column, len(colNames))
+	for i, c := range colNames {
+		t.columns[i] = Column{Name: c, Alias: c}
+	}
+	return nil
+}
+
+// LoadData loads data into the data source. It delegates to Init().
+// C# ref: FastReport.Data.TableDataSource.LoadData()
+func (t *TableDataSource) LoadData() error {
+	return t.Init()
+}
 
 // Init executes the SELECT command and loads results into the in-memory row store.
+// When ignoreConnection is true, Init returns nil immediately (data was provided
+// externally). When storeData is true and data is already loaded (initialized is
+// true and forceLoadData is false), Init skips re-querying.
 func (t *TableDataSource) Init() error {
+	// If ignoreConnection is set, data is provided externally — skip query.
+	if t.ignoreConnection {
+		t.initialized = true
+		return nil
+	}
+
+	// If storeData is true and we already loaded data, skip re-query unless
+	// forceLoadData is set.
+	if t.storeData && t.initialized && !t.forceLoadData {
+		t.currentRow = 0
+		return nil
+	}
+
 	if t.connection == nil {
 		return fmt.Errorf("TableDataSource %q: no connection set", t.name)
 	}

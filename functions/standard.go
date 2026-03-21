@@ -45,6 +45,24 @@ func MinFloat(a, b float64) float64 {
 	return b
 }
 
+// Maximum returns the larger of two float64 values.
+// C# Math.Max overloads — registered as "Maximum" in StdFunctions.cs.
+func Maximum(a, b float64) float64 {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+// Minimum returns the smaller of two float64 values.
+// C# Math.Min overloads — registered as "Minimum" in StdFunctions.cs.
+func Minimum(a, b float64) float64 {
+	if a < b {
+		return a
+	}
+	return b
+}
+
 // Abs returns the absolute value of v.
 func Abs(v float64) float64 { return math.Abs(v) }
 
@@ -76,6 +94,10 @@ func Sign(v float64) float64 {
 	}
 	return 0
 }
+
+// Log returns the natural (base-e) logarithm of v.
+// C# Math.Log(double) — registered in StdFunctions.cs.
+func Log(v float64) float64 { return math.Log(v) }
 
 // Log10 returns the base-10 logarithm of v.
 func Log10(v float64) float64 { return math.Log10(v) }
@@ -679,6 +701,76 @@ func ToDouble(v any) float64 { return ToFloat(v) }
 // this is equivalent to ToFloat and provided for C# compatibility.
 func ToDecimal(v any) float64 { return ToFloat(v) }
 
+// ToSingle converts a value to float32.
+// C# Convert.ToSingle(object) — registered in StdFunctions.cs.
+func ToSingle(v any) float32 { return float32(ToFloat(v)) }
+
+// ToByte converts a value to uint8.
+// C# Convert.ToByte(object) — registered in StdFunctions.cs.
+func ToByte(v any) uint8 { return uint8(ToInt(v)) }
+
+// ToChar converts a value to a single-character string (rune).
+// C# Convert.ToChar(object) — registered in StdFunctions.cs.
+func ToChar(v any) string {
+	if v == nil {
+		return ""
+	}
+	switch t := v.(type) {
+	case string:
+		if len(t) > 0 {
+			return string([]rune(t)[0])
+		}
+		return ""
+	case int:
+		return string(rune(t))
+	case int32:
+		return string(rune(t))
+	case int64:
+		return string(rune(t))
+	default:
+		return string(rune(ToInt(v)))
+	}
+}
+
+// ToDateTime converts a value to time.Time.
+// C# Convert.ToDateTime(object) — registered in StdFunctions.cs.
+func ToDateTime(v any) time.Time {
+	if v == nil {
+		return time.Time{}
+	}
+	switch t := v.(type) {
+	case time.Time:
+		return t
+	case string:
+		// Try common formats.
+		for _, layout := range []string{
+			time.RFC3339,
+			"2006-01-02T15:04:05",
+			"2006-01-02 15:04:05",
+			"2006-01-02",
+			"01/02/2006",
+			"01/02/2006 15:04:05",
+			"1/2/2006",
+			"1/2/2006 3:04:05 PM",
+		} {
+			if parsed, err := time.Parse(layout, t); err == nil {
+				return parsed
+			}
+		}
+		return time.Time{}
+	}
+	return time.Time{}
+}
+
+// IfNull returns value if it is non-nil, otherwise returns defaultVal.
+// C# StdFunctions.cs — IfNull(object, object).
+func IfNull(value, defaultVal any) any {
+	if value == nil {
+		return defaultVal
+	}
+	return value
+}
+
 // ── Control flow ──────────────────────────────────────────────────────────────
 
 // IIF returns trueVal when condition is true, falseVal otherwise.
@@ -721,6 +813,8 @@ func All() map[string]any {
 		"MinInt":    MinInt,
 		"MaxFloat":  MaxFloat,
 		"MinFloat":  MinFloat,
+		"Maximum":   Maximum,
+		"Minimum":   Minimum,
 		"Abs":       Abs,
 		"Round":     Round,
 		"RoundTo":   RoundTo,
@@ -728,6 +822,7 @@ func All() map[string]any {
 		"Floor":     Floor,
 		"Truncate":  Truncate,
 		"Sign":      Sign,
+		"Log":       Log,
 		"Log10":     Log10,
 		"Exp":       Exp,
 		"Pow":       Pow,
@@ -798,20 +893,39 @@ func All() map[string]any {
 		"FormatDateTime": FormatDateTime,
 		"Format":         Format,
 		// Type conversion
-		"ToBoolean": ToBoolean,
-		"ToInt":     ToInt,
-		"ToInt32":   ToInt32,
-		"ToInt64":   ToInt64,
-		"ToFloat":   ToFloat,
-		"ToDouble":  ToDouble,
-		"ToDecimal": ToDecimal,
-		"ToString":  ToString,
+		"ToBoolean":  ToBoolean,
+		"ToInt":      ToInt,
+		"ToInt32":    ToInt32,
+		"ToInt64":    ToInt64,
+		"ToFloat":    ToFloat,
+		"ToDouble":   ToDouble,
+		"ToDecimal":  ToDecimal,
+		"ToSingle":   ToSingle,
+		"ToByte":     ToByte,
+		"ToChar":     ToChar,
+		"ToDateTime": ToDateTime,
+		"ToString":   ToString,
 		// Control flow
 		"IIF":    IIF,
+		"IfNull": IfNull,
 		"Choose": Choose,
 		"Switch": Switch,
-		// Barcode / special
-		"NumToWords": NumToWords,
-		"Roman":      ToRoman,
+		// Number-to-words (English + locale variants)
+		"NumToWords":     NumToWords,
+		"ToWords":        NumToWords,
+		"ToWordsDe":      NumToWordsDe,
+		"ToWordsEnGb":    NumToWordsEnGb,
+		"ToWordsEs":      NumToWordsEs,
+		"ToWordsFr":      NumToWordsFr,
+		"ToWordsIn":      NumToWordsIn,
+		"ToWordsNl":      NumToWordsNl,
+		"ToWordsPersian": NumToWordsFa,
+		"ToWordsPl":      NumToWordsPl,
+		"ToWordsRu":      NumToWordsRu,
+		"ToWordsSp":      NumToWordsSp,
+		"ToWordsUkr":     NumToWordsUk,
+		// Letters / Roman
+		"ToLetters": NumToLetters,
+		"Roman":     ToRoman,
 	}
 }

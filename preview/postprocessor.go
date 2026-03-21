@@ -8,7 +8,8 @@ import (
 
 // Postprocessor scans all PreparedPages after the engine run completes and
 // performs deferred replacements:
-//   - [TotalPages] / [PageCount] → actual page count string
+//   - [TotalPages] / [PageCount] / [TOTALPAGES#] → actual page count string
+//   - [Page] / [PAGE#] → current page number string
 //   - Text duplicates (Clear/Hide/Merge) per-object-name grouping
 //
 // This is the Go equivalent of FastReport.Preview.PreparedPagePostprocessor.
@@ -42,6 +43,8 @@ func (p *Postprocessor) Process() {
 				t = strings.ReplaceAll(t, "[TotalPages]", totalStr)
 				t = strings.ReplaceAll(t, "[PageCount]", totalStr)
 				t = strings.ReplaceAll(t, "[Page]", pageStr)
+				t = strings.ReplaceAll(t, "[PAGE#]", pageStr)
+				t = strings.ReplaceAll(t, "[TOTALPAGES#]", totalStr)
 				obj.Text = t
 			}
 		}

@@ -124,9 +124,9 @@ func TestBarcodeObject_Deserialize_QRErrorCorrection_EmptyEC(t *testing.T) {
 	if !ok {
 		t.Fatalf("Barcode type = %T, want *QRBarcode", b.Barcode)
 	}
-	// Default ErrorCorrection "M" should be preserved.
-	if qr.ErrorCorrection != "M" {
-		t.Errorf("ErrorCorrection = %q, want M (default)", qr.ErrorCorrection)
+	// Default ErrorCorrection "L" should be preserved (C# BarcodeQR.cs:143).
+	if qr.ErrorCorrection != "L" {
+		t.Errorf("ErrorCorrection = %q, want L (default)", qr.ErrorCorrection)
 	}
 }
 

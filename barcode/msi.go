@@ -53,7 +53,11 @@ func (b *MSIBarcode) GetPattern() (string, error) {
 	if checksum > 0 {
 		checksum = 10 - checksum
 	}
-	sb.WriteString(tabelleMSI[checksum])
+
+	// C# BarcodeMSI.cs:60 — only append checksum when CalcCheckSum is true.
+	if b.CalcChecksum {
+		sb.WriteString(tabelleMSI[checksum])
+	}
 
 	sb.WriteString("515") // stop
 	return sb.String(), nil

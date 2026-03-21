@@ -9,6 +9,19 @@ type patternGetter interface {
 	GetWideBarRatio() float32
 }
 
+// ── 2D barcode textAdd ──────────────────────────────────────────────────────
+// C# Barcode2DBase.CalcBounds() adds FontHeight to height when showText is true.
+// FontHeight for the default Arial 8pt: Font.Height * ScreenDpiFX * 18/13 = 18.
+const defaultFontHeight2D float32 = 18
+
+// textAdd2D returns the height to add for show-text on 2D barcodes.
+func textAdd2D(showText bool) float32 {
+	if showText {
+		return defaultFontHeight2D
+	}
+	return 0
+}
+
 // ── Linear barcode CalcBounds ────────────────────────────────────────────────
 // C# LinearBarcodeBase.CalcBounds() (LinearBarcodeBase.cs:424-466):
 //
@@ -341,7 +354,7 @@ func (q *QRBarcode) CalcBounds() (float32, float32) {
 	}
 	_, rows, cols := q.GetMatrix()
 	const pixelSize = 4
-	return float32(cols) * pixelSize, float32(rows) * pixelSize
+	return float32(cols) * pixelSize, float32(rows)*pixelSize + textAdd2D(q.showText)
 }
 
 // ── DataMatrixBarcode — CalcBounds ───────────────────────────────────────────
@@ -355,7 +368,7 @@ func (d *DataMatrixBarcode) CalcBounds() (float32, float32) {
 	}
 	_, rows, cols := d.GetMatrix()
 	const pixelSize = 3
-	return float32(cols) * pixelSize, float32(rows) * pixelSize
+	return float32(cols) * pixelSize, float32(rows)*pixelSize + textAdd2D(d.showText)
 }
 
 // ── AztecBarcode — CalcBounds ────────────────────────────────────────────────
@@ -369,7 +382,7 @@ func (a *AztecBarcode) CalcBounds() (float32, float32) {
 	}
 	_, rows, cols := a.GetMatrix()
 	const pixelSize = 4
-	return float32(cols) * pixelSize, float32(rows) * pixelSize
+	return float32(cols) * pixelSize, float32(rows)*pixelSize + textAdd2D(a.showText)
 }
 
 // ── PDF417Barcode — CalcBounds ───────────────────────────────────────────────
@@ -377,13 +390,21 @@ func (a *AztecBarcode) CalcBounds() (float32, float32) {
 // Default PixelSize = {1, 2} for PDF417.
 
 // CalcBounds returns the natural (width, height) of the encoded PDF417 symbol.
+// C# BarcodePDF417.cs:1517-1518: bitColumns * PixelSize.Width, codeRows * PixelSize.Height
 func (p *PDF417Barcode) CalcBounds() (float32, float32) {
 	if p.encodedText == "" {
 		return 0, 0
 	}
 	_, rows, cols := p.GetMatrix()
-	const pixelW, pixelH = 1, 2
-	return float32(cols) * pixelW, float32(rows) * pixelH
+	pixelW := p.PixelSizeWidth
+	pixelH := p.PixelSizeHeight
+	if pixelW <= 0 {
+		pixelW = 2
+	}
+	if pixelH <= 0 {
+		pixelH = 8
+	}
+	return float32(cols) * float32(pixelW), float32(rows)*float32(pixelH) + textAdd2D(p.showText)
 }
 
 // ── GS1DatamatrixBarcode — CalcBounds ────────────────────────────────────────
@@ -396,7 +417,7 @@ func (g *GS1DatamatrixBarcode) CalcBounds() (float32, float32) {
 	}
 	_, rows, cols := g.GetMatrix()
 	const pixelSize = 3
-	return float32(cols) * pixelSize, float32(rows) * pixelSize
+	return float32(cols) * pixelSize, float32(rows)*pixelSize + textAdd2D(g.showText)
 }
 
 // ── SwissQRBarcode — CalcBounds ──────────────────────────────────────────────
@@ -409,7 +430,7 @@ func (s *SwissQRBarcode) CalcBounds() (float32, float32) {
 	}
 	_, rows, cols := s.GetMatrix()
 	const pixelSize = 4
-	return float32(cols) * pixelSize, float32(rows) * pixelSize
+	return float32(cols) * pixelSize, float32(rows)*pixelSize + textAdd2D(s.showText)
 }
 
 // ── PharmacodeBarcode — CalcBounds ───────────────────────────────────────────

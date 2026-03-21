@@ -41,6 +41,13 @@ type AggregateTotal struct {
 	IncludeInvisibleRows bool
 	// ResetAfterPrint resets the total after it is printed.
 	ResetAfterPrint bool
+	// ResetOnReprint controls whether the total resets when a band is reprinted
+	// (e.g. RepeatOnEveryPage). C# default is true.
+	ResetOnReprint bool
+	// Evaluator is the name of the DataBand that drives this total.
+	Evaluator string
+	// PrintOn is the name of the band where the total is printed/reset.
+	PrintOn string
 
 	// internal state
 	sum            float64
@@ -49,13 +56,22 @@ type AggregateTotal struct {
 	maxVal         float64
 	distinctValues map[any]struct{}
 	initialized    bool
+
+	// keep-together snapshot fields (used by StartKeep/EndKeep)
+	keepSum         float64
+	keepCount       int
+	keepMinVal      float64
+	keepMaxVal      float64
+	keepInitialized bool
 }
 
-// NewAggregateTotal creates an AggregateTotal with defaults (TotalTypeSum).
+// NewAggregateTotal creates an AggregateTotal with defaults (TotalTypeSum,
+// ResetOnReprint=true matching C# default).
 func NewAggregateTotal(name string) *AggregateTotal {
 	return &AggregateTotal{
 		Name:           name,
 		TotalType:      TotalTypeSum,
+		ResetOnReprint: true,
 		distinctValues: make(map[any]struct{}),
 	}
 }
@@ -126,6 +142,44 @@ func (t *AggregateTotal) Value() any {
 		return len(t.distinctValues)
 	default:
 		return nil
+	}
+}
+
+// StartKeep snapshots the current accumulator state into internal keep* fields.
+// This is used by the engine's keep-together logic so the total can be rolled
+// back if the kept block needs to move to a new page.
+func (t *AggregateTotal) StartKeep() {
+	t.keepSum = t.sum
+	t.keepCount = t.count
+	t.keepMinVal = t.minVal
+	t.keepMaxVal = t.maxVal
+	t.keepInitialized = t.initialized
+}
+
+// EndKeep restores the accumulator state from the snapshot taken by StartKeep.
+func (t *AggregateTotal) EndKeep() {
+	t.sum = t.keepSum
+	t.count = t.keepCount
+	t.minVal = t.keepMinVal
+	t.maxVal = t.keepMaxVal
+	t.initialized = t.keepInitialized
+}
+
+// Clone creates a copy of the AggregateTotal with the same configuration
+// but fresh (zero) accumulator state. The keep-together snapshot fields are
+// also reset.
+func (t *AggregateTotal) Clone() *AggregateTotal {
+	return &AggregateTotal{
+		Name:                 t.Name,
+		TotalType:            t.TotalType,
+		Expression:           t.Expression,
+		EvaluateCondition:    t.EvaluateCondition,
+		IncludeInvisibleRows: t.IncludeInvisibleRows,
+		ResetAfterPrint:      t.ResetAfterPrint,
+		ResetOnReprint:       t.ResetOnReprint,
+		Evaluator:            t.Evaluator,
+		PrintOn:              t.PrintOn,
+		distinctValues:       make(map[any]struct{}),
 	}
 }
 

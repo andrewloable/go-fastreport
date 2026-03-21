@@ -52,7 +52,8 @@ func (e *EAN8Barcode) Encode(text string) error {
 	return nil
 }
 
-// Render renders the EAN-8 barcode using the native pattern-based renderer.
+// Render renders the EAN-8 barcode using the native pattern-based renderer
+// with custom text positioning that splits digits into two groups of 4.
 func (e *EAN8Barcode) Render(width, height int) (image.Image, error) {
 	if e.encodedText == "" {
 		return nil, fmt.Errorf("ean8: Encode must be called before Render")
@@ -61,7 +62,7 @@ func (e *EAN8Barcode) Render(width, height int) (image.Image, error) {
 	if err != nil {
 		return nil, err
 	}
-	return DrawLinearBarcode(pattern, e.encodedText, width, height, true, e.GetWideBarRatio()), nil
+	return DrawLinearBarcodeCustomText(pattern, e.encodedText, width, height, true, e.GetWideBarRatio(), EAN8DrawText(pattern)), nil
 }
 
 // ── UPCABarcode ───────────────────────────────────────────────────────────────
@@ -92,7 +93,9 @@ func (u *UPCABarcode) Encode(text string) error {
 	return nil
 }
 
-// Render renders the UPC-A barcode using the native pattern-based renderer.
+// Render renders the UPC-A barcode with custom text positioning.
+// Ported from C# BarcodeUPC_A.DrawText — first digit outside left guard,
+// two 5-digit groups under bars, check digit outside right guard.
 func (u *UPCABarcode) Render(width, height int) (image.Image, error) {
 	if u.encodedText == "" {
 		return nil, fmt.Errorf("upca: Encode must be called before Render")
@@ -101,7 +104,7 @@ func (u *UPCABarcode) Render(width, height int) (image.Image, error) {
 	if err != nil {
 		return nil, err
 	}
-	return DrawLinearBarcode(pattern, u.encodedText, width, height, true, u.GetWideBarRatio()), nil
+	return DrawLinearBarcodeCustomText(pattern, u.encodedText, width, height, true, u.GetWideBarRatio(), UPCADrawText(pattern)), nil
 }
 
 // ── UPCEBarcode ───────────────────────────────────────────────────────────────
@@ -143,7 +146,9 @@ func (u *UPCEBarcode) GetPattern() (string, error) {
 // GetWideBarRatio returns the wide bar ratio for UPC-E.
 func (u *UPCEBarcode) GetWideBarRatio() float32 { return 2 }
 
-// Render renders the UPC-E barcode using the native pattern-based renderer.
+// Render renders the UPC-E barcode with custom text positioning.
+// UPC-E uses the same DrawText as UPC-E0: "0" outside left guard,
+// 6 data digits under bars, check digit outside right guard.
 func (u *UPCEBarcode) Render(width, height int) (image.Image, error) {
 	if u.encodedText == "" {
 		return nil, fmt.Errorf("upce: Encode must be called before Render")
@@ -152,7 +157,7 @@ func (u *UPCEBarcode) Render(width, height int) (image.Image, error) {
 	if err != nil {
 		return nil, err
 	}
-	return DrawLinearBarcode(pattern, u.encodedText, width, height, true, u.GetWideBarRatio()), nil
+	return DrawLinearBarcodeCustomText(pattern, u.encodedText, width, height, true, u.GetWideBarRatio(), UPCE0DrawText(pattern)), nil
 }
 
 // ── Code93ExtendedBarcode ─────────────────────────────────────────────────────
@@ -169,8 +174,8 @@ func NewCode93ExtendedBarcode() *Code93ExtendedBarcode {
 	}
 }
 
-// DefaultValue returns a sample Code 93 Extended value.
-func (c *Code93ExtendedBarcode) DefaultValue() string { return "CODE93" }
+// DefaultValue returns the C# BarcodeBase.GetDefaultValue() default: "12345678".
+func (c *Code93ExtendedBarcode) DefaultValue() string { return "12345678" }
 
 // Encode stores the text for Code 93 Extended rendering.
 func (c *Code93ExtendedBarcode) Encode(text string) error {
@@ -296,15 +301,22 @@ func (c *Code128CBarcode) Render(width, height int) (image.Image, error) {
 // Code2of5IndustrialBarcode implements Standard (Industrial) 2-of-5 symbology.
 type Code2of5IndustrialBarcode struct {
 	BaseBarcodeImpl
+	CalcChecksum bool // C# LinearBarcodeBase.CalcCheckSum default true
 }
 
 // NewCode2of5IndustrialBarcode creates a Code2of5IndustrialBarcode.
 func NewCode2of5IndustrialBarcode() *Code2of5IndustrialBarcode {
-	return &Code2of5IndustrialBarcode{BaseBarcodeImpl: newBaseBarcodeImpl(BarcodeTypeCode2of5Industrial)}
+	return &Code2of5IndustrialBarcode{
+		BaseBarcodeImpl: newBaseBarcodeImpl(BarcodeTypeCode2of5Industrial),
+		CalcChecksum:    true,
+	}
 }
 
-// DefaultValue returns a sample Standard 2-of-5 value.
-func (c *Code2of5IndustrialBarcode) DefaultValue() string { return "123456" }
+// SetCalcCheckSum implements calcCheckSumSetter for FRX deserialization.
+func (c *Code2of5IndustrialBarcode) SetCalcCheckSum(v bool) { c.CalcChecksum = v }
+
+// DefaultValue returns the C# BarcodeBase.GetDefaultValue() default: "12345678".
+func (c *Code2of5IndustrialBarcode) DefaultValue() string { return "12345678" }
 
 // Encode stores text for Standard (non-interleaved) 2-of-5 rendering.
 func (c *Code2of5IndustrialBarcode) Encode(text string) error {
@@ -331,15 +343,22 @@ func (c *Code2of5IndustrialBarcode) Render(width, height int) (image.Image, erro
 // Standard and Interleaved 2-of-5.
 type Code2of5MatrixBarcode struct {
 	BaseBarcodeImpl
+	CalcChecksum bool // C# LinearBarcodeBase.CalcCheckSum default true
 }
 
 // NewCode2of5MatrixBarcode creates a Code2of5MatrixBarcode.
 func NewCode2of5MatrixBarcode() *Code2of5MatrixBarcode {
-	return &Code2of5MatrixBarcode{BaseBarcodeImpl: newBaseBarcodeImpl(BarcodeTypeCode2of5Matrix)}
+	return &Code2of5MatrixBarcode{
+		BaseBarcodeImpl: newBaseBarcodeImpl(BarcodeTypeCode2of5Matrix),
+		CalcChecksum:    true,
+	}
 }
 
-// DefaultValue returns a sample Matrix 2-of-5 value.
-func (c *Code2of5MatrixBarcode) DefaultValue() string { return "123456" }
+// SetCalcCheckSum implements calcCheckSumSetter for FRX deserialization.
+func (c *Code2of5MatrixBarcode) SetCalcCheckSum(v bool) { c.CalcChecksum = v }
+
+// DefaultValue returns the C# BarcodeBase.GetDefaultValue() default: "12345678".
+func (c *Code2of5MatrixBarcode) DefaultValue() string { return "12345678" }
 
 // Encode stores text for Matrix 2-of-5 rendering.
 func (c *Code2of5MatrixBarcode) Encode(text string) error {
@@ -365,12 +384,23 @@ func (c *Code2of5MatrixBarcode) Render(width, height int) (image.Image, error) {
 // ITF-14 is a 14-digit Interleaved 2-of-5 barcode used for shipping containers.
 type ITF14Barcode struct {
 	BaseBarcodeImpl
+	// DrawVerticalBearerBars controls whether vertical bearer bars are rendered.
+	// C# BarcodeITF14.DrawVerticalBearerBars default is true (Barcode2of5.cs:332).
+	DrawVerticalBearerBars bool
+	CalcChecksum           bool // C# LinearBarcodeBase.CalcCheckSum default true
 }
 
 // NewITF14Barcode creates an ITF14Barcode.
 func NewITF14Barcode() *ITF14Barcode {
-	return &ITF14Barcode{BaseBarcodeImpl: newBaseBarcodeImpl(BarcodeTypeITF14)}
+	return &ITF14Barcode{
+		BaseBarcodeImpl:        newBaseBarcodeImpl(BarcodeTypeITF14),
+		DrawVerticalBearerBars: true, // C# default: true (Barcode2of5.cs:332)
+		CalcChecksum:           true,
+	}
 }
+
+// SetCalcCheckSum implements calcCheckSumSetter for FRX deserialization.
+func (i *ITF14Barcode) SetCalcCheckSum(v bool) { i.CalcChecksum = v }
 
 // DefaultValue returns a sample 14-digit ITF-14 value.
 func (i *ITF14Barcode) DefaultValue() string { return "12345678901231" }
@@ -414,12 +444,19 @@ func (i *ITF14Barcode) Render(width, height int) (image.Image, error) {
 // DeutscheIdentcodeBarcode implements Deutsche Post Identcode (11-digit Interleaved 2-of-5).
 type DeutscheIdentcodeBarcode struct {
 	BaseBarcodeImpl
+	CalcChecksum bool // C# LinearBarcodeBase.CalcCheckSum default true
 }
 
 // NewDeutscheIdentcodeBarcode creates a DeutscheIdentcodeBarcode.
 func NewDeutscheIdentcodeBarcode() *DeutscheIdentcodeBarcode {
-	return &DeutscheIdentcodeBarcode{BaseBarcodeImpl: newBaseBarcodeImpl(BarcodeTypeDeutscheIdentcode)}
+	return &DeutscheIdentcodeBarcode{
+		BaseBarcodeImpl: newBaseBarcodeImpl(BarcodeTypeDeutscheIdentcode),
+		CalcChecksum:    true,
+	}
 }
+
+// SetCalcCheckSum implements calcCheckSumSetter for FRX deserialization.
+func (d *DeutscheIdentcodeBarcode) SetCalcCheckSum(v bool) { d.CalcChecksum = v }
 
 // DefaultValue returns a sample 11-digit Identcode value.
 func (d *DeutscheIdentcodeBarcode) DefaultValue() string { return "12345123456" }
@@ -456,12 +493,19 @@ func (d *DeutscheIdentcodeBarcode) Render(width, height int) (image.Image, error
 // DeutscheLeitcodeBarcode implements Deutsche Post Leitcode (13-digit Interleaved 2-of-5).
 type DeutscheLeitcodeBarcode struct {
 	BaseBarcodeImpl
+	CalcChecksum bool // C# LinearBarcodeBase.CalcCheckSum default true
 }
 
 // NewDeutscheLeitcodeBarcode creates a DeutscheLeitcodeBarcode.
 func NewDeutscheLeitcodeBarcode() *DeutscheLeitcodeBarcode {
-	return &DeutscheLeitcodeBarcode{BaseBarcodeImpl: newBaseBarcodeImpl(BarcodeTypeDeutscheLeitcode)}
+	return &DeutscheLeitcodeBarcode{
+		BaseBarcodeImpl: newBaseBarcodeImpl(BarcodeTypeDeutscheLeitcode),
+		CalcChecksum:    true,
+	}
 }
+
+// SetCalcCheckSum implements calcCheckSumSetter for FRX deserialization.
+func (d *DeutscheLeitcodeBarcode) SetCalcCheckSum(v bool) { d.CalcChecksum = v }
 
 // DefaultValue returns a sample 13-digit Leitcode value.
 func (d *DeutscheLeitcodeBarcode) DefaultValue() string { return "1234512312312" }
@@ -586,15 +630,26 @@ type JapanPost4StateBarcode struct{ BaseBarcodeImpl }
 // ── Types referenced by dedicated implementation files ────────────────────────
 
 // Code39ExtendedBarcode implements Code 39 in full-ASCII mode.
-type Code39ExtendedBarcode struct{ BaseBarcodeImpl }
-
-// NewCode39ExtendedBarcode creates a Code39ExtendedBarcode.
-func NewCode39ExtendedBarcode() *Code39ExtendedBarcode {
-	return &Code39ExtendedBarcode{BaseBarcodeImpl: newBaseBarcodeImpl(BarcodeTypeCode39Extended)}
+type Code39ExtendedBarcode struct {
+	BaseBarcodeImpl
+	// CalcChecksum appends a mod-43 check character; C# default is true.
+	CalcChecksum bool
 }
 
-// DefaultValue returns a sample Code 39 Extended value.
-func (c *Code39ExtendedBarcode) DefaultValue() string { return "abc-1234" }
+// NewCode39ExtendedBarcode creates a Code39ExtendedBarcode.
+// C# LinearBarcodeBase default: calcCheckSum=true (LinearBarcodeBase.cs:637).
+func NewCode39ExtendedBarcode() *Code39ExtendedBarcode {
+	return &Code39ExtendedBarcode{
+		BaseBarcodeImpl: newBaseBarcodeImpl(BarcodeTypeCode39Extended),
+		CalcChecksum:    true,
+	}
+}
+
+// SetCalcCheckSum implements calcCheckSumSetter for FRX deserialization.
+func (c *Code39ExtendedBarcode) SetCalcCheckSum(v bool) { c.CalcChecksum = v }
+
+// DefaultValue returns the C# BarcodeBase.GetDefaultValue() default: "12345678".
+func (c *Code39ExtendedBarcode) DefaultValue() string { return "12345678" }
 
 // Encode stores text for Code 39 Extended rendering.
 func (c *Code39ExtendedBarcode) Encode(text string) error {
@@ -631,7 +686,9 @@ func (u *UPCE0Barcode) Encode(text string) error {
 	return nil
 }
 
-// Render renders the UPC-E0 barcode using the native pattern-based renderer.
+// Render renders the UPC-E0 barcode with custom text positioning.
+// Ported from C# BarcodeUPC_E0.DrawText — "0" outside left guard,
+// 6 data digits under bars, check digit outside right guard.
 func (u *UPCE0Barcode) Render(width, height int) (image.Image, error) {
 	if u.encodedText == "" {
 		return nil, fmt.Errorf("upce0: Encode must be called before Render")
@@ -640,7 +697,7 @@ func (u *UPCE0Barcode) Render(width, height int) (image.Image, error) {
 	if err != nil {
 		return nil, err
 	}
-	return DrawLinearBarcode(pattern, u.encodedText, width, height, true, u.GetWideBarRatio()), nil
+	return DrawLinearBarcodeCustomText(pattern, u.encodedText, width, height, true, u.GetWideBarRatio(), UPCE0DrawText(pattern)), nil
 }
 
 // UPCE1Barcode implements UPC-E number system 1.
@@ -660,7 +717,9 @@ func (u *UPCE1Barcode) Encode(text string) error {
 	return nil
 }
 
-// Render renders the UPC-E1 barcode using the native pattern-based renderer.
+// Render renders the UPC-E1 barcode with custom text positioning.
+// UPC-E1 inherits the same DrawText as UPC-E0 (C# BarcodeUPC_E1 extends
+// BarcodeUPC_E0 without overriding DrawText).
 func (u *UPCE1Barcode) Render(width, height int) (image.Image, error) {
 	if u.encodedText == "" {
 		return nil, fmt.Errorf("upce1: Encode must be called before Render")
@@ -669,7 +728,7 @@ func (u *UPCE1Barcode) Render(width, height int) (image.Image, error) {
 	if err != nil {
 		return nil, err
 	}
-	return DrawLinearBarcode(pattern, u.encodedText, width, height, true, u.GetWideBarRatio()), nil
+	return DrawLinearBarcodeCustomText(pattern, u.encodedText, width, height, true, u.GetWideBarRatio(), UPCE0DrawText(pattern)), nil
 }
 
 // GS1_128Barcode implements GS1-128 (formerly EAN-128).
@@ -752,7 +811,7 @@ func (j *JapanPost4StateBarcode) Render(width, height int) (image.Image, error) 
 	}
 	// Strip hyphens for encoding.
 	cleaned := strings.ReplaceAll(j.encodedText, "-", "")
-	helper := &Code128Barcode{}
+	helper := NewCode128Barcode()
 	helper.encodedText = cleaned
 	pattern, err := helper.GetPattern()
 	if err != nil {

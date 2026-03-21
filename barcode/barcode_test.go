@@ -73,8 +73,8 @@ func TestNewCode39Barcode(t *testing.T) {
 	if b.AllowExtended {
 		t.Error("AllowExtended should default to false")
 	}
-	if b.CalcChecksum {
-		t.Error("CalcChecksum should default to false")
+	if !b.CalcChecksum {
+		t.Error("CalcChecksum should default to true (C# LinearBarcodeBase default)")
 	}
 }
 
@@ -106,8 +106,8 @@ func TestNewQRBarcode(t *testing.T) {
 	if q.Type() != barcode.BarcodeTypeQR {
 		t.Errorf("Type = %q, want QR", q.Type())
 	}
-	if q.ErrorCorrection != "M" {
-		t.Errorf("ErrorCorrection default = %q, want M", q.ErrorCorrection)
+	if q.ErrorCorrection != "L" {
+		t.Errorf("ErrorCorrection default = %q, want L", q.ErrorCorrection)
 	}
 }
 
@@ -164,10 +164,11 @@ func TestNewBarcodeObject_Defaults(t *testing.T) {
 		t.Fatal("NewBarcodeObject returned nil")
 	}
 	if bo.Barcode == nil {
-		t.Error("Barcode should default to non-nil (Code128)")
+		t.Error("Barcode should default to non-nil (Code39)")
 	}
-	if bo.BarcodeType() != barcode.BarcodeTypeCode128 {
-		t.Errorf("BarcodeType default = %q, want Code128", bo.BarcodeType())
+	// C# BarcodeObject constructor: Barcode = new Barcode39() (BarcodeObject.cs:688).
+	if bo.BarcodeType() != barcode.BarcodeTypeCode39 {
+		t.Errorf("BarcodeType default = %q, want Code39 (C# BarcodeObject.cs:688)", bo.BarcodeType())
 	}
 	if bo.Angle() != 0 {
 		t.Errorf("Angle default = %d, want 0", bo.Angle())
@@ -181,8 +182,8 @@ func TestNewBarcodeObject_Defaults(t *testing.T) {
 	if bo.Zoom() != 1.0 {
 		t.Errorf("Zoom default = %v, want 1.0", bo.Zoom())
 	}
-	if !bo.AllowExpressions() {
-		t.Error("AllowExpressions should default to true")
+	if bo.AllowExpressions() {
+		t.Error("AllowExpressions should default to false (C# BarcodeObject.cs:232)")
 	}
 	if bo.Brackets() != "[,]" {
 		t.Errorf("Brackets default = %q, want [,]", bo.Brackets())
@@ -376,8 +377,8 @@ func TestBaseBarcodeImpl_Render_Success(t *testing.T) {
 
 func TestBaseBarcodeImpl_DefaultValue(t *testing.T) {
 	b := &barcode.BaseBarcodeImpl{}
-	if got := b.DefaultValue(); got != "12345" {
-		t.Errorf("DefaultValue = %q, want 12345", got)
+	if got := b.DefaultValue(); got != "12345678" {
+		t.Errorf("DefaultValue = %q, want 12345678", got)
 	}
 }
 
@@ -894,8 +895,8 @@ func TestNewBarcodeByType_SwissQR(t *testing.T) {
 
 func TestCode39Barcode_DefaultValue(t *testing.T) {
 	b := barcode.NewCode39Barcode()
-	if got := b.DefaultValue(); got != "CODE39" {
-		t.Errorf("DefaultValue = %q, want CODE39", got)
+	if got := b.DefaultValue(); got != "12345678" {
+		t.Errorf("DefaultValue = %q, want 12345678", got)
 	}
 }
 
@@ -1239,11 +1240,19 @@ func TestPostNetBarcode_Encode_9Digits(t *testing.T) {
 	}
 }
 
-func TestPostNetBarcode_Encode_Error_InvalidLength(t *testing.T) {
+func TestPostNetBarcode_Encode_8Digits(t *testing.T) {
 	b := barcode.NewPostNetBarcode()
-	// 8 digits is not valid (must be 5, 9, or 11).
-	if err := b.Encode("12345678"); err == nil {
-		t.Error("expected error for 8-digit PostNet, got nil")
+	// C# BarcodePostNet.GetPattern() accepts any number of digits without
+	// length validation. 8 digits should be accepted.
+	if err := b.Encode("12345678"); err != nil {
+		t.Errorf("PostNetBarcode.Encode 8 digits: unexpected error: %v", err)
+	}
+}
+
+func TestPostNetBarcode_Encode_Error_Empty(t *testing.T) {
+	b := barcode.NewPostNetBarcode()
+	if err := b.Encode(""); err == nil {
+		t.Error("expected error for empty PostNet, got nil")
 	}
 }
 

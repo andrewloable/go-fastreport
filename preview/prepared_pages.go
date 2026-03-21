@@ -99,6 +99,27 @@ func (bk *Bookmarks) Count() int { return len(bk.items) }
 // All returns all bookmarks in insertion order.
 func (bk *Bookmarks) All() []*Bookmark { return bk.items }
 
+// CurPosition returns the current insertion position (length of items slice).
+// Used by the engine to save a restore point for keep-together and double-pass.
+// C# equivalent: Bookmarks.CurPosition → items.Count
+func (bk *Bookmarks) CurPosition() int { return len(bk.items) }
+
+// Shift adjusts all bookmarks from fromIndex onwards for a keep-together page break.
+// Each affected bookmark has its PageIdx incremented by 1, and its OffsetY adjusted
+// by (newY - items[fromIndex].OffsetY).
+// C# equivalent: Bookmarks.Shift(int index, float newY)
+func (bk *Bookmarks) Shift(fromIndex int, newY float32) {
+	if fromIndex < 0 || fromIndex >= len(bk.items) {
+		return
+	}
+	topY := bk.items[fromIndex].OffsetY
+	shift := newY - topY
+	for i := fromIndex; i < len(bk.items); i++ {
+		bk.items[i].PageIdx++
+		bk.items[i].OffsetY += shift
+	}
+}
+
 // GetPageNo returns the 1-based page number for the named bookmark, or 0 if not found.
 func (bk *Bookmarks) GetPageNo(name string) int {
 	b := bk.Find(name)
@@ -125,9 +146,10 @@ func (o *OutlineItem) AddChild(child *OutlineItem) {
 
 // Outline is the top-level outline tree with a current-position cursor.
 type Outline struct {
-	Root  *OutlineItem
-	cur   *OutlineItem   // current insertion point
-	stack []*OutlineItem // ancestors of cur
+	Root         *OutlineItem
+	cur          *OutlineItem   // current insertion point
+	stack        []*OutlineItem // ancestors of cur
+	firstPassPos int            // saved len(Root.Children) for double-pass
 }
 
 // NewOutline creates an Outline with an empty root node.
@@ -156,6 +178,93 @@ func (o *Outline) LevelUp() {
 func (o *Outline) LevelRoot() {
 	o.stack = o.stack[:0]
 	o.cur = o.Root
+}
+
+// CurPosition returns the last child added at the current insertion point,
+// or nil if the current node has no children.
+// C# equivalent: Outline.CurPosition → curItem[curItem.Count - 1]
+func (o *Outline) CurPosition() *OutlineItem {
+	if len(o.cur.Children) == 0 {
+		return nil
+	}
+	return o.cur.Children[len(o.cur.Children)-1]
+}
+
+// shiftItem recursively increments PageIdx and adds deltaY to OffsetY for
+// the given item and all its descendants.
+func shiftItem(item *OutlineItem, deltaY float32) {
+	item.PageIdx++
+	item.OffsetY += deltaY
+	for _, child := range item.Children {
+		shiftItem(child, deltaY)
+	}
+}
+
+// Shift repositions outline items after a keep-together page break.
+// Starting from the item that is the next sibling of `from` (in from's parent),
+// it increments PageIdx by 1 and adjusts OffsetY by (newY - nextSibling.OffsetY)
+// recursively for that sibling and all its descendants.
+//
+// C# equivalent: Outline.Shift(XmlItem from, float newY)
+func (o *Outline) Shift(from *OutlineItem, newY float32) {
+	if from == nil {
+		return
+	}
+	// Find from's parent by searching the tree.
+	parent := o.findParent(o.Root, from)
+	if parent == nil {
+		return
+	}
+	idx := -1
+	for i, child := range parent.Children {
+		if child == from {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 || idx+1 >= len(parent.Children) {
+		return
+	}
+	next := parent.Children[idx+1]
+	deltaY := newY - next.OffsetY
+	shiftItem(next, deltaY)
+}
+
+// findParent searches the tree rooted at node for the parent of target.
+func (o *Outline) findParent(node, target *OutlineItem) *OutlineItem {
+	for _, child := range node.Children {
+		if child == target {
+			return node
+		}
+		if found := o.findParent(child, target); found != nil {
+			return found
+		}
+	}
+	return nil
+}
+
+// PrepareToFirstPass saves the current root children count for later trimming
+// during double-pass report generation. Resets the cursor to root.
+// C# equivalent: Outline.PrepareToFirstPass()
+func (o *Outline) PrepareToFirstPass() {
+	if len(o.Root.Children) == 0 {
+		o.firstPassPos = -1
+	} else {
+		o.firstPassPos = len(o.Root.Children)
+	}
+	o.LevelRoot()
+}
+
+// ClearFirstPass trims Root.Children back to the position saved by
+// PrepareToFirstPass, then resets the cursor to root.
+// C# equivalent: Outline.ClearFirstPass() → Clear(firstPassPosition)
+func (o *Outline) ClearFirstPass() {
+	if o.firstPassPos == -1 {
+		o.Root.Children = nil
+	} else if o.firstPassPos < len(o.Root.Children) {
+		o.Root.Children = o.Root.Children[:o.firstPassPos]
+	}
+	o.LevelRoot()
 }
 
 // ── PreparedBand ──────────────────────────────────────────────────────────────

@@ -109,11 +109,9 @@ func (e *ReportEngine) makeGroupTree(groupBand *band.GroupHeaderBand) *groupTree
 		return root
 	}
 
+	// C# MakeGroupTree: iterate ALL rows with no MaxRows limit.
+	// MaxRows is applied later in showGroupTree when rendering each leaf's rows.
 	total := ds.RowCount()
-	maxRows := db.MaxRows()
-	if maxRows > 0 && total > maxRows {
-		total = maxRows
-	}
 
 	gs := newGroupValueState()
 	rowIdx := 0
@@ -139,10 +137,16 @@ func (e *ReportEngine) makeGroupTree(groupBand *band.GroupHeaderBand) *groupTree
 // initGroupItem adds new tree items for all nested group levels starting from
 // header, anchored at curItem. Used on the first data row or after an outermost
 // group value change.
+// Also resets AbsRowNo and RowNo to 0 on each header band, matching C# InitGroupItem
+// lines 172-173: header.AbsRowNo = 0; header.RowNo = 0.
 func initGroupItem(header *band.GroupHeaderBand, curItem *groupTreeItem, rowIdx int, gs *groupValueState, ds band.DataSource) {
 	for header != nil {
 		gs.reset(header)
 		gs.changed(header, ds) // consume current value as the baseline
+
+		// C# InitGroupItem lines 172-173: reset per-group counters.
+		header.SetAbsRowNo(0)
+		header.SetRowNo(0)
 
 		child := &groupTreeItem{band: header, rowNo: rowIdx, rowCount: 1}
 		curItem = curItem.addItem(child)
@@ -190,6 +194,23 @@ func (e *ReportEngine) showGroupTree(root *groupTreeItem) {
 	}
 
 	if root.band != nil {
+		// C# ShowGroupTree line 226: position the data source to the correct row
+		// so group header expressions evaluate against the right data.
+		if db := root.band.Data(); db != nil {
+			if ds := db.DataSourceRef(); ds != nil {
+				type rowPositioner interface{ SetCurrentRowNo(int) }
+				if rp, ok := ds.(rowPositioner); ok {
+					rp.SetCurrentRowNo(root.rowNo)
+				}
+				// Update the calc context so expressions in the group header see
+				// the correct data row.
+				if e.report != nil {
+					if fullDS, ok := ds.(data.DataSource); ok {
+						e.report.SetCalcContext(fullDS)
+					}
+				}
+			}
+		}
 		e.showGroupHeader(root.band)
 	}
 
@@ -318,9 +339,28 @@ func (e *ReportEngine) showGroupHeader(header *band.GroupHeaderBand) {
 // showGroupFooter renders the group footer band.
 // Mirrors C# ShowGroupFooter: fires GroupFinished, handles reprint removal,
 // and ends KeepTogether/KeepWithData.
+// C# lines 143-158: calls dataSource.Prior() before the footer and
+// dataSource.Next() after, so footer expressions see the last group row's data.
 func (e *ReportEngine) showGroupFooter(header *band.GroupHeaderBand) {
 	// C#: OnStateChanged(header, EngineState.GroupFinished);
 	e.OnStateChanged(header, EngineStateGroupFinished)
+
+	// C# ShowGroupFooter lines 143-145: rollback to previous data row so that
+	// footer expressions print the last row's group condition value.
+	var ds band.DataSource
+	if db := header.Data(); db != nil {
+		ds = db.DataSourceRef()
+	}
+	type hasPrior interface{ Prior() }
+	if p, ok := ds.(hasPrior); ok {
+		p.Prior()
+		// Update calc context so footer expressions evaluate the prior row.
+		if e.report != nil {
+			if fullDS, ok := ds.(data.DataSource); ok {
+				e.report.SetCalcContext(fullDS)
+			}
+		}
+	}
 
 	ftr := header.GroupFooter()
 	if ftr != nil {
@@ -336,6 +376,11 @@ func (e *ReportEngine) showGroupFooter(header *band.GroupHeaderBand) {
 		e.ShowFullBand(&ftr.HeaderFooterBandBase.BandBase)
 	}
 	e.RemoveReprint(&header.HeaderFooterBandBase.BandBase)
+
+	// C# ShowGroupFooter line 158: restore current row.
+	if n, ok := ds.(interface{ Next() error }); ok {
+		_ = n.Next()
+	}
 
 	// C#: OutlineUp(header);
 	e.OutlineUp()
@@ -422,6 +467,14 @@ func (e *ReportEngine) RunGroup(groupBand *band.GroupHeaderBand) {
 		}
 	}
 	e.showGroupTree(tree)
+
+	// C# RunGroup line 281: do not leave the datasource in EOF state.
+	// Mirrors: dataSource.Prior();
+	ds := db.DataSourceRef()
+	type hasPrior interface{ Prior() }
+	if p, ok := ds.(hasPrior); ok {
+		p.Prior()
+	}
 }
 
 // applyGroupSort sorts the DataBand's data source using a combined key list:

@@ -181,83 +181,155 @@ func (s *SliceCubeSource) MeasuresInYAxis() bool { return !s.measuresInX }
 func (s *SliceCubeSource) MeasuresLevel() int { return s.measuresLevel }
 
 // TraverseXAxis calls fn for each X-axis header cell in level-major order.
+// When MeasuresInXAxis and MeasuresCount > 1, an extra level is emitted for
+// measure names. The Cell coordinate is the 0-based data-column index.
+// MeasureIndex is set to the measure index for measure-level cells, 0 elsewhere.
 func (s *SliceCubeSource) TraverseXAxis(fn AxisTraverseFunc) {
 	if len(s.xTuples) == 0 {
 		return
 	}
-	nLevels := len(s.xFields)
-	if nLevels == 0 {
+	nFields := len(s.xFields)
+	measuresInX := s.measuresInX && len(s.measures) > 1
+
+	if nFields == 0 && !measuresInX {
 		return
 	}
 
-	// For each field level, emit spans over the unique value at that level.
-	// Level 0 (outermost): groups of consecutive xTuples with the same value at [0].
-	// Level N (innermost): each unique xTuple emits one cell (span = 1).
-	// cell coordinate = index in xTuples (data column index).
+	// Compute total levels and the position of the measures level.
+	totalLevels := nFields
+	measLevel := -1
+	if measuresInX {
+		totalLevels++
+		measLevel = s.measuresLevel
+		if measLevel < 0 {
+			measLevel = totalLevels - 1 // innermost
+		}
+	}
 
-	for level := 0; level < nLevels; level++ {
-		col := 0
-		for col < len(s.xTuples) {
-			val := s.xTuples[col][level]
-			// Count how many consecutive xTuples share the same prefix up to this level.
-			span := 1
-			for col+span < len(s.xTuples) {
-				if samePrefixUpTo(s.xTuples[col], s.xTuples[col+span], level) {
-					span++
-				} else {
-					break
+	fieldIdx := 0 // which xFields index we are processing
+	for level := 0; level < totalLevels; level++ {
+		if measuresInX && level == measLevel {
+			// Emit one cell per measure for each xTuple group.
+			// Data column index: xTupleIdx*len(measures) + measureIdx.
+			for col := 0; col < len(s.xTuples); col++ {
+				for j, mName := range s.measures {
+					fn(AxisDrawCell{
+						Text:         mName,
+						Cell:         col*len(s.measures) + j,
+						Level:        level,
+						SizeCell:     1,
+						SizeLevel:    1,
+						MeasureIndex: j,
+					})
 				}
 			}
-			// SizeLevel = number of header rows this cell spans downward
-			// (= number of remaining levels below this one, including measures level).
-			sizeLevel := 1
-			if level == nLevels-1 {
-				// Innermost field level spans over measure sub-headers.
-				// For now: 1 (measures are rendered as a separate level).
-				sizeLevel = 1
+		} else {
+			// Emit span cells for the field at fieldIdx.
+			// When measures are in the X axis, each xTuple occupies len(measures) data columns.
+			col := 0
+			for col < len(s.xTuples) {
+				val := s.xTuples[col][fieldIdx]
+				span := 1
+				for col+span < len(s.xTuples) {
+					if samePrefixUpTo(s.xTuples[col], s.xTuples[col+span], fieldIdx) {
+						span++
+					} else {
+						break
+					}
+				}
+				var dataCol, dataSpan int
+				if measuresInX {
+					dataCol = col * len(s.measures)
+					dataSpan = span * len(s.measures)
+				} else {
+					dataCol = col
+					dataSpan = span
+				}
+				fn(AxisDrawCell{
+					Text:      val,
+					Cell:      dataCol,
+					Level:     level,
+					SizeCell:  dataSpan,
+					SizeLevel: 1,
+				})
+				col += span
 			}
-			fn(AxisDrawCell{
-				Text:      val,
-				Cell:      col,
-				Level:     level,
-				SizeCell:  span,
-				SizeLevel: sizeLevel,
-			})
-			col += span
+			fieldIdx++
 		}
 	}
 }
 
 // TraverseYAxis calls fn for each Y-axis header cell in level-major order.
+// When MeasuresInYAxis and MeasuresCount > 1, an extra level is emitted for
+// measure names. The Cell coordinate is the 0-based data-row index.
+// MeasureIndex is set to the measure index for measure-level cells, 0 elsewhere.
 func (s *SliceCubeSource) TraverseYAxis(fn AxisTraverseFunc) {
 	if len(s.yTuples) == 0 {
 		return
 	}
-	nLevels := len(s.yFields)
-	if nLevels == 0 {
+	nFields := len(s.yFields)
+	measuresInY := !s.measuresInX && len(s.measures) > 1
+
+	if nFields == 0 && !measuresInY {
 		return
 	}
 
-	for level := 0; level < nLevels; level++ {
-		row := 0
-		for row < len(s.yTuples) {
-			val := s.yTuples[row][level]
-			span := 1
-			for row+span < len(s.yTuples) {
-				if samePrefixUpTo(s.yTuples[row], s.yTuples[row+span], level) {
-					span++
-				} else {
-					break
+	totalLevels := nFields
+	measLevel := -1
+	if measuresInY {
+		totalLevels++
+		measLevel = s.measuresLevel
+		if measLevel < 0 {
+			measLevel = totalLevels - 1 // innermost
+		}
+	}
+
+	fieldIdx := 0
+	for level := 0; level < totalLevels; level++ {
+		if measuresInY && level == measLevel {
+			// Emit one cell per measure for each yTuple group.
+			for row := 0; row < len(s.yTuples); row++ {
+				for j, mName := range s.measures {
+					fn(AxisDrawCell{
+						Text:         mName,
+						Cell:         row*len(s.measures) + j,
+						Level:        level,
+						SizeCell:     1,
+						SizeLevel:    1,
+						MeasureIndex: j,
+					})
 				}
 			}
-			fn(AxisDrawCell{
-				Text:      val,
-				Cell:      row,
-				Level:     level,
-				SizeCell:  span,
-				SizeLevel: 1,
-			})
-			row += span
+		} else {
+			row := 0
+			for row < len(s.yTuples) {
+				val := s.yTuples[row][fieldIdx]
+				span := 1
+				for row+span < len(s.yTuples) {
+					if samePrefixUpTo(s.yTuples[row], s.yTuples[row+span], fieldIdx) {
+						span++
+					} else {
+						break
+					}
+				}
+				var dataRow, dataSpan int
+				if measuresInY {
+					dataRow = row * len(s.measures)
+					dataSpan = span * len(s.measures)
+				} else {
+					dataRow = row
+					dataSpan = span
+				}
+				fn(AxisDrawCell{
+					Text:      val,
+					Cell:      dataRow,
+					Level:     level,
+					SizeCell:  dataSpan,
+					SizeLevel: 1,
+				})
+				row += span
+			}
+			fieldIdx++
 		}
 	}
 }

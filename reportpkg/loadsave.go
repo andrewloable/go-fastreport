@@ -947,17 +947,20 @@ func deserializeStyleEntry(rdr *serial.Reader) *style.StyleEntry {
 	e.TextColorChanged = e.ApplyTextFill
 	e.BorderColorChanged = e.ApplyBorder
 
-	// Fill color.
-	if s := rdr.ReadStr("Fill.Color", ""); s != "" {
-		if c, err := utils.ParseColor(s); err == nil {
-			e.FillColor = c
-		}
+	// Fill: use DeserializeFill so gradient/hatch fills in <Style> elements
+	// are loaded correctly, matching C# StyleBase.Deserialize (StyleBase.cs
+	// line 143). For SolidFill results we also populate the legacy FillColor
+	// scalar for backward compatibility.
+	e.Fill = report.DeserializeFill(rdr, "Fill", &style.SolidFill{})
+	if sf, ok := e.Fill.(*style.SolidFill); ok {
+		e.FillColor = sf.Color
+		e.Fill = nil // keep legacy path for solid fills
 	}
-	// Text fill color.
-	if s := rdr.ReadStr("TextFill.Color", ""); s != "" {
-		if c, err := utils.ParseColor(s); err == nil {
-			e.TextColor = c
-		}
+	// TextFill: same pattern for text colour.
+	e.TextFill = report.DeserializeFill(rdr, "TextFill", &style.SolidFill{})
+	if sf, ok := e.TextFill.(*style.SolidFill); ok {
+		e.TextColor = sf.Color
+		e.TextFill = nil // keep legacy path for solid text fills
 	}
 	// Border color (simple, all lines).
 	if s := rdr.ReadStr("Border.Color", ""); s != "" {

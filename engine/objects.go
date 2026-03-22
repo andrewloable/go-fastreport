@@ -34,11 +34,13 @@ func (e *ReportEngine) populateBandObjects(bb *band.BandBase, pb *preview.Prepar
 	}
 	// Apply dock layout using the band's own width/height as the container.
 	applyDockLayout(bb.Objects(), bb.Width(), bb.Height())
-	e.populateBandObjects2(bb.Objects(), pb)
+	e.populateBandObjects2(bb, bb.Objects(), pb)
 }
 
 // populateBandObjects2 converts objects from any ObjectCollection into PreparedObjects.
-func (e *ReportEngine) populateBandObjects2(objs *report.ObjectCollection, pb *preview.PreparedBand) {
+// parentBand is the BandBase that owns objs; it is used to build sender predicates
+// for ProcessAtDataFinished and ProcessAtGroupFinished deferred handlers.
+func (e *ReportEngine) populateBandObjects2(parentBand *band.BandBase, objs *report.ObjectCollection, pb *preview.PreparedBand) {
 	if objs == nil {
 		return
 	}
@@ -79,25 +81,41 @@ func (e *ReportEngine) populateBandObjects2(objs *report.ObjectCollection, pb *p
 				text := e.evalText(cellular.Text())
 				e.populateCellularTextCells(cellular, text, pb)
 			}
-			// Register deferred text evaluation if ProcessAt != Default.
+			// Register deferred text evaluation for non-default ProcessAt values.
+			// C# ProcessAt.cs AddObjectToProcess (line 200-205): Custom objects are
+			// registered separately for manual processing via Engine.ProcessObject(obj).
+			// All other non-default values are queued as one-shot deferred handlers.
 			if txt, ok := obj.(*object.TextObject); ok && txt.ProcessAt() != object.ProcessAtDefault {
-				state := processAtToEngineState(txt.ProcessAt())
 				capturedPb := pb
 				capturedIdx := idx
 				capturedTxt := txt
 				capturedFmt := txt.Format()
 				pb.Objects[idx].Text = "" // placeholder: blank until deferred state fires
-				// PageFinished and ColumnFinished handlers must re-fire on every
-				// page/column boundary. ReportFinished and other states fire once.
-				switch txt.ProcessAt() {
-				case object.ProcessAtPageFinished, object.ProcessAtColumnFinished:
-					e.AddRepeatingDeferredHandler(state, func() {
-						capturedPb.Objects[capturedIdx].Text = e.evalTextWithFormat(capturedTxt.Text(), capturedFmt)
-					})
-				default:
-					e.AddDeferredHandler(state, func() {
-						capturedPb.Objects[capturedIdx].Text = e.evalTextWithFormat(capturedTxt.Text(), capturedFmt)
-					})
+				evalFn := func() {
+					capturedPb.Objects[capturedIdx].Text = e.evalTextWithFormat(capturedTxt.Text(), capturedFmt)
+				}
+				if txt.ProcessAt() == object.ProcessAtCustom {
+					// Custom: register for manual ProcessObject(obj) call.
+					// Mirrors C# AddObjectToProcess (ProcessAt.cs lines 200-205).
+					e.RegisterCustomObject(txt, evalFn)
+				} else {
+					// All other values use one-shot handlers. C# removes ProcessInfo
+					// from objectsToProcess after it fires (ProcessAt.cs lines 180-184).
+					// Each band render registers a new one-shot handler, so page/column
+					// footers naturally re-register on each page/column they are rendered on.
+					state := processAtToEngineState(txt.ProcessAt())
+					switch txt.ProcessAt() {
+					case object.ProcessAtDataFinished:
+						// Only fire when the relevant DataBand finishes.
+						// Mirrors C# ProcessInfo.Process lines 123-131.
+						e.AddSenderDeferredHandler(state, makeDataFinishedPred(parentBand), evalFn)
+					case object.ProcessAtGroupFinished:
+						// Only fire when the owning GroupHeaderBand finishes.
+						// Mirrors C# ProcessInfo.Process lines 133-137.
+						e.AddSenderDeferredHandler(state, makeGroupFinishedPred(parentBand), evalFn)
+					default:
+						e.AddDeferredHandler(state, evalFn)
+					}
 				}
 			}
 		}
@@ -570,6 +588,48 @@ func (e *ReportEngine) populateCellularTextCells(v *object.CellularTextObject, t
 	}
 }
 
+// makeDataFinishedPred returns a sender predicate for ProcessAtDataFinished.
+// If our band's parent is a DataBand (e.g. we are a DataHeaderBand), the
+// handler should only fire when that specific DataBand sends BlockFinished.
+// Mirrors C# ProcessInfo.Process lines 123-131 (sender-check for DataFinished).
+func makeDataFinishedPred(parentBand *band.BandBase) func(any) bool {
+	return func(sender any) bool {
+		senderDB, ok := sender.(*band.DataBand)
+		if !ok {
+			return false
+		}
+		if parentBand == nil {
+			return true
+		}
+		// If our band's parent is a DataBand (we're a child header/footer band),
+		// only process when the sender is exactly that DataBand.
+		if parentDB, ok2 := parentBand.Parent().(*band.DataBand); ok2 {
+			return senderDB == parentDB
+		}
+		return true
+	}
+}
+
+// makeGroupFinishedPred returns a sender predicate for ProcessAtGroupFinished.
+// The handler fires only when the GroupHeaderBand that owns our band fires GroupFinished.
+// Mirrors C# ProcessInfo.Process lines 133-137 (sender == topParentBand).
+func makeGroupFinishedPred(parentBand *band.BandBase) func(any) bool {
+	return func(sender any) bool {
+		senderGH, ok := sender.(*band.GroupHeaderBand)
+		if !ok {
+			return false
+		}
+		if parentBand == nil {
+			return true
+		}
+		// If our band's parent is a GroupHeaderBand, only process when sender matches.
+		if parentGH, ok2 := parentBand.Parent().(*band.GroupHeaderBand); ok2 {
+			return senderGH == parentGH
+		}
+		return true
+	}
+}
+
 // processAtToEngineState maps a ProcessAt value to its corresponding EngineState.
 func processAtToEngineState(pa object.ProcessAt) EngineState {
 	switch pa {
@@ -616,6 +676,28 @@ func (e *ReportEngine) buildPreparedObject(obj report.Base) *preview.PreparedObj
 				return nil
 			}
 		} else if !v.Visible() {
+			return nil
+		}
+	}
+
+	// Evaluate PrintableExpression and check Printable flag.
+	// Mirrors C# ReportEngine.Bands.cs CanPrint lines 299-313.
+	// Non-printable objects are excluded from the prepared output (they appear
+	// on screen but not in print/export).
+	type hasPrintable interface {
+		Printable() bool
+		PrintableExpression() string
+		SetPrintable(bool)
+	}
+	if p, ok := obj.(hasPrintable); ok {
+		if expr := p.PrintableExpression(); expr != "" && e.report != nil {
+			if val, err := e.report.Calc(expr); err == nil {
+				if b, ok2 := val.(bool); ok2 {
+					p.SetPrintable(b)
+				}
+			}
+		}
+		if !p.Printable() {
 			return nil
 		}
 	}

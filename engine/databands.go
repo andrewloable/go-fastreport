@@ -141,6 +141,11 @@ func (e *ReportEngine) RunDataBandRowsKeep(db *band.DataBand, rows int, keepFirs
 		isFirstRow = false
 		someRowsPrinted = true
 
+		// DownThenAcross: all rows handled inside showDataBandBody — break outer loop.
+		if db.Columns().Count() > 1 && db.Columns().Layout == band.ColumnLayoutDownThenAcross {
+			break
+		}
+
 		// Advance the data source to the next row for the next iteration.
 		if ds != nil {
 			_ = ds.Next()
@@ -150,7 +155,7 @@ func (e *ReportEngine) RunDataBandRowsKeep(db *band.DataBand, rows int, keepFirs
 		}
 	}
 
-	// Flush any partially-filled column row.
+	// Flush any partially-filled column row (AcrossThenDown only).
 	e.flushColumnRow(cs)
 
 	// CompleteToNRows: fill missing child rows (C# child.CompleteToNRows > rowCount).
@@ -201,6 +206,15 @@ func (e *ReportEngine) RunDataBandRowsKeep(db *band.DataBand, rows int, keepFirs
 //
 // This is the primary entry point used by RunBands when a DataBand has a DataSource.
 func (e *ReportEngine) RunDataBandFull(db *band.DataBand) error {
+	// When the page has unlimited height and page-level multi-column layout,
+	// propagate the page column count to the DataBand so it renders as columns.
+	// Mirrors C# RunDataBand line 49:
+	//   if (page.Columns.Count > 1 && Report.Engine.UnlimitedHeight)
+	//       dataBand.Columns.Count = page.Columns.Count;
+	if e.currentPage != nil && e.currentPage.Columns.Count > 1 && e.currentPage.UnlimitedHeight {
+		_ = db.Columns().SetCount(e.currentPage.Columns.Count)
+	}
+
 	// Resolve data source from Dictionary by alias if not already bound directly.
 	ds := db.DataSourceRef()
 	if ds == nil {
@@ -408,8 +422,10 @@ func (e *ReportEngine) RunDataBandFull(db *band.DataBand) error {
 		isFirstRow = false
 		someRowsPrinted = true
 
-		// Multi-column: break after first row.
-		if db.Columns().Count() > 1 {
+		// DownThenAcross: renderDownThenAcross already handled all rows in
+		// showDataBandBody, so break the outer loop here (mirrors C# break after
+		// ShowDataBand when Columns.Count > 1, lines 148-149).
+		if db.Columns().Count() > 1 && db.Columns().Layout == band.ColumnLayoutDownThenAcross {
 			break
 		}
 
@@ -421,7 +437,8 @@ func (e *ReportEngine) RunDataBandFull(db *band.DataBand) error {
 		}
 	}
 
-	// Flush any partially-filled column row.
+	// Flush any partially-filled column row (AcrossThenDown only; DownThenAcross
+	// positions its own cursor).
 	e.flushColumnRow(cs)
 
 	// CompleteToNRows: fill missing child rows (C# child.CompleteToNRows > rowCount).
@@ -540,20 +557,35 @@ func footerBand(ftr *band.DataFooterBand) *band.BandBase {
 }
 
 // showDataBandBody mirrors C# ShowDataBand.
+//
+// For multi-column bands the C# ShowDataBand (lines 194-209) dispatches to
+// RenderMultiColumnBand which handles ALL rows internally:
+//   - AcrossThenDown: the outer loop still iterates per-row, with
+//     showBandInColumn tracking column position across calls.
+//   - DownThenAcross: all rows are handled here in one shot via
+//     renderDownThenAcross; the caller must break after this returns.
 func (e *ReportEngine) showDataBandBody(db *band.DataBand, rowCount int, cs *dataBandColumnState) {
 	if db.Columns().Count() > 1 {
 		db.SetWidth(db.Columns().ActualWidth())
+		if db.Columns().Layout == band.ColumnLayoutDownThenAcross {
+			// DownThenAcross: handle all rows at once (C# RenderBandDownThenAcross).
+			// The outer loop must break after this call returns.
+			e.renderDownThenAcross(db, rowCount)
+		} else {
+			// AcrossThenDown: one call per row; showBandInColumn tracks column index.
+			e.showBandInColumn(db, cs)
+		}
+		return
+	}
+	// Single-column handling.
+	// ResetPageNumber handling.
+	if db.ResetPageNumber() && (db.FirstRowStartsNewPage() || db.RowNo() > 1) {
+		e.ResetLogicalPageNumber()
+	}
+	if cs != nil {
 		e.showBandInColumn(db, cs)
 	} else {
-		// ResetPageNumber handling.
-		if db.ResetPageNumber() && (db.FirstRowStartsNewPage() || db.RowNo() > 1) {
-			e.ResetLogicalPageNumber()
-		}
-		if cs != nil {
-			e.showBandInColumn(db, cs)
-		} else {
-			e.ShowFullBand(&db.BandBase)
-		}
+		e.ShowFullBand(&db.BandBase)
 	}
 }
 

@@ -655,7 +655,7 @@ func TestPopulateBandObjects2_NilCollection(t *testing.T) {
 	e := newBoostEngine(t)
 	pb := &preview.PreparedBand{Name: "test2", Top: 0, Height: 20}
 	// Should return immediately without panic.
-	e.populateBandObjects2(nil, pb)
+	e.populateBandObjects2(nil, nil, pb)
 }
 
 // ── pages.go: bandHeight — non-hasHeight path ─────────────────────────────────

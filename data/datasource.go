@@ -147,6 +147,21 @@ func (ds *BaseDataSource) EOF() bool {
 	return ds.currentRow >= len(ds.rows)
 }
 
+// BOF returns true when the cursor is before the first row (not yet positioned).
+// Mirrors C# DataSourceBase.BOF property (DataSourceBase.cs):
+// CurrentRowNo < 0.
+func (ds *BaseDataSource) BOF() bool {
+	return ds.currentRow < 0
+}
+
+// HasMoreRows returns true when the cursor is positioned at a valid row and
+// there are more rows to consume (CurrentRowNo < RowCount).
+// Mirrors C# DataSourceBase.HasMoreRows property (DataSourceBase.cs lines 90-93):
+// CurrentRowNo < RowCount.
+func (ds *BaseDataSource) HasMoreRows() bool {
+	return ds.currentRow >= 0 && ds.currentRow < len(ds.rows)
+}
+
 // RowCount returns the number of rows.
 func (ds *BaseDataSource) RowCount() int { return len(ds.rows) }
 
@@ -181,6 +196,12 @@ func (ds *BaseDataSource) Close() error {
 // No lower-bound check — callers must ensure position validity.
 func (ds *BaseDataSource) Prior() {
 	ds.currentRow--
+}
+
+// SetCurrentRowNo directly positions the cursor to the given 0-based row index.
+// Mirrors C# DataSourceBase.CurrentRowNo setter used in ReportEngine.Groups.cs line 226.
+func (ds *BaseDataSource) SetCurrentRowNo(n int) {
+	ds.currentRow = n
 }
 
 // EnsureInit initialises the data source if it has not been initialised yet.

@@ -237,7 +237,7 @@ func (e *ReportEngine) showBandNoAdvance(b report.Base) {
 		}
 		type hasObjects interface{ Objects() *report.ObjectCollection }
 		if ho, ok := b.(hasObjects); ok {
-			e.populateBandObjects2(ho.Objects(), pb)
+			e.populateBandObjects2(nil, ho.Objects(), pb)
 		}
 		_ = e.preparedPages.AddBand(pb)
 	}
@@ -397,7 +397,7 @@ func (e *ReportEngine) showBand(b report.Base) {
 		}
 		if ho, ok := b.(hasObjects); ok {
 			tmp := &preview.PreparedBand{}
-			e.populateBandObjects2(ho.Objects(), tmp)
+			e.populateBandObjects2(nil, ho.Objects(), tmp)
 			yOff := e.outputBandOffsetY + e.curY
 			for _, po := range tmp.Objects {
 				po.Left += e.outputBandOffsetX
@@ -430,7 +430,7 @@ func (e *ReportEngine) showBand(b report.Base) {
 			Objects() *report.ObjectCollection
 		}
 		if ho, ok := b.(hasObjects); ok {
-			e.populateBandObjects2(ho.Objects(), pb)
+			e.populateBandObjects2(extractBandBase(b), ho.Objects(), pb)
 		}
 		// Apply CanGrow/CanShrink adjustments to object positions and sizes.
 		// This mirrors the same logic in showFullBandOnce for data bands.

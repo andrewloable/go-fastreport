@@ -1,6 +1,9 @@
 package data
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+)
 
 // Dictionary is the central registry for all data components in a report:
 // data sources, connections, relations, parameters, system variables, and totals.
@@ -104,6 +107,34 @@ func (d *Dictionary) RegisterData(value any, name string) DataSource {
 	ds := NewBusinessObjectDataSource(name, value)
 	d.AddDataSource(ds)
 	return ds
+}
+
+// CreateUniqueAlias returns an alias that does not collide with any existing
+// data source alias in the dictionary. When alias is already unique it is
+// returned as-is; otherwise a numeric suffix is appended until unique.
+// Mirrors C# DictionaryHelper.CreateUniqueAlias (DictionaryHelper.cs:80-90).
+func (d *Dictionary) CreateUniqueAlias(alias string) string {
+	base := alias
+	i := 1
+	for d.FindDataSourceByAlias(alias) != nil {
+		alias = fmt.Sprintf("%s%d", base, i)
+		i++
+	}
+	return alias
+}
+
+// CreateUniqueName returns a data source name that does not collide with any
+// existing data source name in the dictionary. When name is already unique it
+// is returned as-is; otherwise a numeric suffix is appended until unique.
+// Mirrors C# DictionaryHelper.CreateUniqueName (DictionaryHelper.cs:92-100).
+func (d *Dictionary) CreateUniqueName(name string) string {
+	base := name
+	i := 1
+	for d.FindDataSourceByName(name) != nil {
+		name = fmt.Sprintf("%s%d", base, i)
+		i++
+	}
+	return name
 }
 
 // -----------------------------------------------------------------------

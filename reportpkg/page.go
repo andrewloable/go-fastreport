@@ -37,8 +37,29 @@ type PageColumns struct {
 	Positions []float32
 }
 
+// SetCount sets the column count and auto-calculates Width and Positions
+// from the page paper dimensions. Count must be >= 1.
+// C# ref: PageColumns.Count setter (PageColumns.cs:28-41).
+func (pc *PageColumns) SetCount(page *ReportPage, count int) error {
+	if count <= 0 {
+		return fmt.Errorf("PageColumns.Count: value must be greater than 0, got %d", count)
+	}
+	pc.Count = count
+	if page != nil {
+		pc.Width = (page.PaperWidth - page.LeftMargin - page.RightMargin) / float32(count)
+	}
+	pc.Positions = make([]float32, count)
+	for i := range pc.Positions {
+		pc.Positions[i] = float32(i) * pc.Width
+	}
+	return nil
+}
+
 // Assign copies all fields from src into this PageColumns.
-// Mirrors C# PageColumns.Assign (PageColumns.cs).
+// C# ref: PageColumns.Assign (PageColumns.cs:94-99).
+// Note: C# Assign calls Count setter (triggering auto-calculation from page),
+// then immediately overrides Width and Positions — net result is identical to
+// a direct field copy, which is what this Go implementation does.
 func (pc *PageColumns) Assign(src PageColumns) {
 	pc.Count = src.Count
 	pc.Width = src.Width
@@ -887,4 +908,81 @@ func (p *ReportPage) Deserialize(r report.Reader) error {
 	}
 	p.Watermark.Deserialize(r)
 	return nil
+}
+
+// GetExpressions returns all expressions used by this page.
+// Includes the OutlineExpression when set.
+// Mirrors C# ReportPage.GetExpressions (ReportPage.cs line 1409–1418).
+func (p *ReportPage) GetExpressions() []string {
+	var exprs []string
+	if p.OutlineExpression != "" {
+		exprs = append(exprs, p.OutlineExpression)
+	}
+	return exprs
+}
+
+// Assign copies all ReportPage properties from src (excluding bands and children).
+// Mirrors C# ReportPage.Assign (ReportPage.cs line 1080–1099).
+func (p *ReportPage) Assign(src *ReportPage) {
+	if src == nil {
+		return
+	}
+	p.BaseObject.SetName(src.Name())
+	p.ExportAlias = src.ExportAlias
+	p.Landscape = src.Landscape
+	p.PaperWidth = src.PaperWidth
+	p.PaperHeight = src.PaperHeight
+	p.RawPaperSize = src.RawPaperSize
+	p.LeftMargin = src.LeftMargin
+	p.TopMargin = src.TopMargin
+	p.RightMargin = src.RightMargin
+	p.BottomMargin = src.BottomMargin
+	p.MirrorMargins = src.MirrorMargins
+	p.FirstPageSource = src.FirstPageSource
+	p.OtherPagesSource = src.OtherPagesSource
+	p.LastPageSource = src.LastPageSource
+	p.Duplex = src.Duplex
+	p.Columns.Assign(src.Columns)
+	p.TitleBeforeHeader = src.TitleBeforeHeader
+	p.OutlineExpression = src.OutlineExpression
+	p.PrintOnPreviousPage = src.PrintOnPreviousPage
+	p.ResetPageNumber = src.ResetPageNumber
+	p.ExtraDesignWidth = src.ExtraDesignWidth
+	p.StartOnOddPage = src.StartOnOddPage
+	p.BackPage = src.BackPage
+	p.BackPageOddEven = src.BackPageOddEven
+	p.UnlimitedHeight = src.UnlimitedHeight
+	p.PrintOnRollPaper = src.PrintOnRollPaper
+	p.UnlimitedWidth = src.UnlimitedWidth
+	p.border = src.border
+	p.fill = src.fill
+	if src.Watermark != nil {
+		if p.Watermark == nil {
+			p.Watermark = NewWatermark()
+		}
+		*p.Watermark = *src.Watermark
+	}
+	p.CreatePageEvent = src.CreatePageEvent
+	p.StartPageEvent = src.StartPageEvent
+	p.FinishPageEvent = src.FinishPageEvent
+	p.ManualBuildEvent = src.ManualBuildEvent
+	p.PrintableExpression = src.PrintableExpression
+}
+
+// SetColumnsCount sets the number of columns and auto-calculates Width and Positions
+// from the current page margins. Count must be >= 1.
+// Mirrors C# PageColumns.Count setter (PageColumns.cs line 27–42).
+func (p *ReportPage) SetColumnsCount(count int) {
+	if count <= 0 {
+		count = 1
+	}
+	p.Columns.Count = count
+	usableWidth := p.PaperWidth - p.LeftMargin - p.RightMargin
+	if count > 0 {
+		p.Columns.Width = usableWidth / float32(count)
+	}
+	p.Columns.Positions = make([]float32, count)
+	for i := 0; i < count; i++ {
+		p.Columns.Positions[i] = float32(i) * p.Columns.Width
+	}
 }

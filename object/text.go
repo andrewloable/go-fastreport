@@ -2,6 +2,8 @@ package object
 
 import (
 	"image/color"
+	"strconv"
+	"strings"
 
 	"github.com/andrewloable/go-fastreport/format"
 	"github.com/andrewloable/go-fastreport/report"
@@ -530,6 +532,55 @@ func parseTextRenderType(s string) TextRenderType {
 	}
 }
 
+// StringTrimming specifies how to trim characters from a string that does not
+// completely fit into a layout shape. Mirrors System.Drawing.StringTrimming.
+type StringTrimming int
+
+const (
+	StringTrimmingNone             StringTrimming = iota // no trimming (default)
+	StringTrimmingCharacter                              // trim at character boundary
+	StringTrimmingWord                                   // trim at word boundary
+	StringTrimmingEllipsisCharacter                      // ellipsis at character boundary
+	StringTrimmingEllipsisWord                           // ellipsis at word boundary
+	StringTrimmingEllipsisPath                           // ellipsis replacing path separator
+)
+
+// formatStringTrimming converts StringTrimming to its FRX string name.
+func formatStringTrimming(t StringTrimming) string {
+	switch t {
+	case StringTrimmingCharacter:
+		return "Character"
+	case StringTrimmingWord:
+		return "Word"
+	case StringTrimmingEllipsisCharacter:
+		return "EllipsisCharacter"
+	case StringTrimmingEllipsisWord:
+		return "EllipsisWord"
+	case StringTrimmingEllipsisPath:
+		return "EllipsisPath"
+	default:
+		return "None"
+	}
+}
+
+// parseStringTrimming converts an FRX string to StringTrimming (handles both names and ints).
+func parseStringTrimming(s string) StringTrimming {
+	switch s {
+	case "Character", "1":
+		return StringTrimmingCharacter
+	case "Word", "2":
+		return StringTrimmingWord
+	case "EllipsisCharacter", "3":
+		return StringTrimmingEllipsisCharacter
+	case "EllipsisWord", "4":
+		return StringTrimmingEllipsisWord
+	case "EllipsisPath", "5":
+		return StringTrimmingEllipsisPath
+	default:
+		return StringTrimmingNone
+	}
+}
+
 // -----------------------------------------------------------------------
 // TextObject
 // -----------------------------------------------------------------------
@@ -551,7 +602,9 @@ type TextObject struct {
 	textColor         color.RGBA
 	fontWidthRatio    float32 // default 1.0
 	firstTabOffset    float32
-	tabWidth          float32
+	tabWidth          float32   // default 58 (C# default)
+	tabPositions      []float32 // custom tab stop positions in pixels
+	trimming          StringTrimming
 	clip              bool // default true
 	wysiwyg           bool
 	lineHeight        float32
@@ -582,6 +635,7 @@ func NewTextObject() *TextObject {
 		TextObjectBase: *NewTextObjectBase(),
 		wordWrap:       true,
 		fontWidthRatio: 1.0,
+		tabWidth:       58, // C# default: [DefaultValue(58f)]
 		clip:           true,
 		font:           style.DefaultFont(),
 		textColor:      color.RGBA{A: 255}, // opaque black
@@ -686,6 +740,21 @@ func (t *TextObject) TabWidth() float32 { return t.tabWidth }
 
 // SetTabWidth sets the tab width.
 func (t *TextObject) SetTabWidth(v float32) { t.tabWidth = v }
+
+// TabPositions returns the custom tab stop positions in pixels.
+// Returns nil when no custom tab stops have been set (TabWidth is used instead).
+// C# ref: TextObject.TabPositions (TextObject.cs line 466).
+func (t *TextObject) TabPositions() []float32 { return t.tabPositions }
+
+// SetTabPositions sets the custom tab stop positions.
+func (t *TextObject) SetTabPositions(positions []float32) { t.tabPositions = positions }
+
+// Trimming returns the string trimming mode.
+// C# ref: TextObject.Trimming (TextObject.cs line 540).
+func (t *TextObject) Trimming() StringTrimming { return t.trimming }
+
+// SetTrimming sets the string trimming mode.
+func (t *TextObject) SetTrimming(v StringTrimming) { t.trimming = v }
 
 // --- Rendering options ---
 
@@ -885,8 +954,21 @@ func (t *TextObject) Serialize(w report.Writer) error {
 	if t.firstTabOffset != 0 {
 		w.WriteFloat("FirstTabOffset", t.firstTabOffset)
 	}
-	if t.tabWidth != 0 {
+	if t.tabWidth != 58 { // 58 is the C# default
 		w.WriteFloat("TabWidth", t.tabWidth)
+	}
+	if len(t.tabPositions) > 0 {
+		// Serialize as comma-separated floats (matches C# FloatCollectionConverter).
+		// C# ref: TextObject.Serialize line 1430.
+		parts := make([]string, len(t.tabPositions))
+		for i, v := range t.tabPositions {
+			parts[i] = report.FormatFloat(v)
+		}
+		w.WriteStr("TabPositions", strings.Join(parts, ","))
+	}
+	if t.trimming != StringTrimmingNone {
+		// C# ref: TextObject.Serialize line 1422.
+		w.WriteStr("Trimming", formatStringTrimming(t.trimming))
 	}
 	if !t.clip {
 		w.WriteBool("Clip", false)
@@ -957,7 +1039,19 @@ func (t *TextObject) Deserialize(r report.Reader) error {
 	}
 	t.fontWidthRatio = r.ReadFloat("FontWidthRatio", 1.0)
 	t.firstTabOffset = r.ReadFloat("FirstTabOffset", 0)
-	t.tabWidth = r.ReadFloat("TabWidth", 0)
+	t.tabWidth = r.ReadFloat("TabWidth", 58) // 58 is the C# default
+	if s := r.ReadStr("TabPositions", ""); s != "" {
+		// Parse comma-separated floats (matches C# FloatCollectionConverter).
+		// C# ref: TextObject.TabPositions (TextObject.cs line 466).
+		rawParts := strings.Split(s, ",")
+		t.tabPositions = t.tabPositions[:0]
+		for _, p := range rawParts {
+			if v, err := strconv.ParseFloat(strings.TrimSpace(p), 32); err == nil {
+				t.tabPositions = append(t.tabPositions, float32(v))
+			}
+		}
+	}
+	t.trimming = parseStringTrimming(r.ReadStr("Trimming", "None"))
 	t.clip = r.ReadBool("Clip", true)
 	t.wysiwyg = r.ReadBool("Wysiwyg", false)
 	t.lineHeight = r.ReadFloat("LineHeight", 0)

@@ -1,10 +1,15 @@
 package reportpkg
 
 import (
+	"image/color"
+
 	"github.com/andrewloable/go-fastreport/report"
 	"github.com/andrewloable/go-fastreport/style"
 	"github.com/andrewloable/go-fastreport/utils"
 )
+
+// zeroRGBA is the zero value for color.RGBA (fully transparent black).
+var zeroRGBA = color.RGBA{}
 
 // stylesSerializer wraps a StyleSheet so it can be written as a <Styles>
 // child element via report.Writer.WriteObject.
@@ -55,21 +60,33 @@ func (s *styleEntrySerializer) Serialize(w report.Writer) error {
 	if !e.ApplyFont {
 		w.WriteBool("ApplyFont", false)
 	}
-	// Fill color.
-	transparent := [4]byte{}
-	if [4]byte{e.FillColor.R, e.FillColor.G, e.FillColor.B, e.FillColor.A} != transparent {
-		w.WriteStr("Fill.Color", utils.FormatColor(e.FillColor))
+	// Fill: use SerializeFill so gradient/hatch fills in StyleEntry are
+	// emitted correctly, matching C# StyleBase.Serialize (StyleBase.cs line 158).
+	// C# always writes the fill regardless of the ApplyFill flag; the flag
+	// controls application, not serialization. Prefer the rich Fill interface
+	// field when set; fall back to the legacy FillColor scalar.
+	var fillToWrite style.Fill
+	if e.Fill != nil {
+		fillToWrite = e.Fill
+	} else if e.FillColor != (zeroRGBA) {
+		fillToWrite = &style.SolidFill{Color: e.FillColor}
 	}
-	// Text fill color.
-	if [4]byte{e.TextColor.R, e.TextColor.G, e.TextColor.B, e.TextColor.A} != transparent {
-		w.WriteStr("TextFill.Color", utils.FormatColor(e.TextColor))
+	report.SerializeFill(w, "Fill", fillToWrite)
+	// TextFill: same pattern for text colour.
+	var textFillToWrite style.Fill
+	if e.TextFill != nil {
+		textFillToWrite = e.TextFill
+	} else if e.TextColor != (zeroRGBA) {
+		textFillToWrite = &style.SolidFill{Color: e.TextColor}
 	}
+	report.SerializeFill(w, "TextFill", textFillToWrite)
 	// Font.
 	if e.FontChanged && e.Font.Name != "" {
 		w.WriteStr("Font", style.FontToStr(e.Font))
 	}
 	// Border color (shared for all lines).
-	if [4]byte{e.BorderColor.R, e.BorderColor.G, e.BorderColor.B, e.BorderColor.A} != transparent {
+	var zeroColor [4]byte
+	if [4]byte{e.BorderColor.R, e.BorderColor.G, e.BorderColor.B, e.BorderColor.A} != zeroColor {
 		w.WriteStr("Border.Color", utils.FormatColor(e.BorderColor))
 	}
 	// Border visible lines.

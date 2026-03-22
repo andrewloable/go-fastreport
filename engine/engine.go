@@ -11,6 +11,7 @@ import (
 
 	"github.com/andrewloable/go-fastreport/band"
 	"github.com/andrewloable/go-fastreport/data"
+	"github.com/andrewloable/go-fastreport/object"
 	"github.com/andrewloable/go-fastreport/preview"
 	"github.com/andrewloable/go-fastreport/reportpkg"
 )
@@ -132,6 +133,13 @@ type ReportEngine struct {
 	// deferred object processing (see processat.go)
 	deferredObjects []deferredItem
 	stateHandlers   []EngineStateHandler
+
+	// customObjects tracks TextObjects with ProcessAtCustom so that
+	// ProcessObject(obj) can manually trigger deferred text evaluation.
+	// The map value is the closure that evaluates the text and updates
+	// the PreparedObject. Keyed by TextObject pointer.
+	// C# equivalent: objectsToProcess list filtered by ProcessInfo.TextObject.
+	customObjects map[*object.TextObject]func()
 
 	// ctx is an optional context for cancellation. Nil means no cancellation.
 	ctx context.Context
@@ -269,6 +277,62 @@ func (e *ReportEngine) Aborted() bool { return e.aborted }
 
 // Abort signals the engine to stop processing after the current band.
 func (e *ReportEngine) Abort() { e.aborted = true }
+
+// UnlimitedHeight returns whether the current page has unlimited (dynamic) height.
+// Mirrors C# ReportEngine.UnlimitedHeight property (ReportEngine.cs line 119-122):
+//
+//	public bool UnlimitedHeight { get { return page.UnlimitedHeight; } }
+func (e *ReportEngine) UnlimitedHeight() bool {
+	if e.currentPage == nil {
+		return false
+	}
+	return e.currentPage.UnlimitedHeight
+}
+
+// UnlimitedWidth returns whether the current page has unlimited (dynamic) width.
+// Mirrors C# ReportEngine.UnlimitedWidth property (ReportEngine.cs line 127-130).
+func (e *ReportEngine) UnlimitedWidth() bool {
+	if e.currentPage == nil {
+		return false
+	}
+	return e.currentPage.UnlimitedWidth
+}
+
+// UnlimitedHeightValue returns the current rendered height of the unlimited-height page.
+// Mirrors C# ReportEngine.UnlimitedHeightValue getter (ReportEngine.cs line 135-138).
+func (e *ReportEngine) UnlimitedHeightValue() float32 {
+	if e.currentPage == nil {
+		return 0
+	}
+	return e.currentPage.UnlimitedHeightValue
+}
+
+// SetUnlimitedHeightValue sets the current rendered height of the unlimited-height page.
+// Mirrors C# ReportEngine.UnlimitedHeightValue setter (ReportEngine.cs line 138).
+func (e *ReportEngine) SetUnlimitedHeightValue(v float32) {
+	if e.currentPage == nil {
+		return
+	}
+	e.currentPage.UnlimitedHeightValue = v
+}
+
+// UnlimitedWidthValue returns the current rendered width of the unlimited-width page.
+// Mirrors C# ReportEngine.UnlimitedWidthValue getter (ReportEngine.cs line 144-147).
+func (e *ReportEngine) UnlimitedWidthValue() float32 {
+	if e.currentPage == nil {
+		return 0
+	}
+	return e.currentPage.UnlimitedWidthValue
+}
+
+// SetUnlimitedWidthValue sets the current rendered width of the unlimited-width page.
+// Mirrors C# ReportEngine.UnlimitedWidthValue setter (ReportEngine.cs line 147).
+func (e *ReportEngine) SetUnlimitedWidthValue(v float32) {
+	if e.currentPage == nil {
+		return
+	}
+	e.currentPage.UnlimitedWidthValue = v
+}
 
 // ── Run ───────────────────────────────────────────────────────────────────────
 
@@ -518,10 +582,14 @@ func (e *ReportEngine) prepareToSecondPass() error {
 }
 
 // runReportPages iterates through the report's ReportPages and generates output.
-// Pages with Visible=false are skipped — they are used for drill-down / detail
-// pages that are only shown when triggered interactively (e.g. via Hyperlink
-// with Kind=DetailPage). This matches C# FastReport behaviour.
+// Pages with Visible=false or referenced as subreport detail pages are skipped.
+// This matches C# RunReportPages: if (page.Visible && page.Subreport == null).
 func (e *ReportEngine) runReportPages() error {
+	// Build the set of page names used as subreport detail pages.
+	// Those pages should not be rendered as top-level report pages.
+	// Mirrors C# RunReportPages line 92: page.Subreport == null check.
+	subreportPages := e.collectAllSubreportPageNames()
+
 	for _, pg := range e.report.Pages() {
 		if e.aborted {
 			break
@@ -531,6 +599,11 @@ func (e *ReportEngine) runReportPages() error {
 		}
 		// Skip invisible pages (drill-down/detail pages).
 		if !pg.Visible() {
+			continue
+		}
+		// Skip pages referenced as subreport detail pages.
+		// C# RunReportPages line 92: if (page.Subreport == null).
+		if subreportPages[pg.Name()] {
 			continue
 		}
 		// Evaluate PrintableExpression — mirrors C# ReportEngine.Pages.cs lines 87-90.

@@ -264,13 +264,38 @@ func (e *ReportEngine) SplitHardPageBreaks(b *band.BandBase) []*band.BandBase {
 // ShowBandWithPageBreaks renders band b, handling any hard page breaks.
 // This wraps showBand (in pages.go) to intercept bands that contain
 // objects with PageBreak=true.
+//
+// SplitHardPageBreaks mutates object Top values in-place (Go lacks Activator.CreateInstance
+// to clone arbitrary objects like C# does). We save the originals here and restore them
+// after rendering so the source band is not permanently modified.
+// Mirrors C# ReportEngine.Break.cs SplitHardPageBreaks cloneObj.Top = c.Top - offsetY.
 func (e *ReportEngine) ShowBandWithPageBreaks(b *band.BandBase) {
 	if e.BandHasHardPageBreaks(b) {
+		// Save original Top values before SplitHardPageBreaks mutates them.
+		type topSaver interface {
+			Top() float32
+			SetTop(float32)
+		}
+		n := b.Objects().Len()
+		origTops := make([]float32, n)
+		for i := 0; i < n; i++ {
+			if ts, ok := b.Objects().Get(i).(topSaver); ok {
+				origTops[i] = ts.Top()
+			}
+		}
+
 		for _, part := range e.SplitHardPageBreaks(b) {
 			if part.StartNewPage() {
 				e.startNewPageForCurrent()
 			}
 			e.showBand(part)
+		}
+
+		// Restore original Top values so the source band is not permanently modified.
+		for i := 0; i < n; i++ {
+			if ts, ok := b.Objects().Get(i).(topSaver); ok {
+				ts.SetTop(origTops[i])
+			}
 		}
 	} else {
 		e.showBand(b)

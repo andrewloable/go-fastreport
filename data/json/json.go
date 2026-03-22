@@ -16,10 +16,12 @@ import (
 
 // JSONDataSource is a DataSource backed by a JSON file or string.
 // It supports flat arrays of objects as rows, with nested objects
-// exposed as column values.
+// exposed as dot-notation columns (e.g. "address.city").
 //
 // If the root JSON is an array, each element becomes a row.
 // If the root JSON is an object, it is wrapped in a single-element array.
+//
+// This is the Go equivalent of FastReport.Data.JsonConnection.JsonTableDataSource.
 type JSONDataSource struct {
 	data.BaseDataSource
 
@@ -34,6 +36,16 @@ type JSONDataSource struct {
 	commandTimeout int
 	// httpHeaders are extra headers sent with HTTP URL requests.
 	httpHeaders map[string]string
+
+	// SimpleStructure enables simplified column discovery: when true, nested
+	// object fields are exposed as direct columns (e.g. "address.city").
+	// When false (the default), nested objects are stored as-is.
+	// Mirrors JsonTableDataSource.SimpleStructure (JsonTableDataSource.cs line 22).
+	SimpleStructure bool
+
+	// UpdateSchema forces schema regeneration on the next InitSchema call.
+	// Mirrors JsonTableDataSource.UpdateSchema (JsonTableDataSource.cs line 21).
+	UpdateSchema bool
 }
 
 // New creates a JSONDataSource with the given name.
@@ -55,12 +67,15 @@ func NewFromConnectionString(name, connectionString string) *JSONDataSource {
 
 // InitFromConnectionString re-initialises the data source from a FastReport
 // JSON connection string, overriding any previously configured source.
+// Mirrors JsonDataSourceConnection.InitConnection (JsonDataSourceConnection.cs).
 func (j *JSONDataSource) InitFromConnectionString(cs string) {
 	b := NewConnectionStringBuilder(cs)
 	if v := b.Json(); v != "" {
 		j.sourceString = v
 		j.sourcePath = ""
 	}
+	// Read SimpleStructure from connection string.
+	j.SimpleStructure = b.SimpleStructure()
 	// Encoding is informational only for now (JSON is typically UTF-8).
 }
 
@@ -98,6 +113,7 @@ func (j *JSONDataSource) SetHTTPHeaders(headers map[string]string) {
 func (j *JSONDataSource) HTTPHeaders() map[string]string { return j.httpHeaders }
 
 // Init loads and parses the JSON, populating the in-memory row store.
+// Mirrors JsonTableDataSource.LoadData + InitializeComponent (JsonTableDataSource.cs).
 func (j *JSONDataSource) Init() error {
 	raw, err := j.readSource()
 	if err != nil {
@@ -128,17 +144,15 @@ func (j *JSONDataSource) Init() error {
 		return fmt.Errorf("JSONDataSource %q: unsupported root type %T", j.Name(), root)
 	}
 
-	// Build columns from the union of all keys found in the first row.
+	// Build column set from the union of all keys found in the first row.
+	// When SimpleStructure is true, nested objects are flattened using
+	// dot-notation (e.g. "address.city"), matching C# SimpleStructure mode
+	// (JsonTableDataSource.cs InitSchema → simpleArray branch).
 	colSet := make(map[string]bool)
 	var colOrder []string
 	if len(items) > 0 {
 		if firstObj, ok := items[0].(map[string]any); ok {
-			for k := range firstObj {
-				if !colSet[k] {
-					colSet[k] = true
-					colOrder = append(colOrder, k)
-				}
-			}
+			collectColumns(firstObj, "", colSet, &colOrder, j.SimpleStructure)
 		}
 	}
 	j.BaseDataSource = *data.NewBaseDataSource(j.Name())
@@ -147,11 +161,18 @@ func (j *JSONDataSource) Init() error {
 	}
 
 	// Load rows.
-	for _, item := range items {
+	for i, item := range items {
 		row := make(map[string]any)
+		// Always expose the row index as "index" (mirrors C# JsonTableDataSource
+		// GetValueByColumn "index" case, JsonTableDataSource.cs line 241).
+		row["index"] = i
 		if obj, ok := item.(map[string]any); ok {
-			for k, v := range obj {
-				row[k] = v
+			if j.SimpleStructure {
+				flattenInto(row, obj, "")
+			} else {
+				for k, v := range obj {
+					row[k] = v
+				}
 			}
 		} else {
 			// scalar value: expose as "_value" column.
@@ -160,7 +181,15 @@ func (j *JSONDataSource) Init() error {
 		j.AddRow(row)
 	}
 
+	j.UpdateSchema = false
 	return j.BaseDataSource.Init()
+}
+
+// InitSchema infers column schema from the loaded JSON and updates the column
+// list when UpdateSchema is true or no columns exist. Mirrors
+// JsonTableDataSource.InitSchema() (JsonTableDataSource.cs lines 150-163).
+func (j *JSONDataSource) InitSchema() error {
+	return j.Init()
 }
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
@@ -205,6 +234,47 @@ func (j *JSONDataSource) readSource() ([]byte, error) {
 		return io.ReadAll(f)
 	}
 	return nil, fmt.Errorf("no source configured (set FilePath or JSON)")
+}
+
+// collectColumns recursively collects column keys from a JSON object.
+// When flatten is true, nested objects are traversed and their keys are exposed
+// with dot-notation prefix (e.g. "address.city"). When false, only top-level
+// keys are collected. Mirrors the C# SimpleStructure schema inference in
+// JsonTableDataSource.InitSchema (JsonTableDataSource.cs lines 254-294).
+func collectColumns(obj map[string]any, prefix string, seen map[string]bool, order *[]string, flatten bool) {
+	for k, v := range obj {
+		fullKey := k
+		if prefix != "" {
+			fullKey = prefix + "." + k
+		}
+		if seen[fullKey] {
+			continue
+		}
+		if flatten {
+			if nested, ok := v.(map[string]any); ok {
+				collectColumns(nested, fullKey, seen, order, flatten)
+				continue
+			}
+		}
+		seen[fullKey] = true
+		*order = append(*order, fullKey)
+	}
+}
+
+// flattenInto copies all key-value pairs from obj into dst, using dot-notation
+// for nested objects (e.g. "address.city" -> dst["address.city"] = "NYC").
+func flattenInto(dst map[string]any, obj map[string]any, prefix string) {
+	for k, v := range obj {
+		fullKey := k
+		if prefix != "" {
+			fullKey = prefix + "." + k
+		}
+		if nested, ok := v.(map[string]any); ok {
+			flattenInto(dst, nested, fullKey)
+		} else {
+			dst[fullKey] = v
+		}
+	}
 }
 
 // navigate traverses a decoded JSON value following a dot-separated path.

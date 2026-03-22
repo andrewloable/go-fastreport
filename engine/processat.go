@@ -1,5 +1,7 @@
 package engine
 
+import "github.com/andrewloable/go-fastreport/object"
+
 // processat.go implements a simplified deferred-processing mechanism.
 // In the full FastReport engine, TextObjects with ProcessAt != Default are
 // queued and processed when the matching EngineState event fires (e.g.
@@ -32,10 +34,15 @@ type EngineStateHandler func(sender any, state EngineState)
 // When repeat is true, the handler re-queues itself after firing so it fires
 // on every occurrence of state (e.g. every PageFinished). One-shot handlers
 // (repeat=false) are removed after the first matching event.
+// senderPred, when non-nil, is evaluated against the sender argument of
+// OnStateChanged; the handler only fires when senderPred returns true.
+// This mirrors the C# ProcessInfo.Process(sender, state) sender-check logic
+// for DataFinished / GroupFinished state events (ProcessAt.cs lines 115-137).
 type deferredItem struct {
-	state   EngineState
-	handler func()
-	repeat  bool
+	state      EngineState
+	handler    func()
+	repeat     bool
+	senderPred func(any) bool // nil = always match sender
 }
 
 // OnStateChanged fires all registered deferred handlers that match state.
@@ -48,7 +55,8 @@ func (e *ReportEngine) OnStateChanged(sender any, state EngineState) {
 	current := e.deferredObjects
 	e.deferredObjects = e.deferredObjects[:0]
 	for _, item := range current {
-		if item.state == state {
+		senderOK := item.senderPred == nil || item.senderPred(sender)
+		if item.state == state && senderOK {
 			item.handler()
 			if item.repeat {
 				// Re-queue repeating handler for next occurrence.
@@ -89,4 +97,68 @@ func (e *ReportEngine) AddStateHandler(h EngineStateHandler) {
 // ClearDeferredHandlers removes all pending deferred handlers.
 func (e *ReportEngine) ClearDeferredHandlers() {
 	e.deferredObjects = nil
+}
+
+// RegisterCustomObject registers a TextObject with ProcessAtCustom for later
+// manual processing via ProcessObject. The fn closure evaluates the object's
+// text expression and updates the corresponding PreparedObject.
+// Called from populateBandObjects2 when ProcessAt == ProcessAtCustom.
+// Mirrors C# AddObjectToProcess (ProcessAt.cs line 199-205).
+func (e *ReportEngine) RegisterCustomObject(txt *object.TextObject, fn func()) {
+	if e.customObjects == nil {
+		e.customObjects = make(map[*object.TextObject]func())
+	}
+	e.customObjects[txt] = fn
+}
+
+// ProcessObject manually triggers deferred evaluation for a TextObject with
+// ProcessAt == Custom. This is the Go equivalent of C# ReportEngine.ProcessObject
+// (ProcessAt.cs lines 216-228). After processing, the object is removed from
+// the custom queue so it is not processed again.
+func (e *ReportEngine) ProcessObject(txt *object.TextObject) {
+	if e.customObjects == nil {
+		return
+	}
+	fn, ok := e.customObjects[txt]
+	if !ok {
+		return
+	}
+	fn()
+	delete(e.customObjects, txt)
+}
+
+// AddSenderDeferredHandler registers a one-shot deferred handler that only
+// fires when the state matches AND senderPred returns true for the event's
+// sender. Used for ProcessAtDataFinished and ProcessAtGroupFinished to match
+// the specific DataBand or GroupHeaderBand that triggered the state transition.
+// Mirrors C# ProcessInfo.Process(object sender, EngineState state) lines 110-154.
+func (e *ReportEngine) AddSenderDeferredHandler(state EngineState, senderPred func(any) bool, fn func()) {
+	e.deferredObjects = append(e.deferredObjects, deferredItem{
+		state: state, handler: fn, senderPred: senderPred,
+	})
+}
+
+// AddMultipleHandler registers a one-shot handler that fires when any of the
+// supplied states is reached. After the first matching state event fires, the
+// handler is removed (one-shot semantics across all listed states).
+// Mirrors the C# concept of ProcessInfo where a TextObject with ProcessAt set
+// can match multiple engine states before deciding to fire. In Go, this is
+// implemented by registering separate one-shot deferredItems for each state
+// and using a shared fired flag so only the first match triggers the handler.
+// Passing an empty states slice is a no-op.
+func (e *ReportEngine) AddMultipleHandler(states []EngineState, fn func()) {
+	if len(states) == 0 {
+		return
+	}
+	fired := false
+	wrapper := func() {
+		if fired {
+			return
+		}
+		fired = true
+		fn()
+	}
+	for _, s := range states {
+		e.deferredObjects = append(e.deferredObjects, deferredItem{state: s, handler: wrapper, repeat: false})
+	}
 }

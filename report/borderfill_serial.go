@@ -374,178 +374,188 @@ func deserializeBorder(r Reader, b *style.Border) {
 
 // ── Fill ──────────────────────────────────────────────────────────────────────
 
-// serializeFill writes Fill properties that differ from the FRX defaults.
-// The default fill is SolidFill with transparent colour; only non-transparent
-// solid fills and all non-solid fills are emitted.
-func serializeFill(w Writer, f style.Fill) {
+// SerializeFill writes fill properties that differ from the FRX defaults using
+// the given prefix (e.g. "Fill" or "TextFill"). The default fill is SolidFill
+// with transparent colour; only non-transparent solid fills and all non-solid
+// fills are emitted.
+// C# ref: FillBase.Serialize(FRWriter writer, string prefix, FillBase fill)
+// (Fills.cs lines 71-75) and per-type overrides.
+func SerializeFill(w Writer, prefix string, f style.Fill) {
 	if f == nil {
 		return
 	}
 	transparent := color.RGBA{}
+	dot := prefix + "."
 
 	switch ft := f.(type) {
 	case *style.SolidFill:
-		// No "Fill" type attribute needed (Solid is the implicit default).
+		// No type attribute needed (Solid is the implicit default).
 		// Only write color when non-transparent.
 		if ft.Color != transparent {
-			w.WriteStr("Fill.Color", utils.FormatColor(ft.Color))
+			w.WriteStr(dot+"Color", utils.FormatColor(ft.Color))
 		}
 
 	case *style.LinearGradientFill:
-		w.WriteStr("Fill", "LinearGradient")
+		w.WriteStr(prefix, "LinearGradient")
 		if ft.StartColor != transparent {
-			w.WriteStr("Fill.StartColor", utils.FormatColor(ft.StartColor))
+			w.WriteStr(dot+"StartColor", utils.FormatColor(ft.StartColor))
 		}
 		if ft.EndColor != transparent {
-			w.WriteStr("Fill.EndColor", utils.FormatColor(ft.EndColor))
+			w.WriteStr(dot+"EndColor", utils.FormatColor(ft.EndColor))
 		}
 		if ft.Angle != 0 {
-			w.WriteInt("Fill.Angle", ft.Angle)
+			w.WriteInt(dot+"Angle", ft.Angle)
 		}
 		if ft.Focus != 0 {
-			w.WriteFloat("Fill.Focus", ft.Focus)
+			w.WriteFloat(dot+"Focus", ft.Focus)
 		}
 		// Default Contrast in C# is 100 (mapped to 1.0 in Go).
 		if ft.Contrast != 1 {
-			w.WriteFloat("Fill.Contrast", ft.Contrast)
+			w.WriteFloat(dot+"Contrast", ft.Contrast)
 		}
 
 	case *style.GlassFill:
-		w.WriteStr("Fill", "Glass")
+		w.WriteStr(prefix, "Glass")
 		if ft.Color != transparent {
-			w.WriteStr("Fill.Color", utils.FormatColor(ft.Color))
+			w.WriteStr(dot+"Color", utils.FormatColor(ft.Color))
 		}
 		// Default Blend is 0.2 (C# uses 20, but we map to 0–1).
 		if ft.Blend != 0.2 {
-			w.WriteFloat("Fill.Blend", ft.Blend)
+			w.WriteFloat(dot+"Blend", ft.Blend)
 		}
 		// Default Hatch is true.
 		if !ft.Hatch {
-			w.WriteBool("Fill.Hatch", false)
+			w.WriteBool(dot+"Hatch", false)
 		}
 
 	case *style.HatchFill:
-		w.WriteStr("Fill", "Hatch")
+		w.WriteStr(prefix, "Hatch")
 		if ft.ForeColor != transparent {
-			w.WriteStr("Fill.ForeColor", utils.FormatColor(ft.ForeColor))
+			w.WriteStr(dot+"ForeColor", utils.FormatColor(ft.ForeColor))
 		}
 		if ft.BackColor != transparent {
-			w.WriteStr("Fill.BackColor", utils.FormatColor(ft.BackColor))
+			w.WriteStr(dot+"BackColor", utils.FormatColor(ft.BackColor))
 		}
 		if ft.Style != 0 {
-			w.WriteStr("Fill.Style", formatHatchStyle(ft.Style))
+			w.WriteStr(dot+"Style", formatHatchStyle(ft.Style))
 		}
 
 	case *style.PathGradientFill:
-		w.WriteStr("Fill", "PathGradient")
+		w.WriteStr(prefix, "PathGradient")
 		if ft.CenterColor != transparent {
-			w.WriteStr("Fill.CenterColor", utils.FormatColor(ft.CenterColor))
+			w.WriteStr(dot+"CenterColor", utils.FormatColor(ft.CenterColor))
 		}
 		if ft.EdgeColor != transparent {
-			w.WriteStr("Fill.EdgeColor", utils.FormatColor(ft.EdgeColor))
+			w.WriteStr(dot+"EdgeColor", utils.FormatColor(ft.EdgeColor))
 		}
 		// Default style is Elliptic — only write when Rectangular.
 		if ft.Style != style.PathGradientElliptic {
-			w.WriteStr("Fill.Style", formatPathGradientStyle(ft.Style))
+			w.WriteStr(dot+"Style", formatPathGradientStyle(ft.Style))
 		}
 
 	case *style.TextureFill:
-		w.WriteStr("Fill", "Texture")
+		w.WriteStr(prefix, "Texture")
 		if ft.ImageWidth != 0 {
-			w.WriteInt("Fill.ImageWidth", ft.ImageWidth)
+			w.WriteInt(dot+"ImageWidth", ft.ImageWidth)
 		}
 		if ft.ImageHeight != 0 {
-			w.WriteInt("Fill.ImageHeight", ft.ImageHeight)
+			w.WriteInt(dot+"ImageHeight", ft.ImageHeight)
 		}
 		if ft.PreserveAspectRatio {
-			w.WriteBool("Fill.PreserveAspectRatio", true)
+			w.WriteBool(dot+"PreserveAspectRatio", true)
 		}
 		if ft.WrapMode != style.WrapModeTile {
-			w.WriteStr("Fill.WrapMode", formatWrapMode(ft.WrapMode))
+			w.WriteStr(dot+"WrapMode", formatWrapMode(ft.WrapMode))
 		}
 		if ft.ImageOffsetX != 0 {
-			w.WriteInt("Fill.ImageOffsetX", ft.ImageOffsetX)
+			w.WriteInt(dot+"ImageOffsetX", ft.ImageOffsetX)
 		}
 		if ft.ImageOffsetY != 0 {
-			w.WriteInt("Fill.ImageOffsetY", ft.ImageOffsetY)
+			w.WriteInt(dot+"ImageOffsetY", ft.ImageOffsetY)
 		}
 		// Write ImageIndex when set (BlobStore reference path).
 		// C# ref: Fills.cs lines 1062-1063.
 		if ft.ImageIndex >= 0 {
-			w.WriteInt("Fill.ImageIndex", ft.ImageIndex)
+			w.WriteInt(dot+"ImageIndex", ft.ImageIndex)
 		}
 		if len(ft.ImageData) > 0 {
-			w.WriteStr("Fill.ImageData", base64.StdEncoding.EncodeToString(ft.ImageData))
+			w.WriteStr(dot+"ImageData", base64.StdEncoding.EncodeToString(ft.ImageData))
 		}
 
 	// NoneFill and unknown types: no output.
 	}
 }
 
-// deserializeFill reads Fill properties from r and returns the appropriate Fill
-// implementation. current is used as a base for SolidFill (to preserve any
-// existing colour when the type attribute is absent).
-func deserializeFill(r Reader, current style.Fill) style.Fill {
-	fillType := r.ReadStr("Fill", "")
+// serializeFill is the internal helper that uses the "Fill" prefix.
+func serializeFill(w Writer, f style.Fill) { SerializeFill(w, "Fill", f) }
+
+// DeserializeFill reads fill properties from r with the given prefix (e.g.
+// "Fill" or "TextFill") and returns the appropriate Fill implementation.
+// current is used as a base for SolidFill (to preserve any existing colour
+// when the type attribute is absent).
+// C# ref: FillBase.Deserialize(FRReader reader, string prefix) (Fills.cs).
+func DeserializeFill(r Reader, prefix string, current style.Fill) style.Fill {
+	fillType := r.ReadStr(prefix, "")
+	dot := prefix + "."
 
 	switch fillType {
 	case "LinearGradient":
 		f := &style.LinearGradientFill{Contrast: 1}
-		if s := r.ReadStr("Fill.StartColor", ""); s != "" {
+		if s := r.ReadStr(dot+"StartColor", ""); s != "" {
 			if c, err := utils.ParseColor(s); err == nil {
 				f.StartColor = c
 			}
 		}
-		if s := r.ReadStr("Fill.EndColor", ""); s != "" {
+		if s := r.ReadStr(dot+"EndColor", ""); s != "" {
 			if c, err := utils.ParseColor(s); err == nil {
 				f.EndColor = c
 			}
 		}
-		f.Angle = r.ReadInt("Fill.Angle", 0)
-		f.Focus = r.ReadFloat("Fill.Focus", 0)
-		f.Contrast = r.ReadFloat("Fill.Contrast", 1)
+		f.Angle = r.ReadInt(dot+"Angle", 0)
+		f.Focus = r.ReadFloat(dot+"Focus", 0)
+		f.Contrast = r.ReadFloat(dot+"Contrast", 1)
 		return f
 
 	case "Glass":
 		f := &style.GlassFill{Blend: 0.2, Hatch: true}
-		if s := r.ReadStr("Fill.Color", ""); s != "" {
+		if s := r.ReadStr(dot+"Color", ""); s != "" {
 			if c, err := utils.ParseColor(s); err == nil {
 				f.Color = c
 			}
 		}
-		f.Blend = r.ReadFloat("Fill.Blend", 0.2)
-		f.Hatch = r.ReadBool("Fill.Hatch", true)
+		f.Blend = r.ReadFloat(dot+"Blend", 0.2)
+		f.Hatch = r.ReadBool(dot+"Hatch", true)
 		return f
 
 	case "Hatch":
 		f := &style.HatchFill{}
-		if s := r.ReadStr("Fill.ForeColor", ""); s != "" {
+		if s := r.ReadStr(dot+"ForeColor", ""); s != "" {
 			if c, err := utils.ParseColor(s); err == nil {
 				f.ForeColor = c
 			}
 		}
-		if s := r.ReadStr("Fill.BackColor", ""); s != "" {
+		if s := r.ReadStr(dot+"BackColor", ""); s != "" {
 			if c, err := utils.ParseColor(s); err == nil {
 				f.BackColor = c
 			}
 		}
-		f.Style = parseHatchStyle(r.ReadStr("Fill.Style", "Horizontal"))
+		f.Style = parseHatchStyle(r.ReadStr(dot+"Style", "Horizontal"))
 		return f
 
 	case "PathGradient":
 		// Mirrors FastReport.PathGradientFill — CenterColor, EdgeColor, Style.
 		f := &style.PathGradientFill{}
-		if s := r.ReadStr("Fill.CenterColor", ""); s != "" {
+		if s := r.ReadStr(dot+"CenterColor", ""); s != "" {
 			if c, err := utils.ParseColor(s); err == nil {
 				f.CenterColor = c
 			}
 		}
-		if s := r.ReadStr("Fill.EdgeColor", ""); s != "" {
+		if s := r.ReadStr(dot+"EdgeColor", ""); s != "" {
 			if c, err := utils.ParseColor(s); err == nil {
 				f.EdgeColor = c
 			}
 		}
-		f.Style = parsePathGradientStyle(r.ReadStr("Fill.Style", "Elliptic"))
+		f.Style = parsePathGradientStyle(r.ReadStr(dot+"Style", "Elliptic"))
 		return f
 
 	case "Texture":
@@ -554,16 +564,16 @@ func deserializeFill(r Reader, current style.Fill) style.Fill {
 		// via BlobStore.Get(ImageIndex) if a BlobStore is available.
 		// C# ref: TextureFill.Deserialize (Fills.cs lines 1068-1079).
 		f := style.NewTextureFill()
-		f.ImageWidth = r.ReadInt("Fill.ImageWidth", 0)
-		f.ImageHeight = r.ReadInt("Fill.ImageHeight", 0)
-		f.PreserveAspectRatio = r.ReadBool("Fill.PreserveAspectRatio", false)
-		f.WrapMode = parseWrapMode(r.ReadStr("Fill.WrapMode", "Tile"))
-		f.ImageOffsetX = r.ReadInt("Fill.ImageOffsetX", 0)
-		f.ImageOffsetY = r.ReadInt("Fill.ImageOffsetY", 0)
+		f.ImageWidth = r.ReadInt(dot+"ImageWidth", 0)
+		f.ImageHeight = r.ReadInt(dot+"ImageHeight", 0)
+		f.PreserveAspectRatio = r.ReadBool(dot+"PreserveAspectRatio", false)
+		f.WrapMode = parseWrapMode(r.ReadStr(dot+"WrapMode", "Tile"))
+		f.ImageOffsetX = r.ReadInt(dot+"ImageOffsetX", 0)
+		f.ImageOffsetY = r.ReadInt(dot+"ImageOffsetY", 0)
 		// Read ImageIndex (BlobStore reference). -1 if not present.
 		// C# ref: Fills.cs line 1072-1073.
-		f.ImageIndex = r.ReadInt("Fill.ImageIndex", -1)
-		if s := r.ReadStr("Fill.ImageData", ""); s != "" {
+		f.ImageIndex = r.ReadInt(dot+"ImageIndex", -1)
+		if s := r.ReadStr(dot+"ImageData", ""); s != "" {
 			if decoded, err := base64.StdEncoding.DecodeString(s); err == nil {
 				f.ImageData = decoded
 			}
@@ -576,11 +586,16 @@ func deserializeFill(r Reader, current style.Fill) style.Fill {
 		if !ok {
 			sf = &style.SolidFill{}
 		}
-		if s := r.ReadStr("Fill.Color", ""); s != "" {
+		if s := r.ReadStr(dot+"Color", ""); s != "" {
 			if c, err := utils.ParseColor(s); err == nil {
 				sf = &style.SolidFill{Color: c}
 			}
 		}
 		return sf
 	}
+}
+
+// deserializeFill is the internal helper that uses the "Fill" prefix.
+func deserializeFill(r Reader, current style.Fill) style.Fill {
+	return DeserializeFill(r, "Fill", current)
 }

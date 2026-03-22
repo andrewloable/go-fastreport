@@ -1,6 +1,7 @@
 package reportpkg
 
 import (
+	"io"
 	"strings"
 
 	"github.com/andrewloable/go-fastreport/data"
@@ -459,10 +460,12 @@ func (r *Report) FindPage(name string) *ReportPage {
 }
 
 // RemovePage removes a page by reference.
+// C# FRCollectionBase.OnRemove clears the child's parent; mirrored here.
 func (r *Report) RemovePage(p *ReportPage) {
 	for i, pg := range r.pages {
 		if pg == p {
 			r.pages = append(r.pages[:i], r.pages[i+1:]...)
+			p.SetParent(nil) // C# ref: FRCollectionBase.OnRemove (PageCollection.cs)
 			return
 		}
 	}
@@ -785,4 +788,115 @@ func (r *Report) SetParameterValue(complexName string, value any) {
 // Mirrors C# Report.SetPreparedPages (Report.cs line 1787–1792).
 func (r *Report) SetPreparedPages(pages *preview.PreparedPages) {
 	r.preparedPages = pages
+}
+
+// GetDataSource returns the data source with the given alias (case-insensitive),
+// or nil when not found.
+// Mirrors C# Report.GetDataSource (Report.cs line 1727–1730).
+func (r *Report) GetDataSource(alias string) data.DataSource {
+	if r.dictionary == nil {
+		return nil
+	}
+	return r.dictionary.FindDataSourceByAlias(alias)
+}
+
+// GetParameter returns the parameter identified by complexName
+// (dot-separated path for nested parameters), or nil when not found.
+// Mirrors C# Report.GetParameter (Report.cs ~line 1607).
+func (r *Report) GetParameter(complexName string) *data.Parameter {
+	return data.GetParameter(r.dictionary, complexName)
+}
+
+// GetColumnValue returns the current value of the named data column.
+// complexName is a dot-separated "DataSource.Column" reference.
+// Null/nil values are converted to zero-values for the column type.
+// C# ref: Report.GetColumnValue (Report.cs line 1568–1571).
+func (r *Report) GetColumnValue(complexName string) any {
+	return r.getColumnValue(complexName, true)
+}
+
+// GetColumnValueNullable returns the current value of the named data column.
+// Unlike GetColumnValue, nil values are returned as-is without null conversion.
+// C# ref: Report.GetColumnValueNullable (Report.cs line 1579–1582).
+func (r *Report) GetColumnValueNullable(complexName string) any {
+	return r.getColumnValue(complexName, false)
+}
+
+// getColumnValue is the shared implementation for GetColumnValue/GetColumnValueNullable.
+// C# ref: Report.GetColumnValue private method (Report.cs line 1536–1543).
+func (r *Report) getColumnValue(complexName string, convertNull bool) any {
+	parts := strings.SplitN(complexName, ".", 2)
+	if len(parts) != 2 {
+		return nil
+	}
+	ds := r.GetDataSource(parts[0])
+	if ds == nil {
+		return nil
+	}
+	val, err := ds.GetValue(parts[1])
+	if err != nil || val == nil {
+		if !convertNull {
+			return nil
+		}
+		// Determine zero-value from column metadata (mirrors C# ConvertToColumnDataType).
+		col := data.GetColumn(r.dictionary, complexName)
+		if col == nil {
+			return nil
+		}
+		switch col.DataType {
+		case "Int32", "Int64", "Int16", "Byte", "Decimal", "Double", "Single":
+			return 0
+		case "Boolean":
+			return false
+		default:
+			return ""
+		}
+	}
+	return val
+}
+
+// InsertPage inserts a page at the given index.
+// If index is out of range it is clamped.
+// Mirrors C# PageCollection.Insert (Report.cs / PageCollection.cs).
+func (r *Report) InsertPage(index int, p *ReportPage) {
+	if index < 0 {
+		index = 0
+	}
+	if index >= len(r.pages) {
+		r.pages = append(r.pages, p)
+		return
+	}
+	r.pages = append(r.pages, nil)
+	copy(r.pages[index+1:], r.pages[index:])
+	r.pages[index] = p
+}
+
+// FromFile creates a new Report and loads it from the given file path.
+// Mirrors C# Report.FromFile (Report.cs line 2231–2236).
+func FromFile(path string) (*Report, error) {
+	r := NewReport()
+	if err := r.Load(path); err != nil {
+		return nil, err
+	}
+	return r, nil
+}
+
+// FromString creates a new Report and loads it from the given FRX XML string.
+// Mirrors C# Report.FromString (Report.cs line 2243–2248).
+func FromString(frxXML string) (*Report, error) {
+	r := NewReport()
+	if err := r.LoadFromString(frxXML); err != nil {
+		return nil, err
+	}
+	return r, nil
+}
+
+// FromReader creates a new Report and loads it from the given reader (stream).
+// Mirrors C# Report.FromStream (Report.cs line 2237–2242).
+func FromReader(rd io.Reader) (*Report, error) {
+	r := NewReport()
+	if err := r.LoadFrom(rd); err != nil {
+		return nil, err
+	}
+	return r, nil
 }

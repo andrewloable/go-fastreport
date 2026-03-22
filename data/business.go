@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
+
+	"github.com/andrewloable/go-fastreport/report"
 )
 
 // BusinessObjectDataSource binds a Go slice (or any value implementing
@@ -24,12 +26,19 @@ import (
 type BusinessObjectDataSource struct {
 	name    string
 	alias   string
+	enabled bool
 	rows    []reflect.Value // each element is one row (struct, map, or primitive)
 	rowIdx  int
 	inited  bool
 	columns []Column
 	// rawValue is the original slice/array value provided by the caller.
 	rawValue any
+	// propName is the property/field name that maps this source to its parent.
+	// C# ref: FastReport.Data.DataSourceBase.PropName
+	propName string
+	// referenceName is the legacy infrastructure reference name from FRX.
+	// C# ref: FastReport.Data.DataComponentBase.ReferenceName
+	referenceName string
 	// LoadBusinessObject is called before data is loaded, enabling load-on-demand.
 	LoadBusinessObject func(ds *BusinessObjectDataSource)
 }
@@ -40,6 +49,7 @@ func NewBusinessObjectDataSource(name string, value any) *BusinessObjectDataSour
 	return &BusinessObjectDataSource{
 		name:     name,
 		alias:    name,
+		enabled:  true,
 		rawValue: value,
 	}
 }
@@ -150,6 +160,84 @@ func (b *BusinessObjectDataSource) SetData(value any) {
 	b.rawValue = value
 	b.inited = false
 	b.rows = nil
+}
+
+// Enabled returns whether this data source is active during report execution.
+// C# ref: FastReport.Data.DataComponentBase.Enabled
+func (b *BusinessObjectDataSource) Enabled() bool { return b.enabled }
+
+// SetEnabled enables or disables this data source.
+func (b *BusinessObjectDataSource) SetEnabled(v bool) { b.enabled = v }
+
+// SetName sets the data source name.  When alias was previously equal to
+// name (case-insensitively) or empty, it is kept in sync with the new name.
+// Mirrors C# DataComponentBase.SetName alias-sync behaviour.
+func (b *BusinessObjectDataSource) SetName(n string) {
+	if b.alias == "" || strings.EqualFold(b.alias, b.name) {
+		b.alias = n
+	}
+	b.name = n
+}
+
+// PropName returns the property/field name used to bind this source to its parent.
+// C# ref: FastReport.Data.DataSourceBase.PropName
+func (b *BusinessObjectDataSource) PropName() string { return b.propName }
+
+// SetPropName sets the property name used to bind this source to its parent.
+func (b *BusinessObjectDataSource) SetPropName(p string) { b.propName = p }
+
+// ReferenceName returns the FRX infrastructure reference name.
+// C# ref: FastReport.Data.DataComponentBase.ReferenceName
+func (b *BusinessObjectDataSource) ReferenceName() string { return b.referenceName }
+
+// SetReferenceName sets the FRX infrastructure reference name.
+func (b *BusinessObjectDataSource) SetReferenceName(n string) { b.referenceName = n }
+
+// Serialize writes the data source's FRX properties to w.
+// C# ref: FastReport.Data.BusinessObjectDataSource — inherits DataSourceBase.Serialize.
+func (b *BusinessObjectDataSource) Serialize(w report.Writer) error {
+	if b.name != "" {
+		w.WriteStr("Name", b.name)
+	}
+	if b.alias != "" && !strings.EqualFold(b.alias, b.name) {
+		w.WriteStr("Alias", b.alias)
+	}
+	if !b.enabled {
+		w.WriteBool("Enabled", false)
+	}
+	if b.referenceName != "" {
+		w.WriteStr("ReferenceName", b.referenceName)
+	}
+	if b.propName != "" {
+		w.WriteStr("PropName", b.propName)
+	}
+	return nil
+}
+
+// Deserialize reads the data source's FRX properties from r and handles
+// legacy compatibility:
+//
+//   - If ReferenceName contains a dot (legacy .NET format), the last
+//     dot-separated segment becomes PropName and ReferenceName is cleared.
+//     C# ref: FastReport.Data.BusinessObjectDataSource.Deserialize line 159-164.
+func (b *BusinessObjectDataSource) Deserialize(r report.Reader) error {
+	b.name = r.ReadStr("Name", b.name)
+	b.alias = r.ReadStr("Alias", b.name)
+	b.enabled = r.ReadBool("Enabled", true)
+	b.referenceName = r.ReadStr("ReferenceName", "")
+	b.propName = r.ReadStr("PropName", "")
+
+	// Compatibility with old reports: if ReferenceName contains a dot,
+	// use the last part as PropName and clear ReferenceName.
+	// C# ref: BusinessObjectDataSource.Deserialize lines 159-164.
+	if b.referenceName != "" && strings.Contains(b.referenceName, ".") {
+		parts := strings.Split(b.referenceName, ".")
+		if b.propName == "" {
+			b.propName = parts[len(parts)-1]
+		}
+		b.referenceName = ""
+	}
+	return nil
 }
 
 // -----------------------------------------------------------------------

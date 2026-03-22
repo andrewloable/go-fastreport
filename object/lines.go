@@ -2,6 +2,7 @@ package object
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 
@@ -416,6 +417,32 @@ func clonePolyPoint(pp *PolyPoint) *PolyPoint {
 	return cp
 }
 
+// Remove removes the point at the given index.
+// No-op when index is out of range.
+// Mirrors C# PolyPointCollection.Remove (PolyLineObject.cs).
+func (c *PolyPointCollection) Remove(index int) {
+	if index < 0 || index >= len(c.points) {
+		return
+	}
+	c.points = append(c.points[:index], c.points[index+1:]...)
+}
+
+// Insert inserts point p at the given index, pushing existing points right.
+// If index >= Len() the point is appended.
+// Mirrors C# PolyPointCollection.Insert (PolyLineObject.cs).
+func (c *PolyPointCollection) Insert(index int, p *PolyPoint) {
+	if index >= len(c.points) {
+		c.points = append(c.points, p)
+		return
+	}
+	if index < 0 {
+		index = 0
+	}
+	c.points = append(c.points, nil)
+	copy(c.points[index+1:], c.points[index:])
+	c.points[index] = p
+}
+
 // Clone returns a deep copy of the collection.
 // Mirrors C# pointsCollection.Clone() (PolyLineObject.cs line 144).
 func (c *PolyPointCollection) Clone() *PolyPointCollection {
@@ -636,6 +663,336 @@ func (p *PolyLineObject) Deserialize(r report.Reader) error {
 	return nil
 }
 
+// PathPointType identifies how a path segment point is connected.
+// Mirrors GDI+ PathPointType enum used in C# GraphicsPath.
+type PathPointType byte
+
+const (
+	// PathPointTypeStart marks the beginning of a subpath.
+	PathPointTypeStart PathPointType = 0
+	// PathPointTypeLine marks a line-to endpoint.
+	PathPointTypeLine PathPointType = 1
+	// PathPointTypeBezier marks a cubic bezier control point or endpoint.
+	PathPointTypeBezier PathPointType = 3
+)
+
+// PathPoint is one point in a vector path together with its segment type.
+// Equivalent to GDI+ GraphicsPath element (PointF + PathPointType).
+type PathPoint struct {
+	X, Y float32
+	Type PathPointType
+}
+
+// getPseudoPoint returns a pseudo bezier control point 1/3 of the way from
+// start to end. Used when one side of a bezier segment lacks a real control
+// point (PolyPoint.Left / Right == nil).
+// Mirrors C# PolyLineObject.GetPseudoPoint (PolyLineObject.cs line 649).
+func getPseudoPoint(start, end *PolyPoint) *PolyPoint {
+	return &PolyPoint{
+		X: start.X + (end.X-start.X)/3,
+		Y: start.Y + (end.Y-start.Y)/3,
+	}
+}
+
+// recalculateBoundsDelta computes the discriminant for a cubic bezier extremum.
+// Mirrors C# PolyLineObject.RecalculateBounds_Delta (PolyLineObject.cs line 474).
+func recalculateBoundsDelta(p0, p1, p2, p3 float32) float32 {
+	return p1*p1 - p0*p2 - p1*p2 + p2*p2 + p0*p3 - p1*p3
+}
+
+// recalculateBoundsSolve solves for the bezier parameter t at an extremum.
+// Mirrors C# PolyLineObject.RecalculateBounds_Solve (PolyLineObject.cs line 479).
+func recalculateBoundsSolve(p0, p1, p2, p3, deltaSqrt float32) float32 {
+	a := p0 - 3*p1 + 3*p2 - p3
+	if a > -1e-4 && a < 1e-4 {
+		denom := 2*p0 - 4*p1 + 2*p2
+		if denom == 0 {
+			return 0
+		}
+		return (p0 - p1) / denom
+	}
+	return (p0 - 2*p1 + p2 + deltaSqrt) / a
+}
+
+// recalculateBoundsValue evaluates a cubic bezier at parameter t.
+// Mirrors C# PolyLineObject.RecalculateBounds_Value (PolyLineObject.cs line 488).
+func recalculateBoundsValue(p0, p1, p2, p3, t float32) float32 {
+	t1 := 1 - t
+	return p0*t1*t1*t1 + 3*p1*t1*t1*t + 3*p2*t1*t*t + p3*t*t*t
+}
+
+// getPath generates the bezier path for the polyline/polygon.
+// When closed is true (PolygonObject), an extra segment closes the path from
+// the last point back to the first.
+// Mirrors C# PolyLineObject.GetPath (PolyLineObject.cs lines 223-297).
+func (p *PolyLineObject) getPath(closed bool, left, top, right, bottom, scaleX, scaleY float32) []PathPoint {
+	n := p.points.Len()
+	if n == 0 {
+		return []PathPoint{
+			{X: left * scaleX, Y: top * scaleX, Type: PathPointTypeStart},
+			{X: (right + 1) * scaleX, Y: (bottom + 1) * scaleX, Type: PathPointTypeLine},
+		}
+	}
+	if n == 1 {
+		x := left + p.centerX + p.points.Get(0).X
+		y := top + p.centerY + p.points.Get(0).Y
+		return []PathPoint{
+			{X: x * scaleX, Y: y * scaleX, Type: PathPointTypeStart},
+			{X: (x + 1) * scaleX, Y: (y + 1) * scaleX, Type: PathPointTypeLine},
+		}
+	}
+
+	cx, cy := p.centerX, p.centerY
+	result := make([]PathPoint, 0, n*3)
+	first := p.points.Get(0)
+	result = append(result, PathPoint{
+		X:    (first.X + left + cx) * scaleX,
+		Y:    (first.Y + top + cy) * scaleY,
+		Type: PathPointTypeStart,
+	})
+
+	count := n
+	if closed {
+		count++ // extra iteration closes polygon back to first point
+	}
+
+	prev := first
+	for i := 1; i < count; i++ {
+		point := p.points.Get(i % n) // % n handles the polygon-closing wrap-around
+
+		if prev.Right != nil || point.Left != nil {
+			// Bezier segment.
+			var cp1 *PolyPoint
+			if prev.Right != nil {
+				cp1 = &PolyPoint{X: prev.X + prev.Right.X, Y: prev.Y + prev.Right.Y}
+			} else {
+				cp1 = getPseudoPoint(prev, point)
+			}
+			result = append(result, PathPoint{
+				X:    (cp1.X + left + cx) * scaleX,
+				Y:    (cp1.Y + top + cy) * scaleY,
+				Type: PathPointTypeBezier,
+			})
+
+			var cp2 *PolyPoint
+			if point.Left != nil {
+				cp2 = &PolyPoint{X: point.X + point.Left.X, Y: point.Y + point.Left.Y}
+			} else {
+				cp2 = getPseudoPoint(point, prev)
+			}
+			result = append(result, PathPoint{
+				X:    (cp2.X + left + cx) * scaleX,
+				Y:    (cp2.Y + top + cy) * scaleY,
+				Type: PathPointTypeBezier,
+			})
+
+			result = append(result, PathPoint{
+				X:    (point.X + left + cx) * scaleX,
+				Y:    (point.Y + top + cy) * scaleY,
+				Type: PathPointTypeBezier,
+			})
+		} else {
+			// Straight line segment.
+			result = append(result, PathPoint{
+				X:    (point.X + left + cx) * scaleX,
+				Y:    (point.Y + top + cy) * scaleY,
+				Type: PathPointTypeLine,
+			})
+		}
+		prev = point
+	}
+	return result
+}
+
+// GetPath generates the bezier path for the polyline.
+// Returns a slice of PathPoints (Type 0=start, 1=line, 3=bezier control/endpoint).
+// Mirrors C# PolyLineObject.GetPath (PolyLineObject.cs lines 223-297).
+func (p *PolyLineObject) GetPath(left, top, right, bottom, scaleX, scaleY float32) []PathPoint {
+	return p.getPath(false, left, top, right, bottom, scaleX, scaleY)
+}
+
+// recalculateBounds updates Left/Top/Width/Height/CenterX/CenterY to tightly
+// contain all anchor points and bezier curve extrema.
+// When closed is true (PolygonObject), the closing segment is also included.
+// Mirrors C# PolyLineObject.RecalculateBounds (PolyLineObject.cs lines 302-472).
+func (p *PolyLineObject) recalculateBounds(closed bool) {
+	n := p.points.Len()
+	if n == 0 {
+		p.centerX = 0
+		p.centerY = 0
+		p.SetWidth(5)
+		p.SetHeight(5)
+		return
+	}
+
+	first := p.points.Get(0)
+	left := first.X
+	top := first.Y
+	right := first.X
+	bottom := first.Y
+
+	// Stage 1: bounding box of all anchor points.
+	for i := 1; i < n; i++ {
+		pt := p.points.Get(i)
+		if pt.X < left {
+			left = pt.X
+		} else if pt.X > right {
+			right = pt.X
+		}
+		if pt.Y < top {
+			top = pt.Y
+		} else if pt.Y > bottom {
+			bottom = pt.Y
+		}
+	}
+
+	// Stage 2: expand for bezier control point extrema.
+	count := n
+	if closed {
+		count++
+	}
+
+	prev := first
+	for i := 1; i < count; i++ {
+		point := p.points.Get(i % n)
+
+		needsCalculate := false
+		var p1, p2 *PolyPoint
+
+		if prev.Right != nil {
+			p1 = &PolyPoint{X: prev.X + prev.Right.X, Y: prev.Y + prev.Right.Y}
+			if p1.X < left || p1.X > right || p1.Y < top || p1.Y > bottom {
+				needsCalculate = true
+			}
+		}
+		if point.Left != nil {
+			p2 = &PolyPoint{X: point.X + point.Left.X, Y: point.Y + point.Left.Y}
+			if p2.X < left || p2.X > right || p2.Y < top || p2.Y > bottom {
+				needsCalculate = true
+			}
+		}
+
+		if needsCalculate {
+			if p1 == nil {
+				p1 = getPseudoPoint(prev, point)
+			}
+			if p2 == nil {
+				p2 = getPseudoPoint(point, prev)
+			}
+
+			// X extrema.
+			delta := recalculateBoundsDelta(prev.X, p1.X, p2.X, point.X)
+			if delta > 0 {
+				dSqrt := float32(math.Sqrt(float64(delta)))
+				t1 := recalculateBoundsSolve(prev.X, p1.X, p2.X, point.X, -dSqrt)
+				if t1 > 0 && t1 < 1 {
+					x := recalculateBoundsValue(prev.X, p1.X, p2.X, point.X, t1)
+					if x < left {
+						left = x
+					} else if x > right {
+						right = x
+					}
+				}
+				t2 := recalculateBoundsSolve(prev.X, p1.X, p2.X, point.X, dSqrt)
+				if t2 > 0 && t2 < 1 {
+					x := recalculateBoundsValue(prev.X, p1.X, p2.X, point.X, t2)
+					if x < left {
+						left = x
+					} else if x > right {
+						right = x
+					}
+				}
+			}
+
+			// Y extrema.
+			delta = recalculateBoundsDelta(prev.Y, p1.Y, p2.Y, point.Y)
+			if delta > 0 {
+				dSqrt := float32(math.Sqrt(float64(delta)))
+				t1 := recalculateBoundsSolve(prev.Y, p1.Y, p2.Y, point.Y, -dSqrt)
+				if t1 > 0 && t1 < 1 {
+					y := recalculateBoundsValue(prev.Y, p1.Y, p2.Y, point.Y, t1)
+					if y < top {
+						top = y
+					} else if y > bottom {
+						bottom = y
+					}
+				}
+				t2 := recalculateBoundsSolve(prev.Y, p1.Y, p2.Y, point.Y, dSqrt)
+				if t2 > 0 && t2 < 1 {
+					y := recalculateBoundsValue(prev.Y, p1.Y, p2.Y, point.Y, t2)
+					if y < top {
+						top = y
+					} else if y > bottom {
+						bottom = y
+					}
+				}
+			}
+		}
+		prev = point
+	}
+
+	// Update geometry.
+	prevCX := p.centerX
+	prevCY := p.centerY
+	p.centerX = -left
+	p.centerY = -top
+	p.SetLeft(p.Left() + left + prevCX)
+	p.SetTop(p.Top() + top + prevCY)
+	p.SetHeight(bottom - top)
+	p.SetWidth(right - left)
+}
+
+// RecalculateBounds updates the object's bounds to tightly contain all points.
+// Mirrors C# PolyLineObject.RecalculateBounds (PolyLineObject.cs line 302).
+func (p *PolyLineObject) RecalculateBounds() {
+	p.recalculateBounds(false)
+}
+
+// SetPolyLine replaces all points with plain X/Y pairs (no bezier control
+// points) and recalculates bounds.
+// Mirrors C# PolyLineObject.SetPolyLine(PointF[]) (PolyLineObject.cs line 519).
+func (p *PolyLineObject) SetPolyLine(newPoints [][2]float32) {
+	p.points.Clear()
+	if newPoints != nil {
+		p.centerX = 0
+		p.centerY = 0
+		for _, pt := range newPoints {
+			p.points.Add(&PolyPoint{X: pt[0], Y: pt[1]})
+		}
+	}
+	l := p.Left()
+	t := p.Top()
+	p.RecalculateBounds()
+	p.SetLeft(l)
+	p.SetTop(t)
+}
+
+// addPoint appends a point at (localX, localY) and recalculates bounds.
+// Mirrors C# PolyLineObject.addPoint (PolyLineObject.cs line 574).
+func (p *PolyLineObject) addPoint(localX, localY float32) *PolyPoint {
+	pt := &PolyPoint{X: localX, Y: localY}
+	p.points.Add(pt)
+	p.RecalculateBounds()
+	return pt
+}
+
+// deletePoint removes the point at index and recalculates bounds.
+// Mirrors C# PolyLineObject.deletePoint (PolyLineObject.cs line 588).
+func (p *PolyLineObject) deletePoint(index int) {
+	p.points.Remove(index)
+	p.RecalculateBounds()
+}
+
+// insertPoint inserts a point at (localX, localY) at the given index and
+// recalculates bounds.
+// Mirrors C# PolyLineObject.insertPoint (PolyLineObject.cs line 620).
+func (p *PolyLineObject) insertPoint(index int, localX, localY float32) *PolyPoint {
+	pt := &PolyPoint{X: localX, Y: localY}
+	p.points.Insert(index, pt)
+	p.RecalculateBounds()
+	return pt
+}
+
 // -----------------------------------------------------------------------
 // PolygonObject
 // -----------------------------------------------------------------------
@@ -675,4 +1032,36 @@ func (pg *PolygonObject) Assign(src *PolygonObject) {
 		return
 	}
 	pg.PolyLineObject.Assign(&src.PolyLineObject)
+}
+
+// GetPath generates the closed bezier path for the polygon, connecting the
+// last point back to the first.
+// Mirrors C# PolyLineObject.GetPath with `this is PolygonObject` active
+// (PolyLineObject.cs lines 249-253).
+func (pg *PolygonObject) GetPath(left, top, right, bottom, scaleX, scaleY float32) []PathPoint {
+	return pg.PolyLineObject.getPath(true, left, top, right, bottom, scaleX, scaleY)
+}
+
+// RecalculateBounds updates the polygon's bounds including the closing segment.
+// Mirrors C# PolyLineObject.RecalculateBounds with `this is PolygonObject` active
+// (PolyLineObject.cs lines 328-330).
+func (pg *PolygonObject) RecalculateBounds() {
+	pg.PolyLineObject.recalculateBounds(true)
+}
+
+// SetPolyLine replaces all points and recalculates closed polygon bounds.
+func (pg *PolygonObject) SetPolyLine(newPoints [][2]float32) {
+	pg.PolyLineObject.points.Clear()
+	if newPoints != nil {
+		pg.PolyLineObject.centerX = 0
+		pg.PolyLineObject.centerY = 0
+		for _, pt := range newPoints {
+			pg.PolyLineObject.points.Add(&PolyPoint{X: pt[0], Y: pt[1]})
+		}
+	}
+	l := pg.Left()
+	t := pg.Top()
+	pg.RecalculateBounds()
+	pg.SetLeft(l)
+	pg.SetTop(t)
 }

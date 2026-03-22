@@ -15,12 +15,14 @@ import "fmt"
 
 // AxisDrawCell is the data passed to a TraverseXAxis or TraverseYAxis callback
 // for each header cell encountered.
+// Mirrors CrossViewAxisDrawCell (BaseCubeLink.cs).
 type AxisDrawCell struct {
-	Text      string
-	Cell      int // position along the data axis
-	Level     int // nesting depth (0 = outermost)
-	SizeCell  int // span in the data direction
-	SizeLevel int // span in the level direction
+	Text         string
+	Cell         int // position along the data axis (0-based data column or row index)
+	Level        int // nesting depth (0 = outermost)
+	SizeCell     int // span in the data direction
+	SizeLevel    int // span in the level direction
+	MeasureIndex int // index of the measure for IsMeasure cells (0 for field-level cells)
 }
 
 // MeasureCell carries the value returned by GetMeasureCell.
@@ -170,17 +172,132 @@ func (c *CellDescriptor) Assign(src *CellDescriptor) {
 // ── CrossViewData ─────────────────────────────────────────────────────────────
 
 // CrossViewData holds the descriptor model for the cross-tab grid.
+// It mirrors FastReport.CrossView.CrossViewData (CrossViewData.cs).
 type CrossViewData struct {
 	Columns []*HeaderDescriptor
 	Rows    []*HeaderDescriptor
 	Cells   []*CellDescriptor
 
+	// cubeSource is the bound data source; nil when no source is assigned.
+	// Mirrors the private cubeSource field in CrossViewData.cs.
+	cubeSource CubeSourceBase
+
 	// columnTerminalIndexes holds indices into Columns for leaf-level descriptors
 	// (the descriptors that map directly to data-grid columns).
+	// Mirrors CrossViewData.columnTerminalIndexes (CrossViewData.cs line 23).
 	columnTerminalIndexes []int
 	// rowTerminalIndexes holds indices into Rows for leaf-level descriptors.
+	// Mirrors CrossViewData.rowTerminalIndexes (CrossViewData.cs line 24).
 	rowTerminalIndexes []int
+
+	// rowDescriptorsIndexes holds indices into Columns for each X-axis level.
+	// Used by GetRowDescriptor to find the column header at a given X-axis level.
+	// Mirrors CrossViewData.rowDescriptorsIndexes (CrossViewData.cs line 21).
+	rowDescriptorsIndexes []int
+	// columnDescriptorsIndexes holds indices into Rows for each Y-axis level.
+	// Used by GetColumnDescriptor to find the row header at a given Y-axis level.
+	// Mirrors CrossViewData.columnDescriptorsIndexes (CrossViewData.cs line 22).
+	columnDescriptorsIndexes []int
 }
+
+// ── CrossViewData FastCube convenience properties ──────────────────────────────
+// These delegate to the bound CubeSourceBase, returning zero values when no
+// source is assigned. They mirror the FastCube properties in CrossViewData.cs.
+
+// SourceAssigned returns true when a CubeSourceBase has been bound.
+// Mirrors CrossViewData.SourceAssigned (CrossViewData.cs line 63).
+func (d *CrossViewData) SourceAssigned() bool { return d.cubeSource != nil }
+
+// XAxisFieldsCount returns the number of X-axis fields from the bound source,
+// or 0 when no source is assigned.
+// Mirrors CrossViewData.XAxisFieldsCount (CrossViewData.cs line 31).
+func (d *CrossViewData) XAxisFieldsCount() int {
+	if d.cubeSource == nil {
+		return 0
+	}
+	return d.cubeSource.XAxisFieldsCount()
+}
+
+// YAxisFieldsCount returns the number of Y-axis fields from the bound source,
+// or 0 when no source is assigned.
+// Mirrors CrossViewData.YAxisFieldsCount (CrossViewData.cs line 35).
+func (d *CrossViewData) YAxisFieldsCount() int {
+	if d.cubeSource == nil {
+		return 0
+	}
+	return d.cubeSource.YAxisFieldsCount()
+}
+
+// MeasuresCount returns the number of measures from the bound source,
+// or 0 when no source is assigned.
+// Mirrors CrossViewData.MeasuresCount (CrossViewData.cs line 39).
+func (d *CrossViewData) MeasuresCount() int {
+	if d.cubeSource == nil {
+		return 0
+	}
+	return d.cubeSource.MeasuresCount()
+}
+
+// MeasuresLevel returns the measures nesting level from the bound source,
+// or 0 when no source is assigned.
+// Mirrors CrossViewData.MeasuresLevel (CrossViewData.cs line 43).
+func (d *CrossViewData) MeasuresLevel() int {
+	if d.cubeSource == nil {
+		return 0
+	}
+	return d.cubeSource.MeasuresLevel()
+}
+
+// MeasuresInXAxis returns whether measures appear on the X axis,
+// or false when no source is assigned.
+// Mirrors CrossViewData.MeasuresInXAxis (CrossViewData.cs line 47).
+func (d *CrossViewData) MeasuresInXAxis() bool {
+	if d.cubeSource == nil {
+		return false
+	}
+	return d.cubeSource.MeasuresInXAxis()
+}
+
+// MeasuresInYAxis returns whether measures appear on the Y axis,
+// or false when no source is assigned.
+// Mirrors CrossViewData.MeasuresInYAxis (CrossViewData.cs line 51).
+func (d *CrossViewData) MeasuresInYAxis() bool {
+	if d.cubeSource == nil {
+		return false
+	}
+	return d.cubeSource.MeasuresInYAxis()
+}
+
+// DataColumnCount returns the number of data columns from the bound source,
+// or 0 when no source is assigned.
+// Mirrors CrossViewData.DataColumnCount (CrossViewData.cs line 55).
+func (d *CrossViewData) DataColumnCount() int {
+	if d.cubeSource == nil {
+		return 0
+	}
+	return d.cubeSource.DataColumnCount()
+}
+
+// DataRowCount returns the number of data rows from the bound source,
+// or 0 when no source is assigned.
+// Mirrors CrossViewData.DataRowCount (CrossViewData.cs line 59).
+func (d *CrossViewData) DataRowCount() int {
+	if d.cubeSource == nil {
+		return 0
+	}
+	return d.cubeSource.DataRowCount()
+}
+
+// SetCubeSource binds or unbinds a CubeSourceBase.
+// Mirrors the internal CubeSource setter in CrossViewData.cs (line 139-148).
+func (d *CrossViewData) SetCubeSource(src CubeSourceBase) {
+	if d.cubeSource != src {
+		d.cubeSource = src
+	}
+}
+
+// CubeSource returns the currently bound CubeSourceBase (may be nil).
+func (d *CrossViewData) CubeSource() CubeSourceBase { return d.cubeSource }
 
 // AddColumn appends a column header descriptor.
 func (d *CrossViewData) AddColumn(h *HeaderDescriptor) { d.Columns = append(d.Columns, h) }
@@ -197,6 +314,118 @@ func (d *CrossViewData) ColumnTerminalIndexes() []int { return d.columnTerminalI
 // RowTerminalIndexes returns the indices of leaf row descriptors.
 func (d *CrossViewData) RowTerminalIndexes() []int { return d.rowTerminalIndexes }
 
+// RowDescriptorsIndexes returns the indices into Columns for each X-axis level.
+// Mirrors CrossViewData.rowDescriptorsIndexes (CrossViewData.cs line 21).
+func (d *CrossViewData) RowDescriptorsIndexes() []int { return d.rowDescriptorsIndexes }
+
+// ColumnDescriptorsIndexes returns the indices into Rows for each Y-axis level.
+// Mirrors CrossViewData.columnDescriptorsIndexes (CrossViewData.cs line 22).
+func (d *CrossViewData) ColumnDescriptorsIndexes() []int { return d.columnDescriptorsIndexes }
+
+// ColumnDescriptorsIndexesStr returns columnDescriptorsIndexes as a comma-separated string.
+// Mirrors CrossViewData.ColumnDescriptorsIndexes getter (CrossViewData.cs lines 90-98).
+func (d *CrossViewData) ColumnDescriptorsIndexesStr() string {
+	return FormatIndexArray(d.columnDescriptorsIndexes)
+}
+
+// SetColumnDescriptorsIndexesStr parses a comma-separated string into columnDescriptorsIndexes.
+// Mirrors CrossViewData.ColumnDescriptorsIndexes setter (CrossViewData.cs lines 90-98).
+func (d *CrossViewData) SetColumnDescriptorsIndexesStr(s string) {
+	d.columnDescriptorsIndexes = ParseIndexArray(s)
+}
+
+// RowDescriptorsIndexesStr returns rowDescriptorsIndexes as a comma-separated string.
+// Mirrors CrossViewData.RowDescriptorsIndexes getter (CrossViewData.cs lines 103-112).
+func (d *CrossViewData) RowDescriptorsIndexesStr() string {
+	return FormatIndexArray(d.rowDescriptorsIndexes)
+}
+
+// SetRowDescriptorsIndexesStr parses a comma-separated string into rowDescriptorsIndexes.
+// Mirrors CrossViewData.RowDescriptorsIndexes setter (CrossViewData.cs lines 103-112).
+func (d *CrossViewData) SetRowDescriptorsIndexesStr(s string) {
+	d.rowDescriptorsIndexes = ParseIndexArray(s)
+}
+
+// ColumnTerminalIndexesStr returns columnTerminalIndexes as a comma-separated string.
+// Mirrors CrossViewData.ColumnTerminalIndexes getter (CrossViewData.cs lines 116-124).
+func (d *CrossViewData) ColumnTerminalIndexesStr() string {
+	return FormatIndexArray(d.columnTerminalIndexes)
+}
+
+// SetColumnTerminalIndexesStr parses a comma-separated string into columnTerminalIndexes.
+// Mirrors CrossViewData.ColumnTerminalIndexes setter (CrossViewData.cs lines 116-124).
+func (d *CrossViewData) SetColumnTerminalIndexesStr(s string) {
+	d.columnTerminalIndexes = ParseIndexArray(s)
+}
+
+// RowTerminalIndexesStr returns rowTerminalIndexes as a comma-separated string.
+// Mirrors CrossViewData.RowTerminalIndexes getter (CrossViewData.cs lines 129-137).
+func (d *CrossViewData) RowTerminalIndexesStr() string {
+	return FormatIndexArray(d.rowTerminalIndexes)
+}
+
+// SetRowTerminalIndexesStr parses a comma-separated string into rowTerminalIndexes.
+// Mirrors CrossViewData.RowTerminalIndexes setter (CrossViewData.cs lines 129-137).
+func (d *CrossViewData) SetRowTerminalIndexesStr(s string) {
+	d.rowTerminalIndexes = ParseIndexArray(s)
+}
+
+// GetRowDescriptor returns the header descriptor at the given display-row index.
+// For index < XAxisFieldsCount: returns the column header at rowDescriptorsIndexes[index].
+// For index >= XAxisFieldsCount: returns the row descriptor at rowTerminalIndexes[index - XAxisFieldsCount].
+// Mirrors CrossViewData.GetRowDescriptor() (CrossViewData.cs lines 488-499).
+func (d *CrossViewData) GetRowDescriptor(index int) *HeaderDescriptor {
+	xCount := 1
+	if d.SourceAssigned() {
+		xCount = d.XAxisFieldsCount()
+	}
+	if index < xCount {
+		if index < len(d.rowDescriptorsIndexes) {
+			idx := d.rowDescriptorsIndexes[index]
+			if idx >= 0 && idx < len(d.Columns) {
+				return d.Columns[idx]
+			}
+		}
+		return nil
+	}
+	rowIdx := index - xCount
+	if rowIdx < len(d.rowTerminalIndexes) {
+		idx := d.rowTerminalIndexes[rowIdx]
+		if idx >= 0 && idx < len(d.Rows) {
+			return d.Rows[idx]
+		}
+	}
+	return nil
+}
+
+// GetColumnDescriptor returns the header descriptor at the given display-column index.
+// For index < YAxisFieldsCount: returns the row header at columnDescriptorsIndexes[index].
+// For index >= YAxisFieldsCount: returns the column descriptor at columnTerminalIndexes[index - YAxisFieldsCount].
+// Mirrors CrossViewData.GetColumnDescriptor() (CrossViewData.cs lines 501-512).
+func (d *CrossViewData) GetColumnDescriptor(index int) *HeaderDescriptor {
+	yCount := 1
+	if d.SourceAssigned() {
+		yCount = d.YAxisFieldsCount()
+	}
+	if index < yCount {
+		if index < len(d.columnDescriptorsIndexes) {
+			idx := d.columnDescriptorsIndexes[index]
+			if idx >= 0 && idx < len(d.Rows) {
+				return d.Rows[idx]
+			}
+		}
+		return nil
+	}
+	colIdx := index - yCount
+	if colIdx < len(d.columnTerminalIndexes) {
+		idx := d.columnTerminalIndexes[colIdx]
+		if idx >= 0 && idx < len(d.Columns) {
+			return d.Columns[idx]
+		}
+	}
+	return nil
+}
+
 // Clear removes all descriptors.
 func (d *CrossViewData) Clear() {
 	d.Columns = d.Columns[:0]
@@ -204,6 +433,20 @@ func (d *CrossViewData) Clear() {
 	d.Cells = d.Cells[:0]
 	d.columnTerminalIndexes = d.columnTerminalIndexes[:0]
 	d.rowTerminalIndexes = d.rowTerminalIndexes[:0]
+	d.rowDescriptorsIndexes = d.rowDescriptorsIndexes[:0]
+	d.columnDescriptorsIndexes = d.columnDescriptorsIndexes[:0]
+}
+
+// CreateDescriptorsFromSource rebuilds descriptors using the bound cubeSource.
+// It is a no-op when no source has been assigned (mirrors the C# guard
+// "if (!SourceAssigned) return;" in CrossViewData.CreateDescriptors()).
+// Mirrors C# CrossViewData.CreateDescriptors() (CrossViewData.cs line 150).
+func (d *CrossViewData) CreateDescriptorsFromSource() {
+	if d.cubeSource == nil {
+		d.Clear()
+		return
+	}
+	d.CreateDescriptors(d.cubeSource)
 }
 
 // CreateDescriptors builds the descriptor model from a CubeSourceBase.
@@ -259,6 +502,9 @@ func (d *CrossViewData) CreateDescriptors(src CubeSourceBase) {
 					FieldName: src.GetXAxisFieldName(xFieldIdx),
 					Level:     level,
 				}
+				// Record the column index for this X-axis field (mirrors C# CrossViewData.cs
+				// rowDescriptorsIndexes population inside CreateDescriptors).
+				d.rowDescriptorsIndexes = append(d.rowDescriptorsIndexes, len(d.Columns))
 				// If this is the deepest non-measure field and no measure level,
 				// mark as terminal.
 				if !measuresInX && level == xFields-1 {
@@ -298,6 +544,9 @@ func (d *CrossViewData) CreateDescriptors(src CubeSourceBase) {
 					FieldName: src.GetYAxisFieldName(yFieldIdx),
 					Level:     level,
 				}
+				// Record the row index for this Y-axis field (mirrors C# CrossViewData.cs
+				// columnDescriptorsIndexes population inside CreateDescriptors).
+				d.columnDescriptorsIndexes = append(d.columnDescriptorsIndexes, len(d.Rows))
 				if !measuresInY && level == yFields-1 {
 					d.rowTerminalIndexes = append(d.rowTerminalIndexes, len(d.Rows))
 				}
@@ -361,6 +610,7 @@ func (g *ResultGrid) Cell(row, col int) ResultCell {
 // CrossViewObject is the main cross-tab object.
 // It combines a CubeSourceBase data source with descriptor metadata and produces
 // a ResultGrid for rendering.
+// Mirrors FastReport.CrossView.CrossViewObject (CrossViewObject.cs).
 type CrossViewObject struct {
 	Name   string
 	Source CubeSourceBase
@@ -371,20 +621,54 @@ type CrossViewObject struct {
 	ShowTitle              bool
 	ShowXAxisFieldsCaption bool
 	ShowYAxisFieldsCaption bool
+
+	// Style is the name of the matrix style applied to this CrossView.
+	// Mirrors CrossViewObject.Style (CrossViewObject.cs line 22 / line 100-107).
+	Style string
+
+	// ModifyResultEvent holds the name of the script method to invoke when
+	// the result table is ready. Mirrors CrossViewObject.ModifyResultEvent
+	// (CrossViewObject.cs lines 117-121).
+	ModifyResultEvent string
+
+	// ModifyResultHandler is an optional Go callback fired when the result
+	// table is ready. It is the Go equivalent of the C# ModifyResult event
+	// (CrossViewObject.cs line 34).
+	ModifyResultHandler func(*CrossViewObject)
+
+	// helper holds the layout helper used by BuildTemplate.
+	// Mirrors CrossViewObject.helper (CrossViewObject.cs line 25 / line 501).
+	helper *CrossViewHelper
 }
 
 // NewCrossViewObject creates a CrossViewObject with defaults.
+// Mirrors the CrossViewObject constructor (CrossViewObject.cs lines 495-509).
 func NewCrossViewObject() *CrossViewObject {
-	return &CrossViewObject{
+	cv := &CrossViewObject{
 		ShowTitle:              true,
 		ShowXAxisFieldsCaption: true,
 		ShowYAxisFieldsCaption: true,
 	}
+	cv.helper = NewCrossViewHelper(cv)
+	return cv
+}
+
+// BuildTemplate creates or updates the matrix template.
+// Call this method after modifying the Data descriptor collections.
+// Mirrors CrossViewObject.BuildTemplate() (CrossViewObject.cs lines 401-404).
+func (cv *CrossViewObject) BuildTemplate() {
+	if cv.helper == nil {
+		cv.helper = NewCrossViewHelper(cv)
+	}
+	cv.helper.BuildTemplate()
 }
 
 // SetSource binds a CubeSourceBase and rebuilds the descriptor model.
+// It also updates cv.Data so that its FastCube convenience properties work.
+// Mirrors CrossViewObject.CubeSource setter (CrossViewObject.cs lines 165-191).
 func (cv *CrossViewObject) SetSource(src CubeSourceBase) {
 	cv.Source = src
+	cv.Data.SetCubeSource(src)
 	cv.buildDescriptors()
 }
 
@@ -395,6 +679,14 @@ func (cv *CrossViewObject) buildDescriptors() {
 		return
 	}
 	cv.Data.CreateDescriptors(cv.Source)
+}
+
+// OnModifyResult fires the ModifyResultHandler callback.
+// Mirrors CrossViewObject.OnModifyResult(EventArgs e) (CrossViewObject.cs line 483-488).
+func (cv *CrossViewObject) OnModifyResult() {
+	if cv.ModifyResultHandler != nil {
+		cv.ModifyResultHandler(cv)
+	}
 }
 
 // Build computes the ResultGrid by traversing the source axes and filling cells.

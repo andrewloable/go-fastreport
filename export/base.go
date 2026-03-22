@@ -1,8 +1,10 @@
 package export
 
 import (
+	"archive/zip"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -317,6 +319,88 @@ func (e *ExportBase) Export(pages *preview.PreparedPages, w io.Writer, exp Expor
 
 // Pages returns the resolved zero-based page indices (populated after Export).
 func (e *ExportBase) Pages() []int { return e.pages }
+
+// ── ExportToFile / ExportAndZip ───────────────────────────────────────────────
+
+// ExportToFile exports pages using exp, writing the output to the given file path.
+// The file is created (or truncated) before calling Export, and closed on return.
+// This mirrors the C# ExportBase.Export(Report, string fileName) convenience overload.
+//
+// C# reference: ExportBase.cs Export(Report, string fileName) lines 577-585.
+func (e *ExportBase) ExportToFile(pages *preview.PreparedPages, path string, exp Exporter) error {
+	f, err := os.Create(path)
+	if err != nil {
+		return fmt.Errorf("export: create file %q: %w", path, err)
+	}
+	exportErr := e.Export(pages, f, exp)
+	closeErr := f.Close()
+	if exportErr != nil {
+		return exportErr
+	}
+	return closeErr
+}
+
+// ExportAndZip exports pages to a temporary file, packages the file into a ZIP
+// archive, and writes the archive to w.  fileName is used as the entry name
+// inside the ZIP (e.g. "report.html").
+//
+// This mirrors the C# ExportBase.ExportAndZip(Report, Stream) pattern:
+//  1. Create a temp directory.
+//  2. Export to a file inside the temp dir using ExportToFile.
+//  3. Zip the file into a ZIP archive.
+//  4. Write the archive to w.
+//  5. Clean up the temp dir.
+//
+// C# reference: ExportBase.cs ExportAndZip lines 598-614.
+func (e *ExportBase) ExportAndZip(pages *preview.PreparedPages, fileName string, exp Exporter, w io.Writer) error {
+	// Step 1: create temp directory.
+	tmpDir, err := os.MkdirTemp("", "fastreport-export-*")
+	if err != nil {
+		return fmt.Errorf("export: create temp dir: %w", err)
+	}
+	defer os.RemoveAll(tmpDir) //nolint:errcheck
+
+	// Step 2: export to temp file.
+	if fileName == "" {
+		fileName = "report"
+	}
+	tmpFile := filepath.Join(tmpDir, fileName)
+	if err := e.ExportToFile(pages, tmpFile, exp); err != nil {
+		return fmt.Errorf("export: export to temp file: %w", err)
+	}
+
+	// Step 3 + 4: walk temp dir and build ZIP, writing directly to w.
+	// Mirrors C# ZipArchive.AddDir(tempFolder) + SaveToStream(stream).
+	zw := zip.NewWriter(w)
+	walkErr := filepath.WalkDir(tmpDir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		rel, err := filepath.Rel(tmpDir, path)
+		if err != nil {
+			return err
+		}
+		f, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		defer f.Close() //nolint:errcheck
+		zf, err := zw.Create(rel)
+		if err != nil {
+			return err
+		}
+		_, err = io.Copy(zf, f)
+		return err
+	})
+	if walkErr != nil {
+		_ = zw.Close()
+		return fmt.Errorf("export: zip: %w", walkErr)
+	}
+	return zw.Close()
+}
 
 // ── NoopExporter ──────────────────────────────────────────────────────────────
 

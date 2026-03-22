@@ -40,3 +40,37 @@ func NewHighlightCondition() HighlightCondition {
 		TextFillColor: color.RGBA{R: 255, A: 255},
 	}
 }
+
+// Assign copies all fields from src into this HighlightCondition.
+// Mirrors C# HighlightCondition.Assign (HighlightCondition.cs).
+func (h *HighlightCondition) Assign(src HighlightCondition) {
+	h.Expression = src.Expression
+	h.Visible = src.Visible
+	h.ApplyBorder = src.ApplyBorder
+	h.ApplyFill = src.ApplyFill
+	h.ApplyFont = src.ApplyFont
+	h.ApplyTextFill = src.ApplyTextFill
+	h.FillColor = src.FillColor
+	h.TextFillColor = src.TextFillColor
+	h.Font = src.Font
+}
+
+// Clone returns a copy of this HighlightCondition.
+// Mirrors C# HighlightCondition.Clone (HighlightCondition.cs line 75-80).
+func (h HighlightCondition) Clone() HighlightCondition {
+	return h
+}
+
+// Equals reports whether h and other have identical field values.
+// Mirrors C# HighlightCondition.Equals (HighlightCondition.cs line 83-90).
+func (h HighlightCondition) Equals(other HighlightCondition) bool {
+	return h.Expression == other.Expression &&
+		h.Visible == other.Visible &&
+		h.ApplyBorder == other.ApplyBorder &&
+		h.ApplyFill == other.ApplyFill &&
+		h.ApplyFont == other.ApplyFont &&
+		h.ApplyTextFill == other.ApplyTextFill &&
+		h.FillColor == other.FillColor &&
+		h.TextFillColor == other.TextFillColor &&
+		h.Font == other.Font
+}

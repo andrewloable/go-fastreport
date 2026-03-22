@@ -3,6 +3,8 @@
 package table
 
 import (
+	"image"
+
 	"github.com/andrewloable/go-fastreport/report"
 )
 
@@ -49,6 +51,14 @@ type TableBase struct {
 	repeatColumnHeaders bool
 	// adjustSpannedCellsWidth adjusts column widths to fit spanned cells.
 	adjustSpannedCellsWidth bool
+
+	// lockCorrectSpans prevents CorrectSpansOnRowChange/CorrectSpansOnColumnChange
+	// from modifying cell spans.
+	lockCorrectSpans bool
+
+	// spanList is a cached list of span rectangles; nil means not yet computed.
+	// Each rectangle covers (col, row)–(col+colSpan, row+rowSpan).
+	spanList []image.Rectangle
 
 	// Event names.
 	ManualBuildEvent string
@@ -201,6 +211,239 @@ func (t *TableBase) AdjustSpannedCellsWidth() bool { return t.adjustSpannedCells
 
 // SetAdjustSpannedCellsWidth sets the adjust-spanned-cells-width flag.
 func (t *TableBase) SetAdjustSpannedCellsWidth(v bool) { t.adjustSpannedCellsWidth = v }
+
+// LockCorrectSpans returns the lock flag for span correction operations.
+func (t *TableBase) LockCorrectSpans() bool { return t.lockCorrectSpans }
+
+// SetLockCorrectSpans sets the lock flag; when true,
+// CorrectSpansOnRowChange and CorrectSpansOnColumnChange are no-ops.
+func (t *TableBase) SetLockCorrectSpans(v bool) { t.lockCorrectSpans = v }
+
+// GetSpanList returns a cached list of span rectangles for all cells with
+// ColSpan > 1 or RowSpan > 1. Each image.Rectangle is (Min={col,row},
+// Max={col+colSpan, row+rowSpan}). The list is rebuilt lazily after
+// ResetSpanList. Mirrors C# TableBase.GetSpanList (TableBase.cs).
+func (t *TableBase) GetSpanList() []image.Rectangle {
+	if t.spanList != nil {
+		return t.spanList
+	}
+	t.spanList = []image.Rectangle{}
+	for row := range t.rows {
+		for col := range t.columns {
+			c := t.Cell(row, col)
+			if c == nil {
+				continue
+			}
+			if c.ColSpan() > 1 || c.RowSpan() > 1 {
+				t.spanList = append(t.spanList, image.Rect(col, row, col+c.ColSpan(), row+c.RowSpan()))
+			}
+		}
+	}
+	return t.spanList
+}
+
+// ResetSpanList clears the span cache so the next GetSpanList call recomputes it.
+// Mirrors C# TableBase.ResetSpanList (TableBase.cs).
+func (t *TableBase) ResetSpanList() { t.spanList = nil }
+
+// IsInsideSpan reports whether the cell at (col, row) is covered by another
+// cell's span — i.e. it is not the origin of a span but lies within one.
+// Mirrors C# TableBase.IsInsideSpan (TableBase.cs).
+func (t *TableBase) IsInsideSpan(col, row int) bool {
+	for _, span := range t.GetSpanList() {
+		// The origin cell (span.Min) is not "inside" its own span.
+		if col == span.Min.X && row == span.Min.Y {
+			continue
+		}
+		if col >= span.Min.X && col < span.Max.X && row >= span.Min.Y && row < span.Max.Y {
+			return true
+		}
+	}
+	return false
+}
+
+// CorrectSpansOnRowChange adjusts ColSpan/RowSpan values when a row is
+// inserted (delta=+1) or removed (delta=-1) at rowIdx.
+// Mirrors C# TableBase.CorrectSpansOnRowChange (TableBase.cs).
+// A no-op when LockCorrectSpans is true.
+func (t *TableBase) CorrectSpansOnRowChange(rowIdx, delta int) {
+	if t.lockCorrectSpans {
+		return
+	}
+	t.ResetSpanList()
+	for row := 0; row < len(t.rows); row++ {
+		for col := 0; col < len(t.columns); col++ {
+			c := t.Cell(row, col)
+			if c == nil || c.RowSpan() <= 1 {
+				continue
+			}
+			spanEnd := row + c.RowSpan()
+			if rowIdx > row && rowIdx < spanEnd {
+				c.SetRowSpan(c.RowSpan() + delta)
+				if c.RowSpan() < 1 {
+					c.SetRowSpan(1)
+				}
+			}
+		}
+	}
+	// Handle structural changes for insertion.
+	if delta > 0 {
+		newRow := NewTableRow()
+		newRow.SetHeight(t.rows[0].Height())
+		for range t.columns {
+			newRow.cells = append(newRow.cells, NewTableCell())
+		}
+		t.rows = append(t.rows[:rowIdx], append([]*TableRow{newRow}, t.rows[rowIdx:]...)...)
+	} else if delta < 0 && rowIdx < len(t.rows) {
+		t.rows = append(t.rows[:rowIdx], t.rows[rowIdx+1:]...)
+	}
+}
+
+// CorrectSpansOnColumnChange adjusts ColSpan/RowSpan values when a column is
+// inserted (delta=+1) or removed (delta=-1) at colIdx.
+// Mirrors C# TableBase.CorrectSpansOnColumnChange (TableBase.cs).
+// A no-op when LockCorrectSpans is true.
+func (t *TableBase) CorrectSpansOnColumnChange(colIdx, delta int) {
+	if t.lockCorrectSpans {
+		return
+	}
+	t.ResetSpanList()
+	for row := 0; row < len(t.rows); row++ {
+		for col := 0; col < len(t.columns); col++ {
+			c := t.Cell(row, col)
+			if c == nil || c.ColSpan() <= 1 {
+				continue
+			}
+			spanEnd := col + c.ColSpan()
+			if colIdx > col && colIdx < spanEnd {
+				c.SetColSpan(c.ColSpan() + delta)
+				if c.ColSpan() < 1 {
+					c.SetColSpan(1)
+				}
+			}
+		}
+	}
+	// Handle structural changes.
+	if delta > 0 {
+		newCol := NewTableColumn()
+		t.columns = append(t.columns[:colIdx], append([]*TableColumn{newCol}, t.columns[colIdx:]...)...)
+		for _, row := range t.rows {
+			newCell := NewTableCell()
+			row.cells = append(row.cells[:colIdx], append([]*TableCell{newCell}, row.cells[colIdx:]...)...)
+		}
+	} else if delta < 0 && colIdx < len(t.columns) {
+		t.columns = append(t.columns[:colIdx], t.columns[colIdx+1:]...)
+		for _, row := range t.rows {
+			if colIdx < len(row.cells) {
+				row.cells = append(row.cells[:colIdx], row.cells[colIdx+1:]...)
+			}
+		}
+	}
+}
+
+// Assign copies all TableBase properties from src.
+// Mirrors C# TableBase.Assign (TableBase.cs:473-489).
+// Note: rows/columns/cells are not copied — they are structural and managed
+// separately by the engine (as in C# where Assign does not copy child collections).
+func (t *TableBase) Assign(src *TableBase) {
+	if src == nil {
+		return
+	}
+	t.BreakableComponent.Assign(&src.BreakableComponent)
+	t.fixedRows = src.fixedRows
+	t.fixedColumns = src.fixedColumns
+	t.printOnParent = src.printOnParent
+	t.repeatHeaders = src.repeatHeaders
+	t.repeatRowHeaders = src.repeatRowHeaders
+	t.repeatColumnHeaders = src.repeatColumnHeaders
+	t.layout = src.layout
+	t.wrappedGap = src.wrappedGap
+	t.adjustSpannedCellsWidth = src.adjustSpannedCellsWidth
+	t.ManualBuildEvent = src.ManualBuildEvent
+}
+
+// SaveState saves the current state of all rows, columns, and cells, then
+// sets CanGrow=true and CanShrink=true (matching C# TableBase.SaveState).
+// Mirrors C# TableBase.SaveState (TableBase.cs).
+func (t *TableBase) SaveState() {
+	for _, row := range t.rows {
+		row.SaveState()
+		for _, cell := range row.cells {
+			cell.SaveState()
+		}
+	}
+	for _, col := range t.columns {
+		col.SaveState()
+	}
+	t.SetCanGrow(true)
+	t.SetCanShrink(true)
+}
+
+// RestoreState restores all rows, columns, and cells to the state saved by
+// the most recent SaveState call.
+// Mirrors C# TableBase.RestoreState (TableBase.cs).
+func (t *TableBase) RestoreState() {
+	for _, row := range t.rows {
+		row.RestoreState()
+		for _, cell := range row.cells {
+			cell.RestoreState()
+		}
+	}
+	for _, col := range t.columns {
+		col.RestoreState()
+	}
+	t.ResetSpanList()
+}
+
+// CalcWidth returns the total width of the table by summing visible column
+// widths, applying AutoSize expansion from the first row's cell widths.
+// Mirrors C# TableBase.CalcWidth (TableBase.cs).
+func (t *TableBase) CalcWidth() float32 {
+	if len(t.rows) > 0 {
+		for ci, col := range t.columns {
+			if col.AutoSize() {
+				cell := t.Cell(0, ci)
+				if cell != nil && cell.Width() > col.Width() {
+					col.SetWidth(cell.Width())
+				}
+			}
+		}
+	}
+	var total float32
+	for _, col := range t.columns {
+		if col.Visible() {
+			total += col.Width()
+		}
+	}
+	return total
+}
+
+// CalcHeight returns the total height of the table by summing visible row
+// heights, applying AutoSize expansion from the tallest cell in each row.
+// Mirrors C# TableBase.CalcHeight (TableBase.cs).
+func (t *TableBase) CalcHeight() float32 {
+	for ri, row := range t.rows {
+		if row.AutoSize() {
+			var maxH float32
+			for ci := range t.columns {
+				cell := t.Cell(ri, ci)
+				if cell != nil && cell.Height() > maxH {
+					maxH = cell.Height()
+				}
+			}
+			if maxH > row.Height() {
+				row.ComponentBase.SetHeight(maxH)
+			}
+		}
+	}
+	var total float32
+	for _, row := range t.rows {
+		if row.Visible() {
+			total += row.Height()
+		}
+	}
+	return total
+}
 
 // --- Serialization ---
 

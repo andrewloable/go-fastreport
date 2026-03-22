@@ -236,6 +236,52 @@ func (d *Dictionary) FindTotal(name string) *Total {
 // Dictionary implements the DictionaryLookup interface defined in helper.go.
 var _ DictionaryLookup = (*Dictionary)(nil)
 
+// Merge merges data sources, connections, parameters, and totals from source
+// into this dictionary, skipping any entry whose name already exists.
+// Mirrors C# Dictionary.Merge(source) (Dictionary.cs:725-780) — the Go port
+// uses a simple name-deduplication approach instead of the C# clone-and-fixup.
+func (d *Dictionary) Merge(source *Dictionary) {
+	for _, c := range source.connections {
+		if d.FindConnectionByName(c.Name()) == nil {
+			d.AddConnection(c)
+		}
+	}
+	for _, ds := range source.dataSources {
+		if d.FindDataSourceByName(ds.Name()) == nil {
+			d.AddDataSource(ds)
+		}
+	}
+	for _, rel := range source.relations {
+		found := false
+		for _, r := range d.relations {
+			if strings.EqualFold(r.Name, rel.Name) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			d.relations = append(d.relations, rel)
+		}
+	}
+	for _, p := range source.parameters {
+		exists := false
+		for _, ep := range d.parameters {
+			if strings.EqualFold(ep.Name, p.Name) {
+				exists = true
+				break
+			}
+		}
+		if !exists {
+			d.parameters = append(d.parameters, p)
+		}
+	}
+	for _, t := range source.totals {
+		if d.FindTotal(t.Name) == nil {
+			d.totals = append(d.totals, t)
+		}
+	}
+}
+
 // ResolveRelations resolves ParentDataSource and ChildDataSource for each
 // relation from their string names, and also splits ParentColumnNames /
 // ChildColumnNames into the ParentColumns / ChildColumns slices.

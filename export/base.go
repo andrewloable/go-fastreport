@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/andrewloable/go-fastreport/preview"
+	"github.com/andrewloable/go-fastreport/report"
 )
 
 // PageRange controls which pages are exported.
@@ -55,6 +56,14 @@ type ExportBase struct {
 	// C# ref: FastReport.Base/Export/ExportBase.cs, Export() method.
 	OnProgress func(page, total int)
 
+	// HasMultipleFiles indicates that this exporter produces multiple output files
+	// (e.g. one per page). Mirrors C# ExportBase.HasMultipleFiles (line 149).
+	HasMultipleFiles bool
+
+	// ShiftNonExportable indicates that non-exportable bands should shift
+	// subsequent bands up. Mirrors C# ExportBase.ShiftNonExportable (line 159).
+	ShiftNonExportable bool
+
 	// pages holds the resolved zero-based page indices to export.
 	pages []int
 
@@ -77,6 +86,32 @@ func NewExportBase() ExportBase {
 // GeneratedFiles returns the list of output file paths produced by this export.
 // Matches C# ExportBase.GeneratedFiles.
 func (e *ExportBase) GeneratedFiles() []string { return e.generatedFiles }
+
+// Serialize writes non-default ExportBase settings to w.
+// Mirrors C# ExportBase.Serialize (ExportBase.cs line 378).
+func (e *ExportBase) Serialize(w report.Writer) {
+	if e.PageRange != PageRangeAll {
+		w.WriteInt("PageRange", int(e.PageRange))
+	}
+	if e.PageNumbers != "" {
+		w.WriteStr("PageNumbers", e.PageNumbers)
+	}
+	if e.ShiftNonExportable {
+		w.WriteBool("ShiftNonExportable", true)
+	}
+	if e.HasMultipleFiles {
+		w.WriteBool("HasMultipleFiles", true)
+	}
+}
+
+// Deserialize reads ExportBase settings from r.
+// Mirrors C# ExportBase.Deserialize (ExportBase.cs).
+func (e *ExportBase) Deserialize(r report.Reader) {
+	e.PageRange = PageRange(r.ReadInt("PageRange", int(PageRangeAll)))
+	e.PageNumbers = r.ReadStr("PageNumbers", "")
+	e.ShiftNonExportable = r.ReadBool("ShiftNonExportable", false)
+	e.HasMultipleFiles = r.ReadBool("HasMultipleFiles", false)
+}
 
 // AddGeneratedFile appends path to the generated files list.
 func (e *ExportBase) AddGeneratedFile(path string) { e.generatedFiles = append(e.generatedFiles, path) }

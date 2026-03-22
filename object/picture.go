@@ -140,6 +140,8 @@ type PictureObjectBase struct {
 	sizeMode            SizeMode // default SizeModeZoom
 	imageAlign          ImageAlign
 	showErrorImage      bool
+	// savedPicState holds state saved by SaveState for RestoreState.
+	savedPicState *pictureObjectSavedState
 }
 
 // NewPictureObjectBase creates a PictureObjectBase with defaults.
@@ -215,6 +217,76 @@ func (p *PictureObjectBase) ShowErrorImage() bool { return p.showErrorImage }
 
 // SetShowErrorImage sets the show-error-image flag.
 func (p *PictureObjectBase) SetShowErrorImage(v bool) { p.showErrorImage = v }
+
+// savedSizeMode holds the pre-engine-pass SizeMode for SaveState/RestoreState.
+// Mirrors C# PictureObjectBase.saveSizeMode field (PictureObjectBase.cs line 750-752).
+type pictureObjectSavedState struct {
+	sizeMode SizeMode
+}
+
+// GetExpressions returns the list of expressions used by this PictureObjectBase
+// for pre-compilation by the report engine.
+// Mirrors C# PictureObjectBase.GetExpressions (PictureObjectBase.cs line 875-894).
+func (p *PictureObjectBase) GetExpressions() []string {
+	exprs := p.ReportComponentBase.ComponentBase.GetExpressions()
+	if p.dataColumn != "" {
+		exprs = append(exprs, p.dataColumn)
+	}
+	if p.imageSourceExpr != "" {
+		// Strip enclosing brackets if present — C# strips them too.
+		expr := p.imageSourceExpr
+		if len(expr) > 2 && expr[0] == '[' && expr[len(expr)-1] == ']' {
+			expr = expr[1 : len(expr)-1]
+		}
+		exprs = append(exprs, expr)
+	}
+	return exprs
+}
+
+// SaveState saves the current SizeMode (in addition to the ReportComponentBase
+// state) so RestoreState can undo engine-pass changes.
+// Mirrors C# PictureObjectBase.SaveState (PictureObjectBase.cs line 748-752).
+func (p *PictureObjectBase) SaveState() {
+	p.ReportComponentBase.SaveState()
+	p.savedPicState = &pictureObjectSavedState{sizeMode: p.sizeMode}
+}
+
+// RestoreState restores the SizeMode saved by SaveState.
+// Mirrors C# PictureObjectBase.RestoreState (PictureObjectBase.cs line 722-727).
+func (p *PictureObjectBase) RestoreState() {
+	p.ReportComponentBase.RestoreState()
+	if p.savedPicState != nil {
+		p.sizeMode = p.savedPicState.sizeMode
+		p.savedPicState = nil
+	}
+}
+
+// GetData evaluates the DataColumn or ImageSourceExpression binding using the
+// provided calc function. When DataColumn is set, the evaluated string is
+// stored as the new ImageLocation. When ImageSourceExpression is set, the
+// expression is evaluated and stored as DataColumn if it is a column reference,
+// or as ImageLocation otherwise.
+// Mirrors C# PictureObjectBase behaviour: DataColumn → GetColumnValue → image bytes;
+// ImageSourceExpression → Calc → resolve as DataColumn or path.
+func (p *PictureObjectBase) GetData(calc func(string) (any, error)) {
+	if p.dataColumn != "" {
+		val, err := calc("[" + p.dataColumn + "]")
+		if err == nil && val != nil {
+			// Convert to string for image location / URL. Actual image loading
+			// happens in the engine/exporter layer.
+			if s, ok := val.(string); ok {
+				p.imageLocation = s
+			}
+		}
+	} else if p.imageSourceExpr != "" {
+		val, err := calc(p.imageSourceExpr)
+		if err == nil && val != nil {
+			if s, ok := val.(string); ok {
+				p.imageLocation = s
+			}
+		}
+	}
+}
 
 // Serialize writes PictureObjectBase properties that differ from defaults.
 func (p *PictureObjectBase) Serialize(w report.Writer) error {

@@ -92,8 +92,9 @@ func code93FindItem(c string) int {
 }
 
 // code93GetPattern builds the Code93 pattern for the given (possibly expanded) text.
-// Always computes the two check digits C and K per Code93 spec.
-func code93GetPattern(text string) (string, error) {
+// When includeChecksum is true, two check digits C and K are appended per spec.
+// Mirrors C# Barcode93.GetPattern (Barcode93.cs:96-149).
+func code93GetPattern(text string, includeChecksum bool) (string, error) {
 	var sb strings.Builder
 	sb.WriteString("111141") // start
 
@@ -107,33 +108,35 @@ func code93GetPattern(text string) (string, error) {
 		indices = append(indices, idx)
 	}
 
-	// Check digit C (mod-47, weight 1-20 cycling, right-to-left)
-	checkC := 0
-	weightC := 1
-	for i := len(indices) - 1; i >= 0; i-- {
-		checkC += indices[i] * weightC
-		weightC++
-		if weightC > 20 {
-			weightC = 1
+	if includeChecksum {
+		// Check digit C (mod-47, weight 1-20 cycling, right-to-left)
+		checkC := 0
+		weightC := 1
+		for i := len(indices) - 1; i >= 0; i-- {
+			checkC += indices[i] * weightC
+			weightC++
+			if weightC > 20 {
+				weightC = 1
+			}
 		}
-	}
-	checkC = checkC % 47
+		checkC = checkC % 47
 
-	// Check digit K (mod-47, weight 2-15 cycling, right-to-left, includes C)
-	checkK := 0
-	weightK := 2
-	for i := len(indices) - 1; i >= 0; i-- {
-		checkK += indices[i] * weightK
-		weightK++
-		if weightK > 15 {
-			weightK = 1
+		// Check digit K (mod-47, weight 2-15 cycling, right-to-left, includes C)
+		checkK := 0
+		weightK := 2
+		for i := len(indices) - 1; i >= 0; i-- {
+			checkK += indices[i] * weightK
+			weightK++
+			if weightK > 15 {
+				weightK = 1
+			}
 		}
-	}
-	checkK += checkC
-	checkK = checkK % 47
+		checkK += checkC
+		checkK = checkK % 47
 
-	sb.WriteString(tabelle93[checkC].data)
-	sb.WriteString(tabelle93[checkK].data)
+		sb.WriteString(tabelle93[checkC].data)
+		sb.WriteString(tabelle93[checkK].data)
+	}
 
 	// Stop
 	sb.WriteString("1111411")
@@ -141,9 +144,18 @@ func code93GetPattern(text string) (string, error) {
 	return doConvert(sb.String()), nil
 }
 
+// GetPattern generates the Code93 bar pattern respecting IncludeChecksum.
 func (b *Code93Barcode) GetPattern() (string, error) {
-	return code93GetPattern(b.encodedText)
+	return code93GetPattern(b.encodedText, b.IncludeChecksum)
 }
+
+// SetCalcCheckSum implements calcCheckSumSetter for FRX deserialization.
+// Mirrors C# LinearBarcodeBase.CalcCheckSum (Barcode93.cs uses CalcCheckSum inherited property).
+func (b *Code93Barcode) SetCalcCheckSum(v bool) { b.IncludeChecksum = v }
+
+// IsNumeric returns false — Code93 encodes alphanumeric characters.
+// Mirrors C# Barcode93.IsNumeric (Barcode93.cs:80-83).
+func (b *Code93Barcode) IsNumeric() bool { return false }
 
 func (b *Code93Barcode) GetWideBarRatio() float32 { return 2 }
 
@@ -154,7 +166,7 @@ func (b *Code93ExtendedBarcode) GetPattern() (string, error) {
 			expanded.WriteString(code93x[c])
 		}
 	}
-	return code93GetPattern(expanded.String())
+	return code93GetPattern(expanded.String(), true) // Extended always includes checksum
 }
 
 func (b *Code93ExtendedBarcode) GetWideBarRatio() float32 { return 2 }

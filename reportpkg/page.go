@@ -37,6 +37,19 @@ type PageColumns struct {
 	Positions []float32
 }
 
+// Assign copies all fields from src into this PageColumns.
+// Mirrors C# PageColumns.Assign (PageColumns.cs).
+func (pc *PageColumns) Assign(src PageColumns) {
+	pc.Count = src.Count
+	pc.Width = src.Width
+	if src.Positions != nil {
+		pc.Positions = make([]float32, len(src.Positions))
+		copy(pc.Positions, src.Positions)
+	} else {
+		pc.Positions = nil
+	}
+}
+
 // ReportPage represents a single page template in the report.
 // It holds bands that define what prints on each physical page.
 // It is the Go equivalent of FastReport.ReportPage, which inherits from
@@ -182,6 +195,12 @@ type ReportPage struct {
 
 	// Watermark is the optional page watermark (text or image).
 	Watermark *Watermark
+
+	// PrintableExpression is an expression that controls whether this page
+	// template is included in the report output. Evaluated by the engine;
+	// an empty string means always printable.
+	// Mirrors C# PageBase.PrintableExpression (inherited from ComponentBase).
+	PrintableExpression string
 
 	// inherited marks this page as coming from a base (parent) report.
 	inherited bool
@@ -599,6 +618,9 @@ func (p *ReportPage) Serialize(w report.Writer) error {
 	if p.BackPageOddEven != 0 {
 		w.WriteInt("BackPageOddEven", p.BackPageOddEven)
 	}
+	if p.PrintableExpression != "" {
+		w.WriteStr("PrintableExpression", p.PrintableExpression)
+	}
 
 	// Page columns — mirror PageColumns.Serialize (FastReport.Base/PageColumns.cs:101-111).
 	// Count != 1 (C# default) triggers column serialization; Go default is 0 (single column).
@@ -735,6 +757,7 @@ func (p *ReportPage) Deserialize(r report.Reader) error {
 	p.ManualBuildEvent = r.ReadStr("ManualBuildEvent", "")
 	p.BackPage = r.ReadStr("BackPage", "")
 	p.BackPageOddEven = r.ReadInt("BackPageOddEven", 0)
+	p.PrintableExpression = r.ReadStr("PrintableExpression", "")
 	p.Columns.Count = r.ReadInt("Columns.Count", 0)
 	p.Columns.Width = r.ReadFloat("Columns.Width", 0)
 	if posStr := r.ReadStr("Columns.Positions", ""); posStr != "" {

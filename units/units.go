@@ -24,6 +24,14 @@ const (
 
 	// HundrethsOfInch is the number of pixels per hundredth of an inch.
 	HundrethsOfInch float32 = 0.96
+
+	// Point is the number of pixels per typographic point (1/72 inch at 96 DPI).
+	// Used by RDL/RDLC import (SizeUnits.cs: "pt" unit).
+	Point float32 = Inches / 72
+
+	// Pica is the number of pixels per pica (12 points, 1/6 inch at 96 DPI).
+	// Used by RDL/RDLC import (SizeUnits.cs: "pc" unit).
+	Pica float32 = Inches / 6
 )
 
 // PageUnits enumerates the measurement units used for page dimensions.

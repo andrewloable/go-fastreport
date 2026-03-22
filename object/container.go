@@ -170,6 +170,55 @@ func (c *CheckBoxObject) Editable() bool { return c.editable }
 // SetEditable sets the editable flag.
 func (c *CheckBoxObject) SetEditable(v bool) { c.editable = v }
 
+// GetExpressions returns the list of expressions used by this CheckBoxObject
+// for pre-compilation by the report engine. Includes the base component
+// expressions (VisibleExpression, PrintableExpression) plus DataColumn and
+// Expression when set.
+// Mirrors C# CheckBoxObject.GetExpressions (CheckBoxObject.cs line 327-337).
+func (c *CheckBoxObject) GetExpressions() []string {
+	exprs := c.ReportComponentBase.ComponentBase.GetExpressions()
+	if c.dataColumn != "" {
+		exprs = append(exprs, c.dataColumn)
+	}
+	if c.expression != "" {
+		exprs = append(exprs, c.expression)
+	}
+	return exprs
+}
+
+// GetData evaluates the DataColumn or Expression binding using the provided
+// calc function and updates the Checked state accordingly.
+// Mirrors C# CheckBoxObject.GetData / GetDataShared (CheckBoxObject.cs line 340-361).
+func (c *CheckBoxObject) GetData(calc func(string) (any, error)) {
+	if c.dataColumn != "" {
+		val, err := calc("[" + c.dataColumn + "]")
+		if err == nil && val != nil {
+			switch v := val.(type) {
+			case bool:
+				c.isChecked = v
+			case int:
+				c.isChecked = v != 0
+			case int64:
+				c.isChecked = v != 0
+			case float64:
+				c.isChecked = v != 0
+			case string:
+				c.isChecked = v == "true" || v == "True" || v == "1"
+			}
+		}
+	} else if c.expression != "" {
+		val, err := calc(c.expression)
+		if err == nil {
+			if bv, ok := val.(bool); ok {
+				c.isChecked = bv
+			}
+		}
+	}
+	if !c.isChecked && c.hideIfUnchecked {
+		c.SetVisible(false)
+	}
+}
+
 // Serialize writes CheckBoxObject properties that differ from defaults.
 func (c *CheckBoxObject) Serialize(w report.Writer) error {
 	if err := c.ReportComponentBase.Serialize(w); err != nil {
@@ -224,6 +273,23 @@ func (c *CheckBoxObject) Deserialize(r report.Reader) error {
 // ContainerObject
 // -----------------------------------------------------------------------
 
+// layoutChild is the interface required by UpdateLayout for each child.
+// All report objects that embed ComponentBase satisfy it automatically.
+type layoutChild interface {
+	Left() float32
+	SetLeft(float32)
+	Top() float32
+	SetTop(float32)
+	Width() float32
+	SetWidth(float32)
+	Height() float32
+	SetHeight(float32)
+	Bounds() report.Rect
+	SetBounds(report.Rect)
+	Anchor() report.AnchorStyle
+	Dock() report.DockStyle
+}
+
 // ContainerObject is a layout container that holds child report objects.
 // It is the Go equivalent of FastReport.ContainerObject.
 type ContainerObject struct {
@@ -234,6 +300,10 @@ type ContainerObject struct {
 	afterLayoutEvent    string
 	OnBeforeLayout      report.EventHandler
 	OnAfterLayout       report.EventHandler
+
+	// updatingLayout prevents re-entrant UpdateLayout calls.
+	// Mirrors C# ContainerObject.updatingLayout (ContainerObject.cs line 119).
+	updatingLayout bool
 }
 
 // NewContainerObject creates a ContainerObject with defaults.
@@ -317,8 +387,82 @@ func (c *ContainerObject) SetChildOrder(child report.Base, order int) {
 	c.objects.Insert(order, child)
 }
 
-// UpdateLayout is a no-op in the base implementation.
-func (c *ContainerObject) UpdateLayout(dx, dy float32) {}
+// UpdateLayout adjusts child positions and sizes when the container grows or
+// shrinks by (dx, dy). Each child is repositioned according to its Anchor and
+// Dock properties, exactly mirroring C# ContainerObject.UpdateLayout
+// (ContainerObject.cs lines 117-187).
+func (c *ContainerObject) UpdateLayout(dx, dy float32) {
+	if c.updatingLayout {
+		return
+	}
+	c.updatingLayout = true
+	defer func() { c.updatingLayout = false }()
+
+	// Compute the new available bounds after the resize.
+	remLeft := float32(0)
+	remTop := float32(0)
+	remWidth := c.Width() + dx
+	remHeight := c.Height() + dy
+
+	for i := 0; i < c.objects.Len(); i++ {
+		child, ok := c.objects.Get(i).(layoutChild)
+		if !ok {
+			continue
+		}
+
+		anchor := child.Anchor()
+
+		// --- horizontal anchor adjustment ---
+		if anchor&report.AnchorRight != 0 {
+			if anchor&report.AnchorLeft != 0 {
+				// Anchored left+right → stretch width.
+				child.SetWidth(child.Width() + dx)
+			} else {
+				// Anchored right only → shift right.
+				child.SetLeft(child.Left() + dx)
+			}
+		} else if anchor&report.AnchorLeft == 0 {
+			// Neither left nor right → centre horizontally.
+			child.SetLeft(child.Left() + dx/2)
+		}
+
+		// --- vertical anchor adjustment ---
+		if anchor&report.AnchorBottom != 0 {
+			if anchor&report.AnchorTop != 0 {
+				// Anchored top+bottom → stretch height.
+				child.SetHeight(child.Height() + dy)
+			} else {
+				// Anchored bottom only → shift down.
+				child.SetTop(child.Top() + dy)
+			}
+		} else if anchor&report.AnchorTop == 0 {
+			// Neither top nor bottom → centre vertically.
+			child.SetTop(child.Top() + dy/2)
+		}
+
+		// --- dock adjustment ---
+		switch child.Dock() {
+		case report.DockLeft:
+			child.SetBounds(report.Rect{Left: remLeft, Top: remTop, Width: child.Width(), Height: remHeight})
+			remLeft += child.Width()
+			remWidth -= child.Width()
+		case report.DockTop:
+			child.SetBounds(report.Rect{Left: remLeft, Top: remTop, Width: remWidth, Height: child.Height()})
+			remTop += child.Height()
+			remHeight -= child.Height()
+		case report.DockRight:
+			child.SetBounds(report.Rect{Left: remLeft + remWidth - child.Width(), Top: remTop, Width: child.Width(), Height: remHeight})
+			remWidth -= child.Width()
+		case report.DockBottom:
+			child.SetBounds(report.Rect{Left: remLeft, Top: remTop + remHeight - child.Height(), Width: remWidth, Height: child.Height()})
+			remHeight -= child.Height()
+		case report.DockFill:
+			child.SetBounds(report.Rect{Left: remLeft, Top: remTop, Width: remWidth, Height: remHeight})
+			remWidth = 0
+			remHeight = 0
+		}
+	}
+}
 
 // Serialize writes ContainerObject properties that differ from defaults.
 func (c *ContainerObject) Serialize(w report.Writer) error {
@@ -363,13 +507,31 @@ type SubreportObject struct {
 	reportPageName string
 	// printOnParent causes the subreport to print on the parent page.
 	printOnParent bool
+	// reportName is the file path of an external .frx report to embed.
+	// When set, the engine loads the external report instead of a page within
+	// the current report. Mirrors FastReport.SubreportObject.ReportName.
+	reportName string
 }
 
 // NewSubreportObject creates a SubreportObject with defaults.
+// Mirrors C# SubreportObject() constructor (SubreportObject.cs:146-154):
+// FlagUseBorder, FlagUseFill, FlagPreviewVisible are false; CanCopy flag cleared.
 func NewSubreportObject() *SubreportObject {
-	return &SubreportObject{
+	s := &SubreportObject{
 		ReportComponentBase: *report.NewReportComponentBase(),
 	}
+	// C# clears CanCopy in the constructor (SubreportObject.cs:154).
+	s.SetFlag(report.CanCopy, false)
+	return s
+}
+
+// Assign copies all SubreportObject properties from src.
+// Mirrors C# SubreportObject.Assign (SubreportObject.cs:125-131).
+func (s *SubreportObject) Assign(src *SubreportObject) {
+	s.ReportComponentBase.Assign(&src.ReportComponentBase)
+	s.reportPageName = src.reportPageName
+	s.printOnParent = src.printOnParent
+	s.reportName = src.reportName
 }
 
 // ReportPageName returns the name of the linked ReportPage.
@@ -384,6 +546,14 @@ func (s *SubreportObject) PrintOnParent() bool { return s.printOnParent }
 // SetPrintOnParent sets the print-on-parent flag.
 func (s *SubreportObject) SetPrintOnParent(v bool) { s.printOnParent = v }
 
+// ReportName returns the file path of the external .frx report.
+// When non-empty, the engine loads this file instead of a page in the current report.
+// Mirrors FastReport.SubreportObject.ReportName.
+func (s *SubreportObject) ReportName() string { return s.reportName }
+
+// SetReportName sets the external report file path.
+func (s *SubreportObject) SetReportName(name string) { s.reportName = name }
+
 // Serialize writes SubreportObject properties that differ from defaults.
 func (s *SubreportObject) Serialize(w report.Writer) error {
 	if err := s.ReportComponentBase.Serialize(w); err != nil {
@@ -395,6 +565,9 @@ func (s *SubreportObject) Serialize(w report.Writer) error {
 	if s.printOnParent {
 		w.WriteBool("PrintOnParent", true)
 	}
+	if s.reportName != "" {
+		w.WriteStr("ReportName", s.reportName)
+	}
 	return nil
 }
 
@@ -405,5 +578,6 @@ func (s *SubreportObject) Deserialize(r report.Reader) error {
 	}
 	s.reportPageName = r.ReadStr("ReportPage", "")
 	s.printOnParent = r.ReadBool("PrintOnParent", false)
+	s.reportName = r.ReadStr("ReportName", "")
 	return nil
 }

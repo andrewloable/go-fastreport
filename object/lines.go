@@ -173,6 +173,21 @@ func (l *LineObject) DashPattern() []float32 { return l.dashPattern }
 // SetDashPattern sets the dash pattern.
 func (l *LineObject) SetDashPattern(dp []float32) { l.dashPattern = dp }
 
+// Assign copies all LineObject properties from src.
+// Mirrors C# LineObject.Assign (LineObject.cs:81-89).
+func (l *LineObject) Assign(src *LineObject) {
+	l.ReportComponentBase.Assign(&src.ReportComponentBase)
+	l.diagonal = src.diagonal
+	l.StartCap.Assign(src.StartCap)
+	l.EndCap.Assign(src.EndCap)
+	if len(src.dashPattern) > 0 {
+		l.dashPattern = make([]float32, len(src.dashPattern))
+		copy(l.dashPattern, src.dashPattern)
+	} else {
+		l.dashPattern = nil
+	}
+}
+
 // Serialize writes LineObject properties that differ from defaults.
 // Follows LineObject.cs Serialize(): writes Diagonal, then delegates to
 // CapSettings.Serialize("StartCap", …) and CapSettings.Serialize("EndCap", …)
@@ -310,7 +325,25 @@ func (s *ShapeObject) DashPattern() []float32 { return s.dashPattern }
 // SetDashPattern sets the dash pattern.
 func (s *ShapeObject) SetDashPattern(dp []float32) { s.dashPattern = dp }
 
+// Assign copies all ShapeObject properties from src.
+// Mirrors C# ShapeObject.Assign (ShapeObject.cs lines 115-123).
+func (s *ShapeObject) Assign(src *ShapeObject) {
+	if src == nil {
+		return
+	}
+	s.ReportComponentBase = src.ReportComponentBase
+	s.shape = src.shape
+	s.curve = src.curve
+	if src.dashPattern != nil {
+		s.dashPattern = make([]float32, len(src.dashPattern))
+		copy(s.dashPattern, src.dashPattern)
+	} else {
+		s.dashPattern = nil
+	}
+}
+
 // Serialize writes ShapeObject properties that differ from defaults.
+// Mirrors C# ShapeObject.Serialize (ShapeObject.cs lines 204-215).
 func (s *ShapeObject) Serialize(w report.Writer) error {
 	if err := s.ReportComponentBase.Serialize(w); err != nil {
 		return err
@@ -321,16 +354,25 @@ func (s *ShapeObject) Serialize(w report.Writer) error {
 	if s.curve != 0 {
 		w.WriteFloat("Curve", s.curve)
 	}
+	if len(s.dashPattern) > 0 {
+		w.WriteStr("DashPattern", utils.FloatCollection(s.dashPattern).String())
+	}
 	return nil
 }
 
 // Deserialize reads ShapeObject properties.
+// Mirrors C# ShapeObject.Deserialize (reads Shape, Curve, DashPattern).
 func (s *ShapeObject) Deserialize(r report.Reader) error {
 	if err := s.ReportComponentBase.Deserialize(r); err != nil {
 		return err
 	}
 	s.shape = parseShapeKind(r.ReadStr("Shape", "Rectangle"))
 	s.curve = r.ReadFloat("Curve", 0)
+	if dp := r.ReadStr("DashPattern", ""); dp != "" {
+		if fc, err := utils.ParseFloatCollection(dp); err == nil {
+			s.dashPattern = []float32(fc)
+		}
+	}
 	return nil
 }
 
@@ -362,6 +404,29 @@ func (c *PolyPointCollection) Get(i int) *PolyPoint { return c.points[i] }
 
 // Clear removes all points.
 func (c *PolyPointCollection) Clear() { c.points = nil }
+
+// clonePolyPoint returns a deep copy of pp including its Left/Right control points.
+func clonePolyPoint(pp *PolyPoint) *PolyPoint {
+	if pp == nil {
+		return nil
+	}
+	cp := &PolyPoint{X: pp.X, Y: pp.Y}
+	cp.Left = clonePolyPoint(pp.Left)
+	cp.Right = clonePolyPoint(pp.Right)
+	return cp
+}
+
+// Clone returns a deep copy of the collection.
+// Mirrors C# pointsCollection.Clone() (PolyLineObject.cs line 144).
+func (c *PolyPointCollection) Clone() *PolyPointCollection {
+	clone := &PolyPointCollection{
+		points: make([]*PolyPoint, len(c.points)),
+	}
+	for i, p := range c.points {
+		clone.points[i] = clonePolyPoint(p)
+	}
+	return clone
+}
 
 // -----------------------------------------------------------------------
 // PolyLineObject
@@ -408,6 +473,25 @@ func (p *PolyLineObject) DashPattern() []float32 { return p.dashPattern }
 
 // SetDashPattern sets the dash pattern.
 func (p *PolyLineObject) SetDashPattern(dp []float32) { p.dashPattern = dp }
+
+// Assign copies all PolyLineObject properties from src.
+// Points are deep-cloned so both objects remain independent.
+// Mirrors C# PolyLineObject.Assign (PolyLineObject.cs lines 138-148).
+func (p *PolyLineObject) Assign(src *PolyLineObject) {
+	if src == nil {
+		return
+	}
+	p.ReportComponentBase = src.ReportComponentBase
+	p.centerX = src.centerX
+	p.centerY = src.centerY
+	p.points = src.points.Clone()
+	if src.dashPattern != nil {
+		p.dashPattern = make([]float32, len(src.dashPattern))
+		copy(p.dashPattern, src.dashPattern)
+	} else {
+		p.dashPattern = nil
+	}
+}
 
 // serializePolyPoint converts a PolyPoint to the PolyPoints_v2 token format.
 // Format: "X/Y" with optional "/L/LX/LY" and/or "/R/RX/RY" suffixes.
@@ -583,4 +667,12 @@ func (pg *PolygonObject) Serialize(w report.Writer) error {
 // additional serialized fields.
 func (pg *PolygonObject) Deserialize(r report.Reader) error {
 	return pg.PolyLineObject.Deserialize(r)
+}
+
+// Assign copies all PolygonObject properties from src.
+func (pg *PolygonObject) Assign(src *PolygonObject) {
+	if src == nil {
+		return
+	}
+	pg.PolyLineObject.Assign(&src.PolyLineObject)
 }

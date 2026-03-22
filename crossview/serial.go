@@ -151,6 +151,60 @@ func (h *CrossViewHeader) Get(i int) *HeaderDescriptor {
 // Clear removes all items.
 func (h *CrossViewHeader) Clear() { h.Items = h.Items[:0] }
 
+// IndexOf returns the index of d in the collection, or -1 if not found.
+// Mirrors C# CrossViewHeader.IndexOf (CrossViewHeader.cs line 82–85).
+func (h *CrossViewHeader) IndexOf(d *HeaderDescriptor) int {
+	for i, item := range h.Items {
+		if item == d {
+			return i
+		}
+	}
+	return -1
+}
+
+// Contains reports whether d is a member of the collection (pointer equality).
+// Mirrors C# CrossViewHeader.Contains (CrossViewHeader.cs line 92–95).
+func (h *CrossViewHeader) Contains(d *HeaderDescriptor) bool {
+	return h.IndexOf(d) >= 0
+}
+
+// Insert inserts d at the given index.  If index >= Count, d is appended.
+// Mirrors C# CrossViewHeader.Insert (CrossViewHeader.cs line 60–63).
+func (h *CrossViewHeader) Insert(index int, d *HeaderDescriptor) {
+	if index >= len(h.Items) {
+		h.Items = append(h.Items, d)
+		return
+	}
+	h.Items = append(h.Items, nil)
+	copy(h.Items[index+1:], h.Items[index:])
+	h.Items[index] = d
+}
+
+// Remove removes the first occurrence of d from the collection (by pointer equality).
+// If d is not found, Remove is a no-op.
+// Mirrors C# CrossViewHeader.Remove (CrossViewHeader.cs line 69–74).
+func (h *CrossViewHeader) Remove(d *HeaderDescriptor) {
+	idx := h.IndexOf(d)
+	if idx < 0 {
+		return
+	}
+	h.Items = append(h.Items[:idx], h.Items[idx+1:]...)
+}
+
+// ToArray returns a shallow copy of the items slice.
+// Mirrors C# CrossViewHeader.ToArray (CrossViewHeader.cs line 101–109).
+func (h *CrossViewHeader) ToArray() []*HeaderDescriptor {
+	cp := make([]*HeaderDescriptor, len(h.Items))
+	copy(cp, h.Items)
+	return cp
+}
+
+// AddRange appends all descriptors in items to the collection.
+// Mirrors C# CrossViewHeader.AddRange (CrossViewHeader.cs line 37–43).
+func (h *CrossViewHeader) AddRange(items []*HeaderDescriptor) {
+	h.Items = append(h.Items, items...)
+}
+
 // Serialize writes each descriptor as a "Header" child element.
 func (h *CrossViewHeader) Serialize(w report.Writer) error {
 	for _, d := range h.Items {

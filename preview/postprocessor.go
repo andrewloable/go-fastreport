@@ -18,6 +18,9 @@ import (
 // C# source: FastReport.Base/Preview/PreparedPagePostprocessor.cs
 type Postprocessor struct {
 	pp *PreparedPages
+	// unlimitedBandIdx is the sequential counter for PostProcessBandUnlimited.
+	// Mirrors C# PreparedPagePostprocessor.iBand field (PostprocessUnlimited path).
+	unlimitedBandIdx int
 }
 
 // NewPostprocessor creates a Postprocessor that will operate on pp.
@@ -351,4 +354,53 @@ func (p *Postprocessor) applyDuplicateMode(run []dupEntry, mode DuplicatesMode) 
 // identified by a dupEntry.
 func (p *Postprocessor) obj(e dupEntry) *PreparedObject {
 	return &p.pp.pages[e.pageIdx].Bands[e.bandIdx].Objects[e.objIdx]
+}
+
+// ProcessUnlimited runs the duplicates-clear pass restricted to a single
+// unlimited-height page. Mirrors C# PreparedPagePostprocessor.PostprocessUnlimited.
+// Resets the unlimitedBandIdx counter so PostProcessBandUnlimited starts from 0.
+func (p *Postprocessor) ProcessUnlimited(pageIdx int) {
+	if pageIdx < 0 || pageIdx >= p.pp.Count() {
+		return
+	}
+	pg := p.pp.pages[pageIdx]
+
+	// Build duplicates groups for this page only.
+	groups := make(map[string][]dupEntry)
+	for bi := range pg.Bands {
+		band := pg.Bands[bi]
+		for oi := range band.Objects {
+			obj := &band.Objects[oi]
+			if obj.Kind != ObjectTypeText || obj.Name == "" {
+				continue
+			}
+			if obj.Duplicates == DuplicatesShow {
+				continue
+			}
+			absTop := band.Top + obj.Top
+			entry := dupEntry{
+				pageIdx:   pageIdx,
+				bandIdx:   bi,
+				objIdx:    oi,
+				absTop:    absTop,
+				absBottom: absTop + obj.Height,
+			}
+			groups[obj.Name] = append(groups[obj.Name], entry)
+		}
+	}
+
+	for _, entries := range groups {
+		p.processGroup(entries)
+	}
+
+	// Reset sequential counter for PostProcessBandUnlimited calls that follow.
+	p.unlimitedBandIdx = 0
+}
+
+// PostProcessBandUnlimited advances the sequential band counter and returns
+// the band pointer unchanged.
+// Mirrors C# PreparedPagePostprocessor.PostProcessBandUnlimitedPage.
+func (p *Postprocessor) PostProcessBandUnlimited(band *PreparedBand) *PreparedBand {
+	p.unlimitedBandIdx++
+	return band
 }

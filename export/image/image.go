@@ -22,6 +22,7 @@ import (
 
 	"github.com/andrewloable/go-fastreport/export"
 	"github.com/andrewloable/go-fastreport/preview"
+	"github.com/andrewloable/go-fastreport/report"
 	"github.com/andrewloable/go-fastreport/style"
 	"github.com/andrewloable/go-fastreport/utils"
 )
@@ -1253,4 +1254,30 @@ func (e *Exporter) drawVLine(x, y0, y1 int, c color.RGBA) {
 			e.curPage.SetRGBA(x, y, c)
 		}
 	}
+}
+
+// Serialize writes non-default Exporter settings to w.
+// Mirrors C# ImageExport.Serialize (ImageExport.cs).
+func (e *Exporter) Serialize(w report.Writer) {
+	e.ExportBase.Serialize(w)
+	w.WriteInt("ImageFormat", int(e.Format))
+	w.WriteBool("SeparateFiles", e.SeparateFiles)
+	w.WriteInt("ResolutionX", e.ResolutionX)
+	w.WriteInt("ResolutionY", e.ResolutionY)
+	w.WriteInt("JpegQuality", e.JpegQuality)
+	w.WriteBool("MultiFrameTiff", e.MultiFrameTiff)
+	w.WriteBool("MonochromeTiff", e.MonochromeTiff)
+}
+
+// Deserialize reads Exporter settings from r.
+// Mirrors C# ImageExport.Deserialize (ImageExport.cs).
+func (e *Exporter) Deserialize(r report.Reader) {
+	e.ExportBase.Deserialize(r)
+	e.Format = ImageFormat(r.ReadInt("ImageFormat", int(ImageFormatJPEG)))
+	e.SeparateFiles = r.ReadBool("SeparateFiles", true)
+	e.ResolutionX = r.ReadInt("ResolutionX", DefaultDPI)
+	e.ResolutionY = r.ReadInt("ResolutionY", DefaultDPI)
+	e.JpegQuality = r.ReadInt("JpegQuality", 100)
+	e.MultiFrameTiff = r.ReadBool("MultiFrameTiff", false)
+	e.MonochromeTiff = r.ReadBool("MonochromeTiff", false)
 }

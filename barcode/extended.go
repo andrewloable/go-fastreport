@@ -107,6 +107,16 @@ func NewIntelligentMailBarcode() *IntelligentMailBarcode {
 	}
 }
 
+// Assign copies all IntelligentMailBarcode fields from src.
+// Mirrors C# BarcodeIntelligentMail.Assign (BarcodeIntelligentMail.cs:44-48).
+func (b *IntelligentMailBarcode) Assign(src *IntelligentMailBarcode) {
+	if src == nil {
+		return
+	}
+	b.BaseBarcodeImpl = src.BaseBarcodeImpl
+	b.QuietZone = src.QuietZone
+}
+
 // DefaultValue returns "12345678901234567890" matching C# BarcodeIntelligentMail.GetDefaultValue().
 func (b *IntelligentMailBarcode) DefaultValue() string { return "12345678901234567890" }
 
@@ -248,6 +258,16 @@ func NewMaxiCodeBarcode() *MaxiCodeBarcode {
 // DefaultValue returns a sample MaxiCode payload.
 func (b *MaxiCodeBarcode) DefaultValue() string { return "MaxiCode Test" }
 
+// Assign copies Mode from src into this MaxiCodeBarcode.
+// Mirrors C# BarcodeMaxiCode.Assign(BarcodeBase source) (BarcodeMaxiCode.cs:113-118).
+func (b *MaxiCodeBarcode) Assign(src *MaxiCodeBarcode) {
+	if src == nil {
+		return
+	}
+	b.BaseBarcodeImpl = src.BaseBarcodeImpl
+	b.Mode = src.Mode
+}
+
 // Encode and Render are implemented in maxicode.go.
 
 // ── PharmacodeBarcode ─────────────────────────────────────────────────────────
@@ -266,6 +286,17 @@ func NewPharmacodeBarcode() *PharmacodeBarcode {
 		BaseBarcodeImpl: newBaseBarcodeImpl(BarcodeTypePharmacode),
 		QuietZone:       true,
 	}
+}
+
+// Assign copies all PharmacodeBarcode fields from src.
+// Mirrors C# BarcodePharmacode.Assign (BarcodePharmacode.cs).
+func (b *PharmacodeBarcode) Assign(src *PharmacodeBarcode) {
+	if src == nil {
+		return
+	}
+	b.BaseBarcodeImpl = src.BaseBarcodeImpl
+	b.TwoTrack = src.TwoTrack
+	b.QuietZone = src.QuietZone
 }
 
 // DefaultValue returns the C# BarcodeBase.GetDefaultValue() default: "12345678".
@@ -506,55 +537,20 @@ func (b *PostNetBarcode) Encode(text string) error {
 	return nil
 }
 
-// Render draws the POSTNET tall/short bar pattern.
+// Render draws the POSTNET tall/short bar pattern using GetPattern and the
+// standard linear renderer. Mirrors C# BarcodePostNet which inherits
+// LinearBarcodeBase.DrawBarcode and uses GetPattern() for rendering.
 func (b *PostNetBarcode) Render(width, height int) (image.Image, error) {
 	if b.encodedText == "" {
 		return nil, fmt.Errorf("postnet: not encoded")
 	}
-	bits := postnetEncode(b.encodedText)
-	return renderBitPattern(bits, width, height, color.Black, color.White), nil
+	pattern, err := b.GetPattern()
+	if err != nil {
+		return nil, err
+	}
+	return DrawLinearBarcode(pattern, b.encodedText, width, height, false, b.GetWideBarRatio()), nil
 }
 
-// postnetEncode converts digits to a POSTNET tall/short bit pattern.
-// true = tall bar (half-height top extension), false = short bar.
-func postnetEncode(digits string) []bool {
-	// POSTNET digit encoding (5 bars each, sum=2 tall bars).
-	postnetDigits := [10][5]bool{
-		{false, false, true, true, false}, // 0 — non-standard, sum=2
-		{false, false, false, true, true}, // 1
-		{false, false, true, false, true}, // 2
-		{false, false, true, true, false}, // 3 (same as 0 by spec; 0 is 11000)
-		{false, true, false, false, true}, // 4
-		{false, true, false, true, false}, // 5
-		{false, true, true, false, false}, // 6
-		{true, false, false, false, true}, // 7
-		{true, false, false, true, false}, // 8
-		{true, false, true, false, false}, // 9
-	}
-	// Override 0 correctly: tall bars at positions 0,1 (11000).
-	postnetDigits[0] = [5]bool{true, true, false, false, false}
-
-	var bits []bool
-	bits = append(bits, true) // start frame bar
-	sum := 0
-	for _, d := range digits {
-		n := int(d - '0')
-		bars := postnetDigits[n]
-		for _, b := range bars {
-			bits = append(bits, b)
-			if b {
-				sum++
-			}
-		}
-	}
-	// Check digit: make total tall bars divisible by 10.
-	check := (10 - (sum % 10)) % 10
-	for _, b := range postnetDigits[check] {
-		bits = append(bits, b)
-	}
-	bits = append(bits, true) // end frame bar
-	return bits
-}
 
 // ── SwissQRBarcode ────────────────────────────────────────────────────────────
 

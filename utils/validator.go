@@ -76,6 +76,10 @@ type ValidatableReport interface {
 	TextExpressions() []string
 	// ParameterNames returns the registered parameter names.
 	ParameterNames() []string
+	// ObjectNames returns the names of all named report objects (components,
+	// bands, pages). Used for duplicate-name detection, matching the C#
+	// Validator.ValidateReport duplicate-name loop (Validator.cs lines 127–145).
+	ObjectNames() []string
 }
 
 // NewReportValidator creates a ReportValidator with the default rule set.
@@ -84,6 +88,7 @@ func NewReportValidator() *ReportValidator {
 	v.rules = []ValidationRule{
 		ruleNoPages,
 		ruleBracketsBalanced,
+		ruleDuplicateNames,
 	}
 	return v
 }
@@ -130,6 +135,31 @@ func ruleBracketsBalanced(r ValidatableReport) []ValidationIssue {
 	return issues
 }
 
+// ruleDuplicateNames reports an error for every object name that appears more
+// than once in the report. This mirrors the duplicate-name loop in C#
+// Validator.ValidateReport (Validator.cs lines 127–145).
+func ruleDuplicateNames(r ValidatableReport) []ValidationIssue {
+	names := r.ObjectNames()
+	seen := make(map[string]bool, len(names))
+	reported := make(map[string]bool)
+	var issues []ValidationIssue
+	for _, name := range names {
+		if name == "" {
+			continue
+		}
+		if seen[name] && !reported[name] {
+			issues = append(issues, ValidationIssue{
+				Severity:   ValidationError,
+				ObjectName: name,
+				Message:    "duplicate object name",
+			})
+			reported[name] = true
+		}
+		seen[name] = true
+	}
+	return issues
+}
+
 // checkBracketsBalanced verifies that square brackets in s are balanced.
 func checkBracketsBalanced(s string) error {
 	depth := 0
@@ -148,6 +178,57 @@ func checkBracketsBalanced(s string) error {
 		return fmt.Errorf("missing %d closing ']'", depth)
 	}
 	return nil
+}
+
+// ── Geometry helpers (mirror of C# Validator internal methods) ─────────────────
+//
+// These helpers work with axis-aligned rectangles represented as four float32
+// values (left, top, width, height), matching the C# RectangleF convention.
+// They are used by both the validator rules and by report.ReportComponentBase.Validate().
+// C# reference: FastReport.Base/Utils/Validator.cs lines 38–88.
+
+// NormalizeBoundsF ensures the width and height of a rectangle are non-negative.
+// If width < 0 the left edge is moved to the right edge and width is negated.
+// If height < 0 the top edge is moved to the bottom edge and height is negated.
+// Equivalent to the C# internal Validator.NormalizeBounds(ref RectangleF).
+func NormalizeBoundsF(left, top, width, height float32) (float32, float32, float32, float32) {
+	if width < 0 {
+		left = left + width // left = original Right
+		width = -width
+	}
+	if height < 0 {
+		top = top + height // top = original Bottom
+		height = -height
+	}
+	return left, top, width, height
+}
+
+// RectsIntersectF reports whether two (normalized) rectangles overlap.
+// The 0.01-unit inset applied by GetIntersectingObjects in C# is not applied
+// here; callers that need it should shrink r1 by -0.01 before calling.
+// C# reference: Validator.cs line 70 — bounds.IntersectsWith(bounds1).
+func RectsIntersectF(l1, t1, w1, h1, l2, t2, w2, h2 float32) bool {
+	return l1 < l2+w2 && l1+w1 > l2 && t1 < t2+h2 && t1+h1 > t2
+}
+
+// RectContainInOtherF returns true when the inner rectangle is fully contained
+// within the outer rectangle. Both rectangles are normalized first, and the
+// inner rectangle is shrunk by 0.01 units on all sides to compensate for
+// designer grid-fit inaccuracy, matching the C# implementation exactly.
+// C# reference: Validator.cs lines 79–88.
+func RectContainInOtherF(
+	outerL, outerT, outerW, outerH float32,
+	innerL, innerT, innerW, innerH float32,
+) bool {
+	outerL, outerT, outerW, outerH = NormalizeBoundsF(outerL, outerT, outerW, outerH)
+	innerL, innerT, innerW, innerH = NormalizeBoundsF(innerL, innerT, innerW, innerH)
+	// Shrink inner by 0.01 to compensate for grid-fit inaccuracy.
+	innerL += 0.01
+	innerT += 0.01
+	innerW -= 0.02
+	innerH -= 0.02
+	return innerL >= outerL && innerT >= outerT &&
+		innerL+innerW <= outerL+outerW && innerT+innerH <= outerT+outerH
 }
 
 // ── Convenience helpers ───────────────────────────────────────────────────────
@@ -194,3 +275,4 @@ func HasUnresolvedExpression(text string, knownNames map[string]bool) bool {
 	}
 	return false
 }
+

@@ -64,6 +64,29 @@ func (p *CommandParameter) ResetLastValue() {
 	p.lastValue = paramValueUninitialized{}
 }
 
+// Assign copies all CommandParameter properties from src.
+// Mirrors C# CommandParameter.Assign (CommandParameter.cs).
+func (p *CommandParameter) Assign(src *CommandParameter) {
+	if src == nil {
+		return
+	}
+	p.Name = src.Name
+	p.DataType = src.DataType
+	p.Size = src.Size
+	p.Expression = src.Expression
+	p.DefaultValue = src.DefaultValue
+	p.Direction = src.Direction
+}
+
+// GetExpressions returns the list of expressions used by this parameter.
+// Mirrors C# CommandParameter.GetExpressions (CommandParameter.cs).
+func (p *CommandParameter) GetExpressions() []string {
+	if p.Expression != "" {
+		return []string{p.Expression}
+	}
+	return nil
+}
+
 // Serialize writes CommandParameter properties to w.
 func (p *CommandParameter) Serialize(w report.Writer) error {
 	if p.Name != "" {
@@ -99,6 +122,46 @@ func (p *CommandParameter) Deserialize(r report.Reader) error {
 }
 
 // -----------------------------------------------------------------------
+// DataConnectionBase — event-arg types
+// -----------------------------------------------------------------------
+
+// DatabaseLoginEventArgs carries the connection string passed to the
+// OnDatabaseLogin callback. The callback may override ConnectionString, or
+// set UserName/Password, before the connection is opened.
+// C# ref: FastReport.DatabaseLoginEventArgs (ReportEventArgs.cs).
+// / ReportSettings.Core.cs OnDatabaseLogin → fires DatabaseLogin event.
+type DatabaseLoginEventArgs struct {
+	// ConnectionString is the DSN passed to the connection. The callback may
+	// replace it to inject credentials or switch to a different server.
+	ConnectionString string
+	// UserName is an optional credential field available for custom Open() overrides.
+	UserName string
+	// Password is an optional credential field available for custom Open() overrides.
+	Password string
+}
+
+// AfterDatabaseLoginEventArgs carries the open *sql.DB passed to the
+// OnAfterDatabaseLogin callback after the connection has been established.
+// C# ref: FastReport.AfterDatabaseLoginEventArgs (ReportEventArgs.cs).
+// / ReportSettings.OnAfterDatabaseLogin → fires AfterDatabaseLogin event.
+type AfterDatabaseLoginEventArgs struct {
+	// DB is the opened *sql.DB. The callback may inspect or configure it.
+	DB *sql.DB
+}
+
+// FilterConnectionTablesEventArgs carries the context passed to the
+// OnFilterConnectionTables callback. Set Skip = true to exclude the table.
+// C# ref: FastReport.Utils.Config.FilterConnectionTablesEventArgs.
+type FilterConnectionTablesEventArgs struct {
+	// Connection is the DataConnectionBase that owns the table list.
+	Connection *DataConnectionBase
+	// TableName is the candidate table name being evaluated.
+	TableName string
+	// Skip, when set to true by the callback, causes the table to be excluded.
+	Skip bool
+}
+
+// -----------------------------------------------------------------------
 // DataConnectionBase
 // -----------------------------------------------------------------------
 
@@ -118,6 +181,22 @@ type DataConnectionBase struct {
 	LoginPrompt bool
 	// CommandTimeout is the per-query timeout in seconds (default 30, per C# default).
 	CommandTimeout int
+
+	// OnDatabaseLogin is an optional callback invoked just before sql.Open.
+	// The callback receives a *DatabaseLoginEventArgs whose ConnectionString is
+	// pre-filled with the current value; the callback may replace it.
+	// C# ref: ReportSettings.DatabaseLogin event / Core.cs OnDatabaseLogin.
+	OnDatabaseLogin func(e *DatabaseLoginEventArgs)
+
+	// OnAfterDatabaseLogin is an optional callback invoked after sql.Open succeeds.
+	// The callback receives a *AfterDatabaseLoginEventArgs with the open *sql.DB.
+	// C# ref: ReportSettings.AfterDatabaseLogin event / ReportSettings.OnAfterDatabaseLogin.
+	OnAfterDatabaseLogin func(e *AfterDatabaseLoginEventArgs)
+
+	// OnFilterConnectionTables is an optional callback invoked for each table name
+	// during CreateAllTables. Set e.Skip = true to exclude a table.
+	// C# ref: FastReport.Utils.Config.OnFilterConnectionTables event.
+	OnFilterConnectionTables func(e *FilterConnectionTablesEventArgs)
 
 	// isSqlBased indicates whether this connection is SQL-based.
 	// C# ref: FastReport.Data.DataConnectionBase.IsSqlBased
@@ -381,15 +460,30 @@ func (c *DataConnectionBase) DriverName() string { return c.driverName }
 
 // Open opens the underlying *sql.DB using the ConnectionString.
 // Returns an error if the connection cannot be established.
+//
+// If OnDatabaseLogin is set it is called before sql.Open with the current
+// ConnectionString; the callback may replace it.
+// If OnAfterDatabaseLogin is set it is called after sql.Open succeeds.
+// C# ref: FastReport.Base/Data/DataConnectionBase.cs Open() which calls
+// Config.ReportSettings.OnDatabaseLogin and Config.ReportSettings.OnAfterDatabaseLogin.
 func (c *DataConnectionBase) Open() error {
 	if c.db != nil {
 		return nil // already open
 	}
-	db, err := sql.Open(c.driverName, c.ConnectionString)
+	dsn := c.ConnectionString
+	if c.OnDatabaseLogin != nil {
+		args := &DatabaseLoginEventArgs{ConnectionString: dsn}
+		c.OnDatabaseLogin(args)
+		dsn = args.ConnectionString
+	}
+	db, err := sql.Open(c.driverName, dsn)
 	if err != nil {
 		return fmt.Errorf("DataConnection(%s): %w", c.driverName, err)
 	}
 	c.db = db
+	if c.OnAfterDatabaseLogin != nil {
+		c.OnAfterDatabaseLogin(&AfterDatabaseLoginEventArgs{DB: db})
+	}
 	return nil
 }
 

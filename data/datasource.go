@@ -51,16 +51,21 @@ type Column struct {
 	DataType string
 }
 
+// AdditionalFilterPredicate is a function that returns true if the row value passes
+// the filter for a specific column. Mirrors C# DataSourceFilter.ValueMatch().
+type AdditionalFilterPredicate func(value any) bool
+
 // BaseDataSource provides a reusable implementation of the DataSource interface
 // backed by an in-memory slice of row maps. Concrete data sources can embed it
 // and override GetValue to supply their own row storage.
 type BaseDataSource struct {
-	name        string
-	alias       string
-	columns     []Column
-	rows        []map[string]any
-	currentRow  int
-	initialized bool
+	name             string
+	alias            string
+	columns          []Column
+	rows             []map[string]any
+	currentRow       int
+	initialized      bool
+	additionalFilter map[string]AdditionalFilterPredicate
 }
 
 // NewBaseDataSource creates a BaseDataSource with the given name.
@@ -169,6 +174,72 @@ func (ds *BaseDataSource) Close() error {
 	ds.initialized = false
 	ds.currentRow = -1
 	return nil
+}
+
+// Prior moves the cursor one row backwards.
+// Mirrors C# DataSourceBase.Prior() (DataSourceBase.cs:724): CurrentRowNo--.
+// No lower-bound check — callers must ensure position validity.
+func (ds *BaseDataSource) Prior() {
+	ds.currentRow--
+}
+
+// EnsureInit initialises the data source if it has not been initialised yet.
+// Mirrors C# DataSourceBase.EnsureInit() lazy-init pattern.
+func (ds *BaseDataSource) EnsureInit() error {
+	if ds.initialized {
+		return nil
+	}
+	return ds.Init()
+}
+
+// GetDisplayName returns the human-readable display name.
+// Returns Alias if it is non-empty, otherwise returns Name.
+// Mirrors C# DataComponentBase.GetDisplayName() behaviour.
+func (ds *BaseDataSource) GetDisplayName() string {
+	if ds.alias != "" {
+		return ds.alias
+	}
+	return ds.name
+}
+
+// SetAdditionalFilter adds or replaces a column-level filter predicate.
+// When rows are filtered (ApplyAdditionalFilter), only rows where pred returns true
+// for the named column's value are kept.
+// Mirrors C# DataSourceBase.AdditionalFilter Hashtable (DataSourceBase.cs:249-251).
+func (ds *BaseDataSource) SetAdditionalFilter(column string, pred AdditionalFilterPredicate) {
+	if ds.additionalFilter == nil {
+		ds.additionalFilter = make(map[string]AdditionalFilterPredicate)
+	}
+	ds.additionalFilter[column] = pred
+}
+
+// ClearAdditionalFilter removes all additional filter predicates.
+// Mirrors C# DataSourceBase.ClearData() → additionalFilter.Clear() (DataSourceBase.cs:754).
+func (ds *BaseDataSource) ClearAdditionalFilter() {
+	ds.additionalFilter = nil
+}
+
+// ApplyAdditionalFilter removes any rows that fail the additional filter predicates.
+// Mirrors C# DataSourceBase.ApplyAdditionalFilter() (DataSourceBase.cs:325-341).
+// Call after Init() when additional column filters are needed.
+func (ds *BaseDataSource) ApplyAdditionalFilter() {
+	if len(ds.additionalFilter) == 0 {
+		return
+	}
+	filtered := ds.rows[:0]
+	for _, row := range ds.rows {
+		keep := true
+		for col, pred := range ds.additionalFilter {
+			if !pred(row[col]) {
+				keep = false
+				break
+			}
+		}
+		if keep {
+			filtered = append(filtered, row)
+		}
+	}
+	ds.rows = filtered
 }
 
 // SortSpec describes one sort key for SortRows.

@@ -367,7 +367,22 @@ func (e *ReportEngine) ShowFullBand(b *band.BandBase) {
 }
 
 func (e *ReportEngine) showFullBandOnce(b *band.BandBase) {
-	if !b.Visible() {
+	// Evaluate VisibleExpression on the band itself, mirroring C# CanPrint()
+	// (ReportEngine.Bands.cs line 259) which is called on the band by
+	// PreparedPage.DoAdd() and GetBandHeightWithChildren(). When a
+	// VisibleExpression is set it overrides the static Visible flag.
+	// C# behaviour: TotalPages-based expressions are true on first pass,
+	// then re-evaluated on the final pass.
+	if expr := b.VisibleExpression(); expr != "" {
+		if e.report != nil {
+			visible := b.CalcVisibleExpression(expr, func(s string) (any, error) {
+				return e.report.Calc(s)
+			})
+			if !visible {
+				return
+			}
+		}
+	} else if !b.Visible() {
 		return
 	}
 
@@ -393,9 +408,12 @@ func (e *ReportEngine) showFullBandOnce(b *band.BandBase) {
 	b.FireBeforePrint()
 	b.FireBeforeLayout()
 
-	// Populate outline entry if band has an OutlineExpression.
+	// Populate outline entry if band has an OutlineExpression and is not a
+	// reprinted/repeated band. Mirrors C# AddBandOutline: !band.Repeated check.
+	// C# ref: ReportEngine.Outline.cs AddBandOutline (line 29):
+	//   if (band.Visible && !IsNullOrEmpty(band.OutlineExpression) && !band.Repeated)
 	addedOutline := false
-	if expr := b.OutlineExpression(); expr != "" {
+	if expr := b.OutlineExpression(); expr != "" && !b.Repeated() {
 		text := e.evalText(expr)
 		if text != "" {
 			e.AddOutline(text)
@@ -528,6 +546,12 @@ func (e *ReportEngine) showFullBandOnce(b *band.BandBase) {
 // child bands, mirroring the C# ReportEngine.GetBandHeightWithChildren method.
 // It walks the chain: band -> band.Child -> child.Child -> ... and sums heights.
 // The walk stops if a child has FillUnusedSpace or CompleteToNRows != 0.
+//
+// C# special case (ReportEngine.cs GetBandHeightWithChildren lines 376-393):
+// When a band's VisibleExpression references "TotalPages" and we are in the
+// FinalPass (second pass of a double-pass report), the band's height is still
+// included in the calculation even if it is currently not visible. This ensures
+// correct footer-area reservation when band visibility depends on total pages.
 func (e *ReportEngine) GetBandHeightWithChildren(b *band.BandBase) float32 {
 	if b == nil {
 		return 0
@@ -535,7 +559,18 @@ func (e *ReportEngine) GetBandHeightWithChildren(b *band.BandBase) float32 {
 	result := float32(0)
 	cur := b
 	for cur != nil {
-		if cur.Visible() {
+		include := cur.Visible()
+		if !include {
+			// C# special case: include height if VisibleExpression contains "TotalPages"
+			// and we are in the final pass. This reserves correct space for bands
+			// whose visibility depends on the total page count.
+			if e.finalPass {
+				if expr := cur.VisibleExpression(); expr != "" && strings.Contains(expr, "TotalPages") {
+					include = true
+				}
+			}
+		}
+		if include {
 			if cur.CanGrow() || cur.CanShrink() {
 				result += e.CalcBandHeight(cur)
 			} else {

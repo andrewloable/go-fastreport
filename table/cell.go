@@ -3,6 +3,7 @@ package table
 import (
 	"github.com/andrewloable/go-fastreport/object"
 	"github.com/andrewloable/go-fastreport/report"
+	"github.com/andrewloable/go-fastreport/style"
 )
 
 // CellDuplicates specifies how duplicate cell values are displayed.
@@ -65,6 +66,10 @@ type TableCell struct {
 
 	// duplicates controls how duplicate values are handled.
 	duplicates CellDuplicates
+
+	// savedText / savedObjectCount for SaveState/RestoreState.
+	savedText        string
+	savedObjectCount int
 }
 
 // TypeName returns the FRX element name.
@@ -117,6 +122,100 @@ func (c *TableCell) AddObject(obj report.Serializable) {
 
 // ObjectCount returns the number of embedded objects.
 func (c *TableCell) ObjectCount() int { return len(c.objects) }
+
+// CalcWidth returns the current width of the cell.
+// Mirrors C# TableCell.CalcWidth (TableCell.cs).
+func (c *TableCell) CalcWidth() float32 { return c.Width() }
+
+// CalcHeight returns the current height of the cell.
+// Mirrors C# TableCell.CalcHeight (TableCell.cs).
+func (c *TableCell) CalcHeight() float32 { return c.Height() }
+
+// SaveState saves the current Text and embedded object count so they can be
+// restored later with RestoreState.
+// Mirrors C# TableCell.SaveState (TableCell.cs).
+func (c *TableCell) SaveState() {
+	c.savedText = c.Text()
+	c.savedObjectCount = len(c.objects)
+}
+
+// RestoreState restores Text and trims the objects slice back to the count
+// saved by SaveState (discarding any objects added after the save).
+// Mirrors C# TableCell.RestoreState (TableCell.cs).
+func (c *TableCell) RestoreState() {
+	c.SetText(c.savedText)
+	if c.savedObjectCount <= len(c.objects) {
+		c.objects = c.objects[:c.savedObjectCount]
+	}
+}
+
+// Assign copies all TableCell properties from src.
+// Mirrors C# TableCell.Assign (TableCell.cs:221-228).
+func (c *TableCell) Assign(src *TableCell) {
+	if src == nil {
+		return
+	}
+	// Copy the embedded TextObject by value (copies all scalar fields), then
+	// deep-copy reference types to ensure independence.
+	c.TextObject = src.TextObject
+	// Deep-copy highlights slice.
+	srcH := src.TextObject.Highlights()
+	if len(srcH) > 0 {
+		h := make([]style.HighlightCondition, len(srcH))
+		copy(h, srcH)
+		c.TextObject.SetHighlights(h)
+	} else {
+		c.TextObject.SetHighlights(nil)
+	}
+	// Copy table-cell-specific fields.
+	c.colSpan = src.colSpan
+	c.rowSpan = src.rowSpan
+	c.duplicates = src.duplicates
+	// objects not copied (structural; managed by table).
+}
+
+// Clone creates an exact copy of this cell.
+// Mirrors C# TableCell.Clone (TableCell.cs:235-239).
+func (c *TableCell) Clone() *TableCell {
+	cell := NewTableCell()
+	cell.Assign(c)
+	return cell
+}
+
+// EqualStyle returns true when two cells have identical visual style settings.
+// This is used for style deduplication (mirrors C# TableCell.Equals —
+// TableCell.cs:247-283, but named EqualStyle to avoid shadowing built-in).
+func (c *TableCell) EqualStyle(other *TableCell) bool {
+	if other == nil {
+		return false
+	}
+	return c.HorzAlign() == other.HorzAlign() &&
+		c.VertAlign() == other.VertAlign() &&
+		c.Angle() == other.Angle() &&
+		c.RightToLeft() == other.RightToLeft() &&
+		c.WordWrap() == other.WordWrap() &&
+		c.Underlines() == other.Underlines() &&
+		c.Clip() == other.Clip() &&
+		c.Wysiwyg() == other.Wysiwyg() &&
+		c.Font() == other.Font() &&
+		c.TextColor() == other.TextColor() &&
+		c.FontWidthRatio() == other.FontWidthRatio() &&
+		c.FirstTabOffset() == other.FirstTabOffset() &&
+		c.TabWidth() == other.TabWidth() &&
+		c.LineHeight() == other.LineHeight() &&
+		c.ParagraphOffset() == other.ParagraphOffset() &&
+		c.duplicates == other.duplicates
+}
+
+// GetData populates the cell with its data value. When insideSpan is true
+// (the cell is covered by a spanning neighbour), its text is cleared so the
+// spanning cell's content shows through.
+// Mirrors C# TableCell.GetData (TableCell.cs).
+func (c *TableCell) GetData(insideSpan bool) {
+	if insideSpan {
+		c.SetText("")
+	}
+}
 
 // SetStyle applies a style to this cell through the given table's style
 // deduplication collection. The returned cell is the canonical shared style

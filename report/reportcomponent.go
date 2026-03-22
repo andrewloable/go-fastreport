@@ -2,6 +2,7 @@ package report
 
 import (
 	"github.com/andrewloable/go-fastreport/style"
+	"github.com/andrewloable/go-fastreport/utils"
 )
 
 // ShiftMode controls how a component shifts when overlapping components grow.
@@ -412,6 +413,42 @@ func (rc *ReportComponentBase) FireClick() {
 	}
 }
 
+// Assign copies all ReportComponentBase fields from src into this component.
+// Mirrors C# ReportComponentBase.Assign (ReportComponentBase.cs line 678-709).
+// Note: event handler fields (OnBeforePrint, OnAfterPrint, etc.) are not copied
+// because they are runtime callbacks, not design-time properties.
+func (rc *ReportComponentBase) Assign(src *ReportComponentBase) {
+	if src == nil {
+		return
+	}
+	rc.ComponentBase = src.ComponentBase
+	rc.border = src.border
+	if src.fill != nil {
+		rc.fill = src.fill.Clone()
+	} else {
+		rc.fill = nil
+	}
+	rc.styleName = src.styleName
+	rc.evenStyleName = src.evenStyleName
+	rc.hoverStyleName = src.hoverStyleName
+	rc.evenStylePriority = src.evenStylePriority
+	rc.exportable = src.exportable
+	rc.exportableExpression = src.exportableExpression
+	rc.canGrow = src.canGrow
+	rc.canShrink = src.canShrink
+	rc.growToBottom = src.growToBottom
+	rc.shiftMode = src.shiftMode
+	rc.printOn = src.printOn
+	rc.pageBreak = src.pageBreak
+	rc.bookmark = src.bookmark
+	if src.hyperlink != nil {
+		h := *src.hyperlink
+		rc.hyperlink = &h
+	} else {
+		rc.hyperlink = nil
+	}
+}
+
 // --- Serialization ---
 
 // Serialize writes ReportComponentBase properties that differ from defaults.
@@ -529,4 +566,62 @@ func (rc *ReportComponentBase) Deserialize(r Reader) error {
 		}
 	}
 	return nil
+}
+
+// Validate checks this component for common structural problems and returns a
+// slice of validation issues. An empty slice means the component is valid.
+//
+// The checks mirror C# ReportComponentBase.Validate()
+// (FastReport.Base/ReportComponentBase.cs lines 802–816):
+//   1. Width or Height is zero or negative → Error "incorrect size"
+//   2. Name is empty → Error "unnamed object"
+//   3. Component's AbsBounds is not contained within its parent's AbsBounds
+//      (when the parent exposes geometry) → Error "out of bounds"
+//
+// This method satisfies the utils.Validatable interface.
+func (rc *ReportComponentBase) Validate() []utils.ValidationIssue {
+	var issues []utils.ValidationIssue
+	name := rc.Name()
+
+	// Check 1: size must be positive.
+	// C# reference: ReportComponentBase.cs line 806.
+	if rc.Height() <= 0 || rc.Width() <= 0 {
+		issues = append(issues, utils.ValidationIssue{
+			Severity:   utils.ValidationError,
+			ObjectName: name,
+			Message:    "incorrect size: width and height must be positive",
+		})
+	}
+
+	// Check 2: name must not be empty.
+	// C# reference: ReportComponentBase.cs line 809.
+	if name == "" {
+		issues = append(issues, utils.ValidationIssue{
+			Severity: utils.ValidationError,
+			Message:  "unnamed object: report component has no name",
+		})
+	}
+
+	// Check 3: component must be contained within its parent's bounds.
+	// Only checked when the parent exposes AbsLeft/AbsTop/Width/Height, matching
+	// the C# check "(Parent is ReportComponentBase)" guard.
+	// C# reference: ReportComponentBase.cs line 812 — Validator.RectContainInOtherRect.
+	if p, ok := rc.Parent().(interface {
+		AbsLeft() float32
+		AbsTop() float32
+		Width() float32
+		Height() float32
+	}); ok {
+		abs := rc.AbsBounds()
+		if !utils.RectContainInOtherF(p.AbsLeft(), p.AbsTop(), p.Width(), p.Height(),
+			abs.Left, abs.Top, abs.Width, abs.Height) {
+			issues = append(issues, utils.ValidationIssue{
+				Severity:   utils.ValidationError,
+				ObjectName: name,
+				Message:    "object is out of bounds relative to its parent",
+			})
+		}
+	}
+
+	return issues
 }

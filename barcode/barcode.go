@@ -791,6 +791,12 @@ func (b *BarcodeObject) Serialize(w report.Writer) error {
 			if !bc.DrawVerticalBearerBars {
 				w.WriteBool("Barcode.DrawVerticalBearerBars", false)
 			}
+		case *MaxiCodeBarcode:
+			// Mode: MaxiCode encoding mode 2-6; default 4.
+			// C# BarcodeMaxiCode.Serialize (BarcodeMaxiCode.cs:127).
+			if bc.Mode != 4 {
+				w.WriteInt("Barcode.Mode", bc.Mode)
+			}
 		}
 	}
 	return nil
@@ -1231,6 +1237,17 @@ func NewCodabarBarcode() *CodabarBarcode {
 		StartChar:       'A', // C# default: CodabarChar.A
 		StopChar:        'B', // C# default: CodabarChar.B
 	}
+}
+
+// Assign copies all CodabarBarcode fields from src.
+// Mirrors C# BarcodeCodabar.Assign (BarcodeCodabar.cs).
+func (c *CodabarBarcode) Assign(src *CodabarBarcode) {
+	if src == nil {
+		return
+	}
+	c.BaseBarcodeImpl = src.BaseBarcodeImpl
+	c.StartChar = src.StartChar
+	c.StopChar = src.StopChar
 }
 
 // Encode stores the text for later rendering.

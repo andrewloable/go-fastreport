@@ -31,6 +31,9 @@ type CSVDataSource struct {
 	comment rune
 	// lazyQuotes enables relaxed quote parsing.
 	lazyQuotes bool
+	// convertFieldTypes enables automatic type inference per column.
+	// Mirrors C# CsvConnectionStringBuilder.ConvertFieldTypes / CsvUtils.DetermineTypes.
+	convertFieldTypes bool
 }
 
 // New creates a CSVDataSource with the given name.
@@ -121,18 +124,29 @@ func (c *CSVDataSource) Init() error {
 		}
 	}
 
-	for _, h := range headers {
-		c.AddColumn(data.Column{Name: h, Alias: h, DataType: "string"})
+	// Infer column types from data rows when ConvertFieldTypes is enabled.
+	// Mirrors C# CsvUtils.DetermineTypes: int > float64 > time.Time > string.
+	dataRecords := allRecords[dataStart:]
+	colTypes := make([]string, len(headers))
+	for i := range colTypes {
+		colTypes[i] = "string"
+	}
+	if c.convertFieldTypes {
+		colTypes = determineColumnTypes(headers, dataRecords)
 	}
 
-	for _, record := range allRecords[dataStart:] {
+	for i, h := range headers {
+		c.AddColumn(data.Column{Name: h, Alias: h, DataType: colTypes[i]})
+	}
+
+	for _, record := range dataRecords {
 		row := make(map[string]any, len(headers))
 		for i, h := range headers {
+			var raw string
 			if i < len(record) {
-				row[h] = record[i]
-			} else {
-				row[h] = ""
+				raw = record[i]
 			}
+			row[h] = convertValue(raw, colTypes[i])
 		}
 		c.AddRow(row)
 	}

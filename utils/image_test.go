@@ -270,3 +270,163 @@ func TestLoadImage_Base64Fallback_Valid(t *testing.T) {
 		t.Fatal("LoadImage returned nil for base64")
 	}
 }
+
+// ── ApplyGrayscale ────────────────────────────────────────────────────────────
+
+func TestApplyGrayscale_Nil(t *testing.T) {
+	result := ApplyGrayscale(nil)
+	if result != nil {
+		t.Error("ApplyGrayscale(nil) should return nil")
+	}
+}
+
+func TestApplyGrayscale_ReducesChroma(t *testing.T) {
+	// Saturated red image: all output pixels must be neutral grey.
+	src := image.NewNRGBA(image.Rect(0, 0, 4, 4))
+	for y := 0; y < 4; y++ {
+		for x := 0; x < 4; x++ {
+			src.SetNRGBA(x, y, color.NRGBA{R: 255, G: 0, B: 0, A: 255})
+		}
+	}
+	dst := ApplyGrayscale(src)
+	if dst == nil {
+		t.Fatal("ApplyGrayscale returned nil")
+	}
+	nrgba, ok := dst.(*image.NRGBA)
+	if !ok {
+		t.Fatal("ApplyGrayscale did not return *image.NRGBA")
+	}
+	b := dst.Bounds()
+	for y := b.Min.Y; y < b.Max.Y; y++ {
+		for x := b.Min.X; x < b.Max.X; x++ {
+			px := nrgba.NRGBAAt(x, y)
+			if px.R != px.G || px.G != px.B {
+				t.Errorf("pixel (%d,%d) is not grey: R=%d G=%d B=%d", x, y, px.R, px.G, px.B)
+			}
+		}
+	}
+}
+
+func TestApplyGrayscale_PreservesAlpha(t *testing.T) {
+	src := image.NewNRGBA(image.Rect(0, 0, 2, 2))
+	src.SetNRGBA(0, 0, color.NRGBA{R: 100, G: 150, B: 200, A: 128})
+	src.SetNRGBA(1, 0, color.NRGBA{R: 100, G: 150, B: 200, A: 0})
+	src.SetNRGBA(0, 1, color.NRGBA{R: 100, G: 150, B: 200, A: 255})
+	src.SetNRGBA(1, 1, color.NRGBA{R: 100, G: 150, B: 200, A: 64})
+	dst := ApplyGrayscale(src)
+	nrgba, ok := dst.(*image.NRGBA)
+	if !ok {
+		t.Fatal("ApplyGrayscale did not return *image.NRGBA")
+	}
+	cases := []struct {
+		x, y  int
+		wantA uint8
+	}{
+		{0, 0, 128},
+		{1, 0, 0},
+		{0, 1, 255},
+		{1, 1, 64},
+	}
+	for _, tc := range cases {
+		px := nrgba.NRGBAAt(tc.x, tc.y)
+		if px.A != tc.wantA {
+			t.Errorf("pixel (%d,%d) alpha: got %d, want %d", tc.x, tc.y, px.A, tc.wantA)
+		}
+	}
+}
+
+func TestApplyGrayscale_NTSCWeights(t *testing.T) {
+	// White (255,255,255) must remain white after grayscale.
+	// NTSC lum = 255*0.299 + 255*0.587 + 255*0.114 = 254.999…; with math.Round → 255.
+	src := image.NewNRGBA(image.Rect(0, 0, 1, 1))
+	src.SetNRGBA(0, 0, color.NRGBA{R: 255, G: 255, B: 255, A: 255})
+	dst := ApplyGrayscale(src)
+	nrgba, ok := dst.(*image.NRGBA)
+	if !ok {
+		t.Fatal("ApplyGrayscale did not return *image.NRGBA")
+	}
+	px := nrgba.NRGBAAt(0, 0)
+	if px.R != 255 || px.G != 255 || px.B != 255 {
+		t.Errorf("white pixel not preserved: R=%d G=%d B=%d", px.R, px.G, px.B)
+	}
+}
+
+// ── ApplyTransparency ─────────────────────────────────────────────────────────
+
+func TestApplyTransparency_Nil(t *testing.T) {
+	result := ApplyTransparency(nil, 0.5)
+	if result != nil {
+		t.Error("ApplyTransparency(nil) should return nil")
+	}
+}
+
+func TestApplyTransparency_ZeroIsNoOp(t *testing.T) {
+	pngBytes := buildTestPNG(t)
+	src, _ := BytesToImage(pngBytes)
+	dst := ApplyTransparency(src, 0)
+	if dst != src {
+		t.Error("ApplyTransparency with 0.0 should return src unchanged")
+	}
+}
+
+func TestApplyTransparency_NegativeIsNoOp(t *testing.T) {
+	pngBytes := buildTestPNG(t)
+	src, _ := BytesToImage(pngBytes)
+	dst := ApplyTransparency(src, -0.1)
+	if dst != src {
+		t.Error("ApplyTransparency with negative should return src unchanged")
+	}
+}
+
+func TestApplyTransparency_HalfReducesAlpha(t *testing.T) {
+	src := image.NewNRGBA(image.Rect(0, 0, 2, 2))
+	for y := 0; y < 2; y++ {
+		for x := 0; x < 2; x++ {
+			src.SetNRGBA(x, y, color.NRGBA{R: 255, G: 0, B: 0, A: 200})
+		}
+	}
+	// factor = 0.5 → new alpha = uint8(200 * 0.5) = 100
+	dst := ApplyTransparency(src, 0.5)
+	nrgba, ok := dst.(*image.NRGBA)
+	if !ok {
+		t.Fatal("ApplyTransparency did not return *image.NRGBA")
+	}
+	px := nrgba.NRGBAAt(0, 0)
+	if px.A < 95 || px.A > 105 {
+		t.Errorf("alpha after 50%% transparency: got %d, want ~100", px.A)
+	}
+}
+
+func TestApplyTransparency_FullMakesInvisible(t *testing.T) {
+	src := image.NewNRGBA(image.Rect(0, 0, 2, 2))
+	for y := 0; y < 2; y++ {
+		for x := 0; x < 2; x++ {
+			src.SetNRGBA(x, y, color.NRGBA{R: 255, G: 0, B: 0, A: 255})
+		}
+	}
+	dst := ApplyTransparency(src, 1.0) // factor = 0 → alpha = 0
+	nrgba, ok := dst.(*image.NRGBA)
+	if !ok {
+		t.Fatal("ApplyTransparency did not return *image.NRGBA")
+	}
+	px := nrgba.NRGBAAt(0, 0)
+	if px.A != 0 {
+		t.Errorf("alpha after 100%% transparency: got %d, want 0", px.A)
+	}
+}
+
+func TestApplyTransparency_PreservesRGB(t *testing.T) {
+	// ApplyTransparency must not alter R, G, B — only the alpha channel changes.
+	// Use NRGBAAt to read non-premultiplied values directly.
+	src := image.NewNRGBA(image.Rect(0, 0, 1, 1))
+	src.SetNRGBA(0, 0, color.NRGBA{R: 100, G: 150, B: 200, A: 255})
+	dst := ApplyTransparency(src, 0.5)
+	nrgba, ok := dst.(*image.NRGBA)
+	if !ok {
+		t.Fatal("ApplyTransparency did not return *image.NRGBA")
+	}
+	px := nrgba.NRGBAAt(0, 0)
+	if px.R != 100 || px.G != 150 || px.B != 200 {
+		t.Errorf("RGB channels altered: R=%d G=%d B=%d", px.R, px.G, px.B)
+	}
+}

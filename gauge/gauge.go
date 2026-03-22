@@ -54,6 +54,21 @@ func NewScale() *Scale {
 	}
 }
 
+// Assign copies all fields from src into this Scale.
+// Mirrors C# GaugeScale.Assign(GaugeScale src) (GaugeScale.cs:102-107).
+func (s *Scale) Assign(src *Scale) {
+	if src == nil {
+		return
+	}
+	s.MinorStep = src.MinorStep
+	s.MajorStep = src.MajorStep
+	s.ShowLabels = src.ShowLabels
+	s.LabelFormat = src.LabelFormat
+	s.Font = src.Font
+	s.MajorTicks = src.MajorTicks
+	s.MinorTicks = src.MinorTicks
+}
+
 // FormatLabel formats a value according to LabelFormat.
 func (s *Scale) FormatLabel(v float64) string {
 	if s.LabelFormat == "" {
@@ -273,6 +288,32 @@ func (g *GaugeObject) Deserialize(r report.Reader) error {
 	return nil
 }
 
+// Assign copies all GaugeObject fields from src into this GaugeObject.
+// Mirrors C# GaugeObject.Assign(Base source) (GaugeObject.cs:251-262).
+func (g *GaugeObject) Assign(src *GaugeObject) {
+	if src == nil {
+		return
+	}
+	g.ReportComponentBase = src.ReportComponentBase
+	g.Minimum = src.Minimum
+	g.Maximum = src.Maximum
+	g.value = src.value
+	g.Expression = src.Expression
+	if src.Scale != nil {
+		if g.Scale == nil {
+			g.Scale = NewScale()
+		}
+		g.Scale.Assign(src.Scale)
+	}
+	if src.Pointer != nil {
+		if g.Pointer == nil {
+			g.Pointer = NewPointer()
+		}
+		*g.Pointer = *src.Pointer
+	}
+	g.Label = src.Label
+}
+
 // ── LinearGauge ───────────────────────────────────────────────────────────────
 
 // Orientation controls the direction of a linear gauge.
@@ -339,6 +380,17 @@ func (g *LinearGauge) Deserialize(r report.Reader) error {
 	g.Orientation = Orientation(r.ReadInt("Orientation", 0))
 	g.Inverted = r.ReadBool("Inverted", false)
 	return nil
+}
+
+// Assign copies all LinearGauge fields from src into this LinearGauge.
+// Mirrors C# LinearGauge.Assign(Base source) (LinearGauge.cs:63-67).
+func (g *LinearGauge) Assign(src *LinearGauge) {
+	if src == nil {
+		return
+	}
+	g.GaugeObject.Assign(&src.GaugeObject)
+	g.Orientation = src.Orientation
+	g.Inverted = src.Inverted
 }
 
 // ── RadialGauge ───────────────────────────────────────────────────────────────
@@ -451,6 +503,21 @@ func (g *RadialGauge) Deserialize(r report.Reader) error {
 	return nil
 }
 
+// Assign copies all RadialGauge fields from src into this RadialGauge.
+// Mirrors C# RadialGauge.Assign(Base source) (RadialGauge.cs:245-250).
+func (g *RadialGauge) Assign(src *RadialGauge) {
+	if src == nil {
+		return
+	}
+	g.GaugeObject.Assign(&src.GaugeObject)
+	g.StartAngle = src.StartAngle
+	g.EndAngle = src.EndAngle
+	g.GaugeType = src.GaugeType
+	g.Position = src.Position
+	g.SemicircleOffsetRatio = src.SemicircleOffsetRatio
+	g.GradientAutoRotate = src.GradientAutoRotate
+}
+
 // ── SimpleGauge ───────────────────────────────────────────────────────────────
 
 // SimpleGaugeShape controls the appearance of a SimpleGauge.
@@ -550,6 +617,21 @@ func (g *SimpleGauge) Deserialize(r report.Reader) error {
 	g.SecondSubScale.Enabled = r.ReadBool("Scale.SecondSubScale.Enabled", true)
 	g.SecondSubScale.ShowCaption = r.ReadBool("Scale.SecondSubScale.ShowCaption", true)
 	return nil
+}
+
+// Assign copies all SimpleGauge fields from src into this SimpleGauge.
+// C# SimpleGauge has no override of Assign; base GaugeObject.Assign is used.
+// Go adds type-specific fields (Shape, ShowText, TextFormat, subscales).
+func (g *SimpleGauge) Assign(src *SimpleGauge) {
+	if src == nil {
+		return
+	}
+	g.GaugeObject.Assign(&src.GaugeObject)
+	g.Shape = src.Shape
+	g.ShowText = src.ShowText
+	g.TextFormat = src.TextFormat
+	g.FirstSubScale = src.FirstSubScale
+	g.SecondSubScale = src.SecondSubScale
 }
 
 // ── SimpleProgressGauge ───────────────────────────────────────────────────────

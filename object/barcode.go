@@ -1,6 +1,8 @@
 package object
 
 import (
+	"fmt"
+
 	"github.com/andrewloable/go-fastreport/report"
 )
 
@@ -19,6 +21,12 @@ type BarcodeObject struct {
 	autoSize bool
 	// allowExpressions enables bracket-expression evaluation in text.
 	allowExpressions bool
+	// dataColumn is the data source column bound to this object.
+	dataColumn string
+	// expression is an expression that evaluates to the barcode value.
+	expression string
+	// savedText holds the pre-engine-pass text for SaveState/RestoreState.
+	savedText string
 }
 
 // NewBarcodeObject creates a BarcodeObject with defaults (ShowText=true, AutoSize=true).
@@ -60,6 +68,18 @@ func (b *BarcodeObject) AllowExpressions() bool { return b.allowExpressions }
 // SetAllowExpressions sets the AllowExpressions flag.
 func (b *BarcodeObject) SetAllowExpressions(v bool) { b.allowExpressions = v }
 
+// DataColumn returns the data source column that provides the barcode value.
+func (b *BarcodeObject) DataColumn() string { return b.dataColumn }
+
+// SetDataColumn sets the data column binding.
+func (b *BarcodeObject) SetDataColumn(s string) { b.dataColumn = s }
+
+// Expression returns the expression that evaluates to the barcode value.
+func (b *BarcodeObject) Expression() string { return b.expression }
+
+// SetExpression sets the barcode value expression.
+func (b *BarcodeObject) SetExpression(s string) { b.expression = s }
+
 // Serialize writes BarcodeObject properties that differ from defaults.
 func (b *BarcodeObject) Serialize(w report.Writer) error {
 	if err := b.ReportComponentBase.Serialize(w); err != nil {
@@ -80,6 +100,12 @@ func (b *BarcodeObject) Serialize(w report.Writer) error {
 	if b.allowExpressions {
 		w.WriteBool("AllowExpressions", true)
 	}
+	if b.dataColumn != "" {
+		w.WriteStr("DataColumn", b.dataColumn)
+	}
+	if b.expression != "" {
+		w.WriteStr("Expression", b.expression)
+	}
 	return nil
 }
 
@@ -93,7 +119,62 @@ func (b *BarcodeObject) Deserialize(r report.Reader) error {
 	b.showText = r.ReadBool("ShowText", true)
 	b.autoSize = r.ReadBool("AutoSize", true)
 	b.allowExpressions = r.ReadBool("AllowExpressions", false)
+	b.dataColumn = r.ReadStr("DataColumn", "")
+	b.expression = r.ReadStr("Expression", "")
 	return nil
+}
+
+// savedText holds the text saved by SaveState so RestoreState can undo
+// expression evaluation. Stored as a separate unexported field because
+// BarcodeObject has no embedding that provides this; mirrors C# BarcodeObject.savedText.
+
+// GetExpressions returns the list of expressions used by this BarcodeObject
+// for pre-compilation by the report engine.
+// Mirrors C# BarcodeObject.GetExpressions (BarcodeObject.cs line 557-576).
+func (b *BarcodeObject) GetExpressions() []string {
+	exprs := b.ReportComponentBase.ComponentBase.GetExpressions()
+	if b.dataColumn != "" {
+		exprs = append(exprs, b.dataColumn)
+	}
+	if b.expression != "" {
+		exprs = append(exprs, b.expression)
+	}
+	return exprs
+}
+
+// SaveState saves the current Text so RestoreState can undo engine-pass changes.
+// Mirrors C# BarcodeObject.SaveState (BarcodeObject.cs line 579-583).
+func (b *BarcodeObject) SaveState() {
+	b.ReportComponentBase.SaveState()
+	b.savedText = b.text
+}
+
+// RestoreState restores the Text saved by SaveState.
+// Mirrors C# BarcodeObject.RestoreState (BarcodeObject.cs line 586-590).
+func (b *BarcodeObject) RestoreState() {
+	b.ReportComponentBase.RestoreState()
+	b.text = b.savedText
+}
+
+// GetData evaluates the DataColumn or Expression binding using the provided
+// calc function and updates the Text value accordingly.
+// Mirrors C# BarcodeObject.GetData / GetDataShared (BarcodeObject.cs line 593-627).
+func (b *BarcodeObject) GetData(calc func(string) (any, error)) {
+	if b.dataColumn != "" {
+		val, err := calc("[" + b.dataColumn + "]")
+		if err == nil && val != nil {
+			b.text = toString(val)
+		} else {
+			b.text = ""
+		}
+	} else if b.expression != "" {
+		val, err := calc(b.expression)
+		if err == nil && val != nil {
+			b.text = toString(val)
+		} else {
+			b.text = ""
+		}
+	}
 }
 
 // ── ZipCodeObject ─────────────────────────────────────────────────────────────
@@ -274,11 +355,29 @@ func (z *ZipCodeObject) Deserialize(r report.Reader) error {
 	return nil
 }
 
+// Assign copies all ZipCodeObject properties from src.
+// Mirrors C# ZipCodeObject.Assign (ZipCodeObject.cs:247-263).
+func (z *ZipCodeObject) Assign(src *ZipCodeObject) {
+	if src == nil {
+		return
+	}
+	z.ReportComponentBase.Assign(&src.ReportComponentBase)
+	z.segmentWidth = src.segmentWidth
+	z.segmentHeight = src.segmentHeight
+	z.spacing = src.spacing
+	z.segmentCount = src.segmentCount
+	z.showMarkers = src.showMarkers
+	z.showGrid = src.showGrid
+	z.dataColumn = src.dataColumn
+	z.expression = src.expression
+	z.text = src.text
+}
+
 // GetExpressions returns the list of expressions that need to be evaluated
 // by the report engine. Mirrors C# ZipCodeObject.GetExpressions()
 // (ZipCodeObject.cs line 325-335).
 func (z *ZipCodeObject) GetExpressions() []string {
-	var exprs []string
+	exprs := z.ReportComponentBase.ComponentBase.GetExpressions()
 	if z.dataColumn != "" {
 		exprs = append(exprs, z.dataColumn)
 	}
@@ -286,4 +385,38 @@ func (z *ZipCodeObject) GetExpressions() []string {
 		exprs = append(exprs, z.expression)
 	}
 	return exprs
+}
+
+// GetData evaluates the DataColumn or Expression binding using the provided
+// calc function and updates the Text value accordingly.
+// Mirrors C# ZipCodeObject.GetData / GetDataShared (ZipCodeObject.cs line 338-356).
+func (z *ZipCodeObject) GetData(calc func(string) (any, error)) {
+	if z.dataColumn != "" {
+		val, err := calc("[" + z.dataColumn + "]")
+		if err == nil && val != nil {
+			z.text = toString(val)
+		} else {
+			z.text = ""
+		}
+	} else if z.expression != "" {
+		val, err := calc(z.expression)
+		if err == nil && val != nil {
+			z.text = toString(val)
+		} else {
+			z.text = ""
+		}
+	}
+}
+
+// toString converts an arbitrary value to its string representation.
+func toString(v any) string {
+	if v == nil {
+		return ""
+	}
+	switch s := v.(type) {
+	case string:
+		return s
+	default:
+		return fmt.Sprintf("%v", v)
+	}
 }

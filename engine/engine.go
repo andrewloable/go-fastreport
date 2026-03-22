@@ -474,7 +474,27 @@ var prepareToSecondPassHook = func(e *ReportEngine) error {
 	e.freeSpace = e.pageHeight
 	// Mirror C# PrepareToSecondPass: clear totals, deferred objects, first-pass output.
 	e.deferredObjects = nil
+	// C# InitializeSecondPassData (ReportEngine.cs lines 339-351):
+	// reset all data sources to their first row so the second pass
+	// re-reads the same data as the first pass.
+	e.initializeSecondPassData()
+	// C# PrepareToSecondPass also clears totals (Totals.ClearValues).
+	e.initTotals()
 	return nil
+}
+
+// initializeSecondPassData resets all registered data sources back to row 0
+// so the second (double-pass) run re-reads the same data as the first pass.
+//
+// C# ReportEngine.cs InitializeSecondPassData (lines 339-351):
+//
+//	foreach DataSourceBase where RowCount > 0: data.First()
+func (e *ReportEngine) initializeSecondPassData() {
+	for _, ds := range e.dataSources {
+		if ds != nil && ds.RowCount() > 0 {
+			_ = ds.First()
+		}
+	}
 }
 
 // initializeData opens all registered data sources.
@@ -513,6 +533,15 @@ func (e *ReportEngine) runReportPages() error {
 		if !pg.Visible() {
 			continue
 		}
+		// Evaluate PrintableExpression — mirrors C# ReportEngine.Pages.cs lines 87-90.
+		// When the expression evaluates to false the page is excluded from output.
+		if expr := pg.PrintableExpression; expr != "" && e.report != nil {
+			if val, err := e.report.Calc(expr); err == nil {
+				if bv, ok := val.(bool); ok && !bv {
+					continue
+				}
+			}
+		}
 		// Honour context cancellation between pages.
 		if e.ctx != nil {
 			if err := e.ctx.Err(); err != nil {
@@ -536,10 +565,30 @@ func (e *ReportEngine) resetPageNumber() {
 
 // limitPreparedPages enforces the MaxPages limit by trimming both the counter
 // and the actual pages slice so they stay in sync.
+//
+// C# ReportEngine.cs LimitPreparedPages (lines 406-424): applies Report.MaxPages
+// first (lower-priority), then pagesLimit (higher-priority, from RunOptions).
+// The Go port maps RunOptions.MaxPages → pagesLimit and also reads Report.MaxPages
+// directly, matching C# where pagesLimit has better priority.
 func (e *ReportEngine) limitPreparedPages() {
+	// First apply Report.MaxPages (lower priority than RunOptions.MaxPages).
+	// C# lines 408-412: "if (Report.MaxPages > 0) while (PreparedPages.Count > Report.MaxPages) ..."
+	if e.report != nil && e.report.MaxPages > 0 {
+		maxPages := e.report.MaxPages
+		if e.totalPages > maxPages {
+			e.totalPages = maxPages
+			if e.preparedPages != nil {
+				e.preparedPages.TrimTo(maxPages)
+			}
+		}
+	}
+	// Then apply pagesLimit (higher priority — from RunOptions.MaxPages).
+	// C# lines 414-419: "if (pagesLimit > 0) while (PreparedPages.Count > pagesLimit) ..."
 	if e.pagesLimit > 0 && e.totalPages > e.pagesLimit {
 		e.totalPages = e.pagesLimit
-		e.preparedPages.TrimTo(e.pagesLimit)
+		if e.preparedPages != nil {
+			e.preparedPages.TrimTo(e.pagesLimit)
+		}
 	}
 }
 

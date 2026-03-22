@@ -30,9 +30,11 @@ package object
 
 import (
 	"errors"
+	"image/color"
 	"testing"
 
 	"github.com/andrewloable/go-fastreport/report"
+	"github.com/andrewloable/go-fastreport/style"
 )
 
 // ── shared mocks ──────────────────────────────────────────────────────────────
@@ -421,6 +423,140 @@ func TestHtmlObject_Deserialize_ViaNoopReader(t *testing.T) {
 	r := &noopReader{}
 	if err := h.Deserialize(r); err != nil {
 		t.Errorf("Deserialize returned unexpected error: %v", err)
+	}
+}
+
+// TestHtmlObject_Assign_CopiesRightToLeft verifies that Assign copies the
+// rightToLeft flag from the source object.
+// Mirrors C# HtmlObject.Assign (HtmlObject.cs lines 80-86).
+func TestHtmlObject_Assign_CopiesRightToLeft(t *testing.T) {
+	src := NewHtmlObject()
+	src.rightToLeft = true
+	src.SetText("source text")
+
+	dst := NewHtmlObject()
+	dst.Assign(src)
+
+	if !dst.rightToLeft {
+		t.Error("Assign: rightToLeft should be true after assign")
+	}
+	if dst.Text() != "source text" {
+		t.Errorf("Assign: Text = %q, want %q", dst.Text(), "source text")
+	}
+}
+
+// TestHtmlObject_Assign_Nil verifies that Assign(nil) is a no-op.
+func TestHtmlObject_Assign_Nil(t *testing.T) {
+	h := NewHtmlObject()
+	h.SetText("keep")
+	h.Assign(nil) // must not panic
+	if h.Text() != "keep" {
+		t.Errorf("Assign(nil) modified Text: got %q", h.Text())
+	}
+}
+
+// TestHtmlObject_GetExpressions_Empty verifies no expressions for plain text.
+func TestHtmlObject_GetExpressions_Empty(t *testing.T) {
+	h := NewHtmlObject()
+	h.SetText("Hello World")
+	exprs := h.GetExpressions()
+	if len(exprs) != 0 {
+		t.Errorf("GetExpressions (plain text): got %v, want empty", exprs)
+	}
+}
+
+// TestHtmlObject_GetExpressions_WithBrackets verifies expressions are extracted
+// from bracket-delimited tokens in the Text field.
+// Mirrors C# HtmlObject.GetExpressions (HtmlObject.cs lines 161-172).
+func TestHtmlObject_GetExpressions_WithBrackets(t *testing.T) {
+	h := NewHtmlObject()
+	h.SetText("Hello [Customer.Name]!")
+	exprs := h.GetExpressions()
+	if len(exprs) != 1 || exprs[0] != "Customer.Name" {
+		t.Errorf("GetExpressions: got %v, want [Customer.Name]", exprs)
+	}
+}
+
+// TestHtmlObject_GetExpressions_AllowExpressionsDisabled verifies that when
+// AllowExpressions=false, no text expressions are returned.
+func TestHtmlObject_GetExpressions_AllowExpressionsDisabled(t *testing.T) {
+	h := NewHtmlObject()
+	h.SetText("[Customer.Name]")
+	h.SetAllowExpressions(false)
+	exprs := h.GetExpressions()
+	if len(exprs) != 0 {
+		t.Errorf("GetExpressions (AllowExpressions=false): got %v, want empty", exprs)
+	}
+}
+
+// TestHtmlObject_SaveRestoreState_TextRoundTrip verifies that SaveState captures
+// the current Text and RestoreState restores it after modification.
+// Mirrors C# HtmlObject.SaveState/RestoreState (HtmlObject.cs lines 177-187).
+func TestHtmlObject_SaveRestoreState_TextRoundTrip(t *testing.T) {
+	h := NewHtmlObject()
+	h.SetText("original")
+
+	h.SaveState()
+	h.SetText("modified")
+
+	if h.Text() != "modified" {
+		t.Errorf("after modification Text = %q, want modified", h.Text())
+	}
+
+	h.RestoreState()
+
+	if h.Text() != "original" {
+		t.Errorf("after RestoreState Text = %q, want original", h.Text())
+	}
+}
+
+// TestHtmlObject_CalcWidth_ReturnsWidth verifies CalcWidth returns the object Width.
+// Mirrors C# HtmlObject.CalcWidth/InternalCalcWidth (HtmlObject.cs lines 48-51, 193-196).
+func TestHtmlObject_CalcWidth_ReturnsWidth(t *testing.T) {
+	h := NewHtmlObject()
+	h.SetWidth(150)
+	if w := h.CalcWidth(); w != 150 {
+		t.Errorf("CalcWidth = %v, want 150", w)
+	}
+}
+
+// TestHtmlObject_ApplyCondition_Fill verifies that ApplyCondition sets the fill
+// when ApplyFill is true.
+// Mirrors C# HtmlObject.ApplyCondition (HtmlObject.cs lines 147-155).
+func TestHtmlObject_ApplyCondition_Fill(t *testing.T) {
+	h := NewHtmlObject()
+	h.SetVisible(true)
+
+	red := color.RGBA{R: 255, A: 255}
+	cond := style.NewHighlightCondition()
+	cond.ApplyFill = true
+	cond.FillColor = red
+	h.ApplyCondition(cond)
+
+	f, ok := h.Fill().(*style.SolidFill)
+	if !ok {
+		t.Fatalf("ApplyCondition: Fill type = %T, want *style.SolidFill", h.Fill())
+	}
+	if f.Color != red {
+		t.Errorf("ApplyCondition: FillColor = %v, want %v", f.Color, red)
+	}
+	if !h.Visible() {
+		t.Error("ApplyCondition: Visible should still be true")
+	}
+}
+
+// TestHtmlObject_ApplyCondition_Invisible verifies that ApplyCondition hides
+// the object when the condition sets Visible=false.
+func TestHtmlObject_ApplyCondition_Invisible(t *testing.T) {
+	h := NewHtmlObject()
+	h.SetVisible(true)
+
+	cond := style.NewHighlightCondition()
+	cond.Visible = false
+	h.ApplyCondition(cond)
+
+	if h.Visible() {
+		t.Error("ApplyCondition: Visible should be false after condition with Visible=false")
 	}
 }
 

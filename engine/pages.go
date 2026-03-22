@@ -53,6 +53,22 @@ func (e *ReportEngine) startPage(pg *reportpkg.ReportPage, isFirst bool) {
 	e.curPage++
 	e.IncLogicalPageNumber()
 
+	// C# StartFirstPageShared: StartOnOddPage — if true and the current page
+	// index is odd (i.e. the page landed on an even page number), add a blank
+	// filler page so the report content starts on an odd page.
+	// C# check: if (page.StartOnOddPage && (CurPage % 2) == 1) AddPage(page)
+	// CurPage is 0-based in C#, so (CurPage % 2) == 1 means the index is odd
+	// = the page number is even = we need a blank to push to an odd page.
+	if isFirst && pg.StartOnOddPage && (e.curPage%2) == 1 {
+		e.totalPages++
+		e.pageNo++
+		if e.preparedPages != nil {
+			e.preparedPages.AddPage(e.pageWidth, e.pageHeight, e.pageNo)
+		}
+		e.curPage++
+		e.IncLogicalPageNumber()
+	}
+
 	// C# StartFirstPageShared: track firstReportPage for page numbering.
 	if e.isFirstReportPage {
 		e.firstReportPage = e.curPage
@@ -327,12 +343,28 @@ func (e *ReportEngine) showBand(b report.Base) {
 		return
 	}
 
-	// Visibility check: skip bands where Visible() == false.
-	type hasVisible interface {
+	// Visibility check: evaluate VisibleExpression first (overrides static Visible),
+	// mirroring C# CanPrint() in ReportEngine.Bands.cs (line 259) which calls
+	// engine.CanPrint(band) inside PreparedPage.DoAdd and GetBandHeightWithChildren.
+	type hasVisibleExprBand interface {
 		Visible() bool
+		VisibleExpression() string
+		CalcVisibleExpression(expression string, calc func(string) (any, error)) bool
 	}
-	if vis, ok := b.(hasVisible); ok && !vis.Visible() {
-		return
+	if v, ok := b.(hasVisibleExprBand); ok {
+		expr := v.VisibleExpression()
+		if expr != "" {
+			if e.report != nil {
+				visible := v.CalcVisibleExpression(expr, func(s string) (any, error) {
+					return e.report.Calc(s)
+				})
+				if !visible {
+					return
+				}
+			}
+		} else if !v.Visible() {
+			return
+		}
 	}
 
 	// Use CalcBandHeight so CanGrow/CanShrink bands expand or contract based

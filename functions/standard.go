@@ -762,6 +762,14 @@ func ToDateTime(v any) time.Time {
 	return time.Time{}
 }
 
+// IsNull returns true if value is nil.
+// In the Go expression evaluator, data column / parameter references are resolved
+// to their actual values before function call, so IsNull(v) checks nil directly.
+// Mirrors C# StdFunctions.IsNull(Report, string) semantics (StdFunctions.cs:1653).
+func IsNull(value any) bool {
+	return value == nil
+}
+
 // IfNull returns value if it is non-nil, otherwise returns defaultVal.
 // C# StdFunctions.cs — IfNull(object, object).
 func IfNull(value, defaultVal any) any {
@@ -907,6 +915,7 @@ func All() map[string]any {
 		"ToString":   ToString,
 		// Control flow
 		"IIF":    IIF,
+		"IsNull": IsNull,
 		"IfNull": IfNull,
 		"Choose": Choose,
 		"Switch": Switch,
@@ -928,6 +937,9 @@ func All() map[string]any {
 		"ToLetters":      ToLetters,
 		"ToLettersEn":    ToLettersEn,
 		"ToLettersRu":    ToLettersRu,
+		// C# registers Roman as "ToRoman" (StdFunctions.cs:1807).
+		// Keep "Roman" as an alias for backward compatibility with Go-native reports.
+		"ToRoman":        ToRoman,
 		"Roman":          ToRoman,
 	}
 }

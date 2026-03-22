@@ -625,6 +625,9 @@ type DataBand struct {
 	maxRows int
 	// sort holds the ordered list of sort specifications.
 	sort []SortSpec
+	// relationName is the name of the master-detail Relation that links this
+	// DataBand to its parent DataBand.  Mirrors C# DataBand.Relation (DataBand.cs line 36).
+	relationName string
 }
 
 // NewDataBand creates a DataBand with defaults.
@@ -655,6 +658,15 @@ func (d *DataBand) DataSourceRef() DataSource { return d.dataSource }
 
 // SetDataSource binds a data source to this band.
 func (d *DataBand) SetDataSource(ds DataSource) { d.dataSource = ds }
+
+// UpdateDataSourceRef replaces the bound data source if ds implements DataSource.
+// Mirrors C# IContainDataSource.UpdateDataSourceRef(DataSourceBase).
+// The parameter type is any to avoid an import cycle between band/ and data/.
+func (d *DataBand) UpdateDataSourceRef(ds any) {
+	if src, ok := ds.(DataSource); ok {
+		d.dataSource = src
+	}
+}
 
 // MaxRows returns the maximum rows to print (0 = unlimited).
 func (d *DataBand) MaxRows() int { return d.maxRows }
@@ -759,6 +771,15 @@ func (d *DataBand) VirtualRowCount() int { return d.rowCount }
 // SetVirtualRowCount sets the virtual row count.
 func (d *DataBand) SetVirtualRowCount(n int) { d.rowCount = n }
 
+// RelationName returns the name of the master-detail Relation linking this band
+// to its parent DataBand.  The engine resolves this to a live Relation object
+// from the report Dictionary at run time.
+// Mirrors C# DataBand.Relation (DataBand.cs line 36).
+func (d *DataBand) RelationName() string { return d.relationName }
+
+// SetRelationName sets the relation name.
+func (d *DataBand) SetRelationName(name string) { d.relationName = name }
+
 // IsDatasourceEmpty returns true when the data source is nil or has zero rows.
 func (d *DataBand) IsDatasourceEmpty() bool {
 	return d.dataSource == nil || d.dataSource.RowCount() == 0
@@ -823,6 +844,7 @@ func (d *DataBand) Assign(src *DataBand) {
 	d.indent = src.indent
 	d.collectChildRows = src.collectChildRows
 	d.resetPageNumber = src.resetPageNumber
+	d.relationName = src.relationName
 }
 
 // Serialize writes DataBand properties that differ from defaults.
@@ -884,6 +906,9 @@ func (d *DataBand) Serialize(w report.Writer) error {
 	if d.rowCount != 1 {
 		w.WriteInt("RowCount", d.rowCount)
 	}
+	if d.relationName != "" {
+		w.WriteStr("Relation", d.relationName)
+	}
 	// Write BandColumns attributes (matches C# Columns.Serialize).
 	if d.columns.count > 0 {
 		w.WriteInt("Columns.Count", d.columns.count)
@@ -929,6 +954,7 @@ func (d *DataBand) Deserialize(r report.Reader) error {
 		return err
 	}
 	d.dataSourceAlias = r.ReadStr("DataSource", "")
+	d.relationName = r.ReadStr("Relation", "")
 	d.filter = r.ReadStr("Filter", "")
 	// Parse sort string "Col1 ASC;Col2 DESC"
 	if sortStr := r.ReadStr("Sort", ""); sortStr != "" {

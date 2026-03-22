@@ -12,6 +12,7 @@ import (
 	"image/jpeg"
 	"image/png"
 	"io"
+	"math"
 	"net/http"
 	"os"
 	"strings"
@@ -155,6 +156,62 @@ func ResizeImage(src image.Image, dstW, dstH int, mode SizeMode) image.Image {
 		// Draw at original size, clipped to dst bounds.
 		clip := srcB.Intersect(dst.Bounds())
 		scaleDraw(src, clip, dst, clip)
+	}
+	return dst
+}
+
+// ApplyGrayscale converts img to grayscale using the NTSC luminance weights
+// (R×0.299 + G×0.587 + B×0.114), matching C# ImageHelper.GetGrayscaleBitmap.
+// The alpha channel is preserved unchanged.
+// C# ref: FastReport.Base/Utils/ImageHelper.cs GetGrayscaleBitmap
+func ApplyGrayscale(src image.Image) image.Image {
+	if src == nil {
+		return nil
+	}
+	b := src.Bounds()
+	dst := image.NewNRGBA(b)
+	for y := b.Min.Y; y < b.Max.Y; y++ {
+		for x := b.Min.X; x < b.Max.X; x++ {
+			r, g, bl, a := src.At(x, y).RGBA()
+			// RGBA() returns alpha-premultiplied 16-bit values; >>8 gives 8-bit.
+			rf := float64(r>>8) * 0.299
+			gf := float64(g>>8) * 0.587
+			bf := float64(bl>>8) * 0.114
+			lum := uint8(math.Round(rf + gf + bf))
+			dst.SetNRGBA(x, y, color.NRGBA{R: lum, G: lum, B: lum, A: uint8(a >> 8)})
+		}
+	}
+	return dst
+}
+
+// ApplyTransparency multiplies the alpha channel of every pixel by (1 - transparency),
+// matching C# ImageHelper.GetTransparentBitmap where Matrix33 = 1 - transparency.
+// transparency 0.0 → fully opaque (no change); 1.0 → fully invisible.
+// C# ref: FastReport.Base/Utils/ImageHelper.cs GetTransparentBitmap
+func ApplyTransparency(src image.Image, transparency float32) image.Image {
+	if src == nil {
+		return nil
+	}
+	if transparency <= 0 {
+		return src
+	}
+	factor := 1.0 - float64(transparency)
+	if factor < 0 {
+		factor = 0
+	}
+	b := src.Bounds()
+	dst := image.NewNRGBA(b)
+	for y := b.Min.Y; y < b.Max.Y; y++ {
+		for x := b.Min.X; x < b.Max.X; x++ {
+			r, g, bl, a := src.At(x, y).RGBA()
+			newA := uint8(float64(a>>8) * factor)
+			dst.SetNRGBA(x, y, color.NRGBA{
+				R: uint8(r >> 8),
+				G: uint8(g >> 8),
+				B: uint8(bl >> 8),
+				A: newA,
+			})
+		}
 	}
 	return dst
 }

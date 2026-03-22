@@ -19,6 +19,10 @@ type TableColumn struct {
 	pageBreak bool
 	// keepColumns specifies how many columns to keep together on a page.
 	keepColumns int
+
+	// savedWidth / savedVisible store state for SaveState/RestoreState.
+	savedWidth   float32
+	savedVisible bool
 }
 
 // NewTableColumn creates a TableColumn with defaults matching the C# constructor.
@@ -29,6 +33,19 @@ func NewTableColumn() *TableColumn {
 	}
 	c.SetWidth(100) // default column width
 	return c
+}
+
+// SetWidth overrides ComponentBase.SetWidth to enforce min/max bounds.
+// If width < minWidth (and minWidth > 0), it is clamped up.
+// If width > maxWidth (and maxWidth > 0), it is clamped down.
+func (c *TableColumn) SetWidth(v float32) {
+	if c.minWidth > 0 && v < c.minWidth {
+		v = c.minWidth
+	}
+	if c.maxWidth > 0 && v > c.maxWidth {
+		v = c.maxWidth
+	}
+	c.ComponentBase.SetWidth(v)
 }
 
 // MinWidth returns the minimum column width in pixels.
@@ -60,6 +77,41 @@ func (c *TableColumn) KeepColumns() int { return c.keepColumns }
 
 // SetKeepColumns sets the keep-columns count.
 func (c *TableColumn) SetKeepColumns(v int) { c.keepColumns = v }
+
+// Assign copies all TableColumn properties from src.
+// Mirrors C# TableColumn.Assign (TableColumn.cs:188-197).
+func (c *TableColumn) Assign(src *TableColumn) {
+	if src == nil {
+		return
+	}
+	c.minWidth = src.minWidth
+	c.maxWidth = src.maxWidth
+	c.autoSize = src.autoSize
+	c.keepColumns = src.keepColumns
+	c.pageBreak = src.pageBreak
+	c.ComponentBase.Assign(&src.ComponentBase)
+}
+
+// Clear resets the column width to its default.
+// Mirrors C# TableColumn.Clear (TableColumn.cs:233-245).
+func (c *TableColumn) Clear() {
+	c.SetWidth(100)
+}
+
+// SaveState saves the current Width and Visible values so they can be
+// restored later with RestoreState.
+// Mirrors C# TableColumn.SaveState (TableColumn.cs).
+func (c *TableColumn) SaveState() {
+	c.savedWidth = c.Width()
+	c.savedVisible = c.Visible()
+}
+
+// RestoreState restores Width and Visible to the values saved by SaveState.
+// Mirrors C# TableColumn.RestoreState (TableColumn.cs).
+func (c *TableColumn) RestoreState() {
+	c.SetWidth(c.savedWidth)
+	c.SetVisible(c.savedVisible)
+}
 
 // Serialize writes TableColumn properties that differ from defaults.
 func (c *TableColumn) Serialize(w report.Writer) error {

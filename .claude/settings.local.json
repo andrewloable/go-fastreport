@@ -113,7 +113,10 @@
       "Bash(/dev/null ls:*)",
       "Bash(1 go:*)",
       "Bash(head -5 /Volumes/mandark-1Tb/projects/loabletech/go-fastreport/reportpkg/frx_serialization_fixes_test.go grep -n \"loadFRXSmoke\\\\|roundTripFRX\\\\|type Report\\\\|func.*Report\" /Volumes/mandark-1Tb/projects/loabletech/go-fastreport/reportpkg/reportpkg_smoke_test.go)",
-      "Bash(head -20 grep -n \"type Parent\\\\|AddChild\" /Volumes/mandark-1Tb/projects/loabletech/go-fastreport/report/interfaces.go)"
+      "Bash(head -20 grep -n \"type Parent\\\\|AddChild\" /Volumes/mandark-1Tb/projects/loabletech/go-fastreport/report/interfaces.go)",
+      "Bash(jq -r .message.content[0].text)",
+      "Bash(sed -n '247,280p' /Volumes/mandark-1Tb/projects/loabletech/go-fastreport/original-dotnet/FastReport.Base/ZipCodeObject.cs)",
+      "Bash(sed -n '325,345p' /Volumes/mandark-1Tb/projects/loabletech/go-fastreport/original-dotnet/FastReport.Base/ZipCodeObject.cs)"
     ]
   }
 }

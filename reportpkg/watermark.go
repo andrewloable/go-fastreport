@@ -1,6 +1,7 @@
 package reportpkg
 
 import (
+	"encoding/base64"
 	"image/color"
 
 	"github.com/andrewloable/go-fastreport/report"
@@ -83,6 +84,29 @@ func NewWatermark() *Watermark {
 	}
 }
 
+// Assign copies all fields from src into this Watermark.
+// Mirrors C# Watermark.Assign (Watermark.cs line 323-334).
+func (wm *Watermark) Assign(src *Watermark) {
+	if src == nil {
+		return
+	}
+	wm.Enabled = src.Enabled
+	wm.Text = src.Text
+	wm.Font = src.Font
+	wm.TextRotation = src.TextRotation
+	wm.ShowTextOnTop = src.ShowTextOnTop
+	wm.TextFillColor = src.TextFillColor
+	if src.ImageData != nil {
+		wm.ImageData = make([]byte, len(src.ImageData))
+		copy(wm.ImageData, src.ImageData)
+	} else {
+		wm.ImageData = nil
+	}
+	wm.ImageSize = src.ImageSize
+	wm.ImageTransparency = src.ImageTransparency
+	wm.ShowImageOnTop = src.ShowImageOnTop
+}
+
 // Serialize writes Watermark properties that differ from defaults.
 // Properties are written with a "Watermark." prefix to match the FRX format.
 func (wm *Watermark) Serialize(w report.Writer) {
@@ -115,6 +139,11 @@ func (wm *Watermark) Serialize(w report.Writer) {
 	if wm.TextFillColor != def.TextFillColor {
 		w.WriteStr("Watermark.TextFill.Color", utils.FormatColor(wm.TextFillColor))
 	}
+	// Image: write as base64-encoded string when present.
+	// Mirrors C# Watermark.Serialize: writer.WriteValue(prefix+".Image", Image) (Watermark.cs:291-292).
+	if len(wm.ImageData) > 0 {
+		w.WriteStr("Watermark.Image", base64.StdEncoding.EncodeToString(wm.ImageData))
+	}
 }
 
 // Deserialize reads Watermark properties from an FRReader.
@@ -133,6 +162,13 @@ func (wm *Watermark) Deserialize(r report.Reader) {
 	if cs := r.ReadStr("Watermark.TextFill.Color", ""); cs != "" {
 		if c, err := utils.ParseColor(cs); err == nil {
 			wm.TextFillColor = c
+		}
+	}
+	// Image: base64-encoded image data.
+	// Mirrors C# Watermark deserialization where pictureObject.Image is restored from the FRX stream.
+	if imgStr := r.ReadStr("Watermark.Image", ""); imgStr != "" {
+		if decoded, err := base64.StdEncoding.DecodeString(imgStr); err == nil {
+			wm.ImageData = decoded
 		}
 	}
 }

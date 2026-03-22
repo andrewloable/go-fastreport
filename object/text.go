@@ -767,6 +767,9 @@ func (t *TextObject) SetAutoWidth(v bool) { t.autoWidth = v }
 // Highlights returns the conditional-formatting rules for this object.
 func (t *TextObject) Highlights() []style.HighlightCondition { return t.highlights }
 
+// SetHighlights replaces the highlights slice.
+func (t *TextObject) SetHighlights(h []style.HighlightCondition) { t.highlights = h }
+
 // AddHighlight appends a highlight condition.
 func (t *TextObject) AddHighlight(c style.HighlightCondition) {
 	t.highlights = append(t.highlights, c)
@@ -922,6 +925,9 @@ func (t *TextObject) Serialize(w report.Writer) error {
 		if t.textOutline.DashStyle != 0 {
 			w.WriteInt("TextOutline.DashStyle", t.textOutline.DashStyle)
 		}
+		if t.textOutline.DrawBehind {
+			w.WriteBool("TextOutline.DrawBehind", true)
+		}
 	}
 	if len(t.highlights) > 0 {
 		coll := &conditionCollection{items: t.highlights}
@@ -977,6 +983,7 @@ func (t *TextObject) Deserialize(r report.Reader) error {
 	}
 	t.textOutline.Width = r.ReadFloat("TextOutline.Width", 1)
 	t.textOutline.DashStyle = r.ReadInt("TextOutline.DashStyle", 0)
+	t.textOutline.DrawBehind = r.ReadBool("TextOutline.DrawBehind", false)
 	return nil
 }
 

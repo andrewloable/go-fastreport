@@ -21,6 +21,7 @@ import (
 	"github.com/andrewloable/go-fastreport/sparkline"
 	"github.com/andrewloable/go-fastreport/style"
 	"github.com/andrewloable/go-fastreport/table"
+	"github.com/andrewloable/go-fastreport/utils"
 )
 
 
@@ -658,6 +659,18 @@ func (e *ReportEngine) buildPreparedObject(obj report.Base) *preview.PreparedObj
 					}
 				}
 				po.HyperlinkValue = val
+			case "PageNumber":
+				// C# HyperlinkKind.PageNumber; Go uses 2 (preview/prepared_pages.go:440).
+				// Value is the target page number (static or expression-evaluated).
+				// C# ref: HTMLExportLayers.cs:167 — navigate to page N in the report.
+				po.HyperlinkKind = 2
+				val := hl.Value
+				if val == "" && hl.Expression != "" && e.report != nil {
+					if ev, err := e.report.Calc(hl.Expression); err == nil {
+						val = fmt.Sprintf("%v", ev)
+					}
+				}
+				po.HyperlinkValue = val
 			case "Bookmark":
 				po.HyperlinkKind = 3
 				po.HyperlinkValue = hl.Expression
@@ -788,6 +801,24 @@ func (e *ReportEngine) buildPreparedObject(obj report.Base) *preview.PreparedObj
 	case *object.PictureObject:
 		po.Kind = preview.ObjectTypePicture
 		if data := v.ImageData(); len(data) > 0 {
+			// Apply grayscale and/or transparency transforms before storing in BlobStore.
+			// C# ref: PictureObjectBase.Draw() calls ImageHelper.GetGrayscaleBitmap /
+			//         ImageHelper.GetTransparentBitmap when the flags are set.
+			//         FastReport.Base/Utils/ImageHelper.cs GetGrayscaleBitmap, GetTransparentBitmap
+			if v.Grayscale() || v.Transparency() > 0 {
+				if img, _, err := image.Decode(bytes.NewReader(data)); err == nil {
+					if v.Grayscale() {
+						img = utils.ApplyGrayscale(img)
+					}
+					if v.Transparency() > 0 {
+						img = utils.ApplyTransparency(img, v.Transparency())
+					}
+					var buf bytes.Buffer
+					if err := png.Encode(&buf, img); err == nil {
+						data = buf.Bytes()
+					}
+				}
+			}
 			po.BlobIdx = e.preparedPages.BlobStore.Add(v.Name(), data)
 		}
 

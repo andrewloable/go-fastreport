@@ -160,6 +160,88 @@ type ReportInfo struct {
 	Picture []byte
 }
 
+// Serialize writes ReportInfo fields as dot-qualified attributes.
+// Mirrors C# ReportInfo.Serialize (ReportInfo.cs line 219).
+func (ri *ReportInfo) Serialize(w report.Writer) {
+	if ri.Name != "" {
+		w.WriteStr("ReportInfo.Name", ri.Name)
+	}
+	if ri.Author != "" {
+		w.WriteStr("ReportInfo.Author", ri.Author)
+	}
+	if ri.Description != "" {
+		w.WriteStr("ReportInfo.Description", ri.Description)
+	}
+	if ri.Version != "" {
+		w.WriteStr("ReportInfo.Version", ri.Version)
+	}
+	if ri.Tag != "" {
+		w.WriteStr("ReportInfo.Tag", ri.Tag)
+	}
+	if ri.Created != "" {
+		w.WriteStr("ReportInfo.Created", ri.Created)
+	}
+	if ri.Modified != "" {
+		w.WriteStr("ReportInfo.Modified", ri.Modified)
+	}
+	if ri.CreatorVersion != "" {
+		w.WriteStr("ReportInfo.CreatorVersion", ri.CreatorVersion)
+	}
+	if ri.SavePreviewPicture {
+		w.WriteBool("ReportInfo.SavePreviewPicture", true)
+	}
+	if ri.PreviewPictureRatio != 0 && ri.PreviewPictureRatio != 0.1 {
+		w.WriteFloat("ReportInfo.PreviewPictureRatio", ri.PreviewPictureRatio)
+	}
+	if ri.SaveMode != SaveModeAll {
+		w.WriteStr("ReportInfo.SaveMode", ri.SaveMode.String())
+	}
+}
+
+// Deserialize reads ReportInfo fields.  Reads both the C# dot-qualified
+// "ReportInfo.*" form and legacy short-form names for backward compatibility.
+// Mirrors C# ReportInfo.Deserialize (ReportInfo.cs).
+func (ri *ReportInfo) Deserialize(r report.Reader) {
+	ri.Name = r.ReadStr("ReportInfo.Name", "")
+	if ri.Name == "" {
+		ri.Name = r.ReadStr("ReportName", "")
+	}
+	ri.Author = r.ReadStr("ReportInfo.Author", "")
+	if ri.Author == "" {
+		ri.Author = r.ReadStr("ReportAuthor", "")
+	}
+	ri.Description = r.ReadStr("ReportInfo.Description", "")
+	if ri.Description == "" {
+		ri.Description = r.ReadStr("ReportDescription", "")
+	}
+	ri.Version = r.ReadStr("ReportInfo.Version", "")
+	if ri.Version == "" {
+		ri.Version = r.ReadStr("ReportVersion", "")
+	}
+	ri.Tag = r.ReadStr("ReportInfo.Tag", "")
+	ri.Created = r.ReadStr("ReportInfo.Created", "")
+	if ri.Created == "" {
+		ri.Created = r.ReadStr("Created", "")
+	}
+	ri.Modified = r.ReadStr("ReportInfo.Modified", "")
+	if ri.Modified == "" {
+		ri.Modified = r.ReadStr("Modified", "")
+	}
+	ri.CreatorVersion = r.ReadStr("ReportInfo.CreatorVersion", "")
+	if ri.CreatorVersion == "" {
+		ri.CreatorVersion = r.ReadStr("CreatorVersion", "")
+	}
+	ri.SavePreviewPicture = r.ReadBool("ReportInfo.SavePreviewPicture", false)
+	if !ri.SavePreviewPicture {
+		ri.SavePreviewPicture = r.ReadBool("SavePreviewPicture", false)
+	}
+	ri.PreviewPictureRatio = r.ReadFloat("ReportInfo.PreviewPictureRatio", 0.1)
+	if ri.PreviewPictureRatio <= 0 {
+		ri.PreviewPictureRatio = 0.05
+	}
+	ri.SaveMode = parseSaveMode(r.ReadStr("ReportInfo.SaveMode", "All"))
+}
+
 // Report is the top-level container for a report definition.
 // It holds pages, a data dictionary, styles, and run-time settings.
 // It is the Go equivalent of FastReport.Report.
@@ -402,41 +484,9 @@ func (r *Report) Serialize(w report.Writer) error {
 	if r.FinishReportEvent != "" {
 		w.WriteStr("FinishReportEvent", r.FinishReportEvent)
 	}
-	// ReportInfo fields — written with C# dot-qualified attribute names.
+	// ReportInfo fields — delegate to ReportInfo.Serialize.
 	// C# ref: ReportInfo.cs Serialize() method (~line 219).
-	if r.Info.Name != "" {
-		w.WriteStr("ReportInfo.Name", r.Info.Name)
-	}
-	if r.Info.Author != "" {
-		w.WriteStr("ReportInfo.Author", r.Info.Author)
-	}
-	if r.Info.Description != "" {
-		w.WriteStr("ReportInfo.Description", r.Info.Description)
-	}
-	if r.Info.Version != "" {
-		w.WriteStr("ReportInfo.Version", r.Info.Version)
-	}
-	if r.Info.Tag != "" {
-		w.WriteStr("ReportInfo.Tag", r.Info.Tag)
-	}
-	if r.Info.Created != "" {
-		w.WriteStr("ReportInfo.Created", r.Info.Created)
-	}
-	if r.Info.Modified != "" {
-		w.WriteStr("ReportInfo.Modified", r.Info.Modified)
-	}
-	if r.Info.CreatorVersion != "" {
-		w.WriteStr("ReportInfo.CreatorVersion", r.Info.CreatorVersion)
-	}
-	if r.Info.SavePreviewPicture {
-		w.WriteBool("ReportInfo.SavePreviewPicture", true)
-	}
-	if r.Info.PreviewPictureRatio != 0 && r.Info.PreviewPictureRatio != 0.1 {
-		w.WriteFloat("ReportInfo.PreviewPictureRatio", r.Info.PreviewPictureRatio)
-	}
-	if r.Info.SaveMode != SaveModeAll {
-		w.WriteStr("ReportInfo.SaveMode", r.Info.SaveMode.String())
-	}
+	r.Info.Serialize(w)
 	// Write Styles child element when the stylesheet has entries.
 	if r.styles.Len() > 0 {
 		if err := w.WriteObject(&stylesSerializer{r.styles}); err != nil {
@@ -484,49 +534,112 @@ func (r *Report) Deserialize(rd report.Reader) error {
 	r.StartReportEvent = rd.ReadStr("StartReportEvent", "")
 	r.FinishReportEvent = rd.ReadStr("FinishReportEvent", "")
 
-	// ReportInfo fields — read C# dot-qualified form first, then fall back to
-	// legacy short-form names used by older Go-generated FRX files.
+	// ReportInfo fields — delegate to ReportInfo.Deserialize.
 	// C# ref: ReportInfo.cs Serialize() writes "ReportInfo.*" attribute names.
-	r.Info.Name = rd.ReadStr("ReportInfo.Name", "")
-	if r.Info.Name == "" {
-		r.Info.Name = rd.ReadStr("ReportName", "")
-	}
-	r.Info.Author = rd.ReadStr("ReportInfo.Author", "")
-	if r.Info.Author == "" {
-		r.Info.Author = rd.ReadStr("ReportAuthor", "")
-	}
-	r.Info.Description = rd.ReadStr("ReportInfo.Description", "")
-	if r.Info.Description == "" {
-		r.Info.Description = rd.ReadStr("ReportDescription", "")
-	}
-	r.Info.Version = rd.ReadStr("ReportInfo.Version", "")
-	if r.Info.Version == "" {
-		r.Info.Version = rd.ReadStr("ReportVersion", "")
-	}
-	r.Info.Tag = rd.ReadStr("ReportInfo.Tag", "")
-	r.Info.Created = rd.ReadStr("ReportInfo.Created", "")
-	if r.Info.Created == "" {
-		r.Info.Created = rd.ReadStr("Created", "")
-	}
-	r.Info.Modified = rd.ReadStr("ReportInfo.Modified", "")
-	if r.Info.Modified == "" {
-		r.Info.Modified = rd.ReadStr("Modified", "")
-	}
-	// CreatorVersion: read both "ReportInfo.CreatorVersion" (C# form) and
-	// legacy "CreatorVersion" (old Go-generated form).
-	r.Info.CreatorVersion = rd.ReadStr("ReportInfo.CreatorVersion", "")
-	if r.Info.CreatorVersion == "" {
-		r.Info.CreatorVersion = rd.ReadStr("CreatorVersion", "")
-	}
-	r.Info.SavePreviewPicture = rd.ReadBool("ReportInfo.SavePreviewPicture", false)
-	if !r.Info.SavePreviewPicture {
-		r.Info.SavePreviewPicture = rd.ReadBool("SavePreviewPicture", false)
-	}
-	r.Info.PreviewPictureRatio = rd.ReadFloat("ReportInfo.PreviewPictureRatio", 0.1)
-	// Clamp invalid values per C# ReportInfo.PreviewPictureRatio setter.
-	if r.Info.PreviewPictureRatio <= 0 {
-		r.Info.PreviewPictureRatio = 0.05
-	}
-	r.Info.SaveMode = parseSaveMode(rd.ReadStr("ReportInfo.SaveMode", "All"))
+	r.Info.Deserialize(rd)
 	return nil
+}
+
+// ── ValidatableReport interface ───────────────────────────────────────────────
+// Report satisfies the utils.ValidatableReport interface (import-cycle-free:
+// only the method signatures need to match; no import of utils/ is needed).
+
+// textHolder is a local interface for objects that expose a Text() method.
+type textHolder interface {
+	Text() string
+}
+
+// allObjects collects all report.Base objects from all pages recursively.
+func (r *Report) allObjects() []report.Base {
+	var result []report.Base
+	var collect func(obj report.Base)
+	collect = func(obj report.Base) {
+		result = append(result, obj)
+		if p, ok := obj.(report.Parent); ok {
+			var children []report.Base
+			p.GetChildObjects(&children)
+			for _, child := range children {
+				collect(child)
+			}
+		}
+	}
+	for _, pg := range r.pages {
+		for _, b := range pg.AllBands() {
+			collect(b)
+		}
+	}
+	return result
+}
+
+// BandNames returns the names of all bands across all pages.
+// Implements utils.ValidatableReport.
+func (r *Report) BandNames() []string {
+	var names []string
+	for _, pg := range r.pages {
+		for _, b := range pg.AllBands() {
+			if n := b.Name(); n != "" {
+				names = append(names, n)
+			}
+		}
+	}
+	return names
+}
+
+// DataSourceNames returns registered data source names.
+// Implements utils.ValidatableReport.
+func (r *Report) DataSourceNames() []string {
+	if r.dictionary == nil {
+		return nil
+	}
+	dss := r.dictionary.DataSources()
+	names := make([]string, 0, len(dss))
+	for _, ds := range dss {
+		names = append(names, ds.Name())
+	}
+	return names
+}
+
+// TextExpressions returns all text values (including [bracket] expressions) from
+// text-bearing report objects. Implements utils.ValidatableReport.
+func (r *Report) TextExpressions() []string {
+	var exprs []string
+	for _, obj := range r.allObjects() {
+		if th, ok := obj.(textHolder); ok {
+			if t := th.Text(); t != "" {
+				exprs = append(exprs, t)
+			}
+		}
+	}
+	return exprs
+}
+
+// ParameterNames returns the names of all report parameters.
+// Implements utils.ValidatableReport.
+func (r *Report) ParameterNames() []string {
+	if r.dictionary == nil {
+		return nil
+	}
+	params := r.dictionary.Parameters()
+	names := make([]string, 0, len(params))
+	for _, p := range params {
+		names = append(names, p.Name)
+	}
+	return names
+}
+
+// ObjectNames returns the names of all named objects (components, bands, pages).
+// Implements utils.ValidatableReport.
+func (r *Report) ObjectNames() []string {
+	var names []string
+	for _, pg := range r.pages {
+		if n := pg.Name(); n != "" {
+			names = append(names, n)
+		}
+	}
+	for _, obj := range r.allObjects() {
+		if n := obj.Name(); n != "" {
+			names = append(names, n)
+		}
+	}
+	return names
 }

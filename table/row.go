@@ -24,6 +24,10 @@ type TableRow struct {
 	pageBreak bool
 	// keepRows specifies how many rows to keep together on a page.
 	keepRows int
+
+	// savedHeight / savedVisible store state for SaveState/RestoreState.
+	savedHeight  float32
+	savedVisible bool
 }
 
 // NewTableRow creates a TableRow with defaults matching the C# constructor.
@@ -54,6 +58,19 @@ func (r *TableRow) AddCell(c *TableCell) {
 
 // CellCount returns the number of cells.
 func (r *TableRow) CellCount() int { return len(r.cells) }
+
+// SetHeight overrides ComponentBase.SetHeight to enforce min/max bounds.
+// If height < minHeight (and minHeight > 0), it is clamped up.
+// If height > maxHeight (and maxHeight > 0 and canBreak is false), it is clamped down.
+func (r *TableRow) SetHeight(v float32) {
+	if r.minHeight > 0 && v < r.minHeight {
+		v = r.minHeight
+	}
+	if !r.canBreak && r.maxHeight > 0 && v > r.maxHeight {
+		v = r.maxHeight
+	}
+	r.ComponentBase.SetHeight(v)
+}
 
 // MinHeight returns the minimum row height.
 func (r *TableRow) MinHeight() float32 { return r.minHeight }
@@ -90,6 +107,44 @@ func (r *TableRow) KeepRows() int { return r.keepRows }
 
 // SetKeepRows sets the keep-rows count.
 func (r *TableRow) SetKeepRows(v int) { r.keepRows = v }
+
+// Assign copies all TableRow properties from src.
+// Mirrors C# TableRow.Assign (TableRow.cs:288-297).
+func (r *TableRow) Assign(src *TableRow) {
+	if src == nil {
+		return
+	}
+	r.minHeight = src.minHeight
+	r.maxHeight = src.maxHeight
+	r.autoSize = src.autoSize
+	r.keepRows = src.keepRows
+	r.canBreak = src.canBreak
+	r.pageBreak = src.pageBreak
+	r.ComponentBase.Assign(&src.ComponentBase)
+	// Note: cells are not copied — structural children managed by the table.
+}
+
+// Clear resets the row and clears its cells.
+// Mirrors C# TableRow.Clear (TableRow.cs:361-368).
+func (r *TableRow) Clear() {
+	r.cells = nil
+	r.SetHeight(30)
+}
+
+// SaveState saves the current Height and Visible values so they can be
+// restored later with RestoreState.
+// Mirrors C# TableRow.SaveState (TableRow.cs).
+func (r *TableRow) SaveState() {
+	r.savedHeight = r.Height()
+	r.savedVisible = r.Visible()
+}
+
+// RestoreState restores Height and Visible to the values saved by SaveState.
+// Mirrors C# TableRow.RestoreState (TableRow.cs).
+func (r *TableRow) RestoreState() {
+	r.SetHeight(r.savedHeight)
+	r.SetVisible(r.savedVisible)
+}
 
 // Serialize writes TableRow properties that differ from defaults.
 func (r *TableRow) Serialize(w report.Writer) error {

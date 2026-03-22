@@ -299,3 +299,143 @@ func (r *singleParamReader) NextChild() (string, bool) {
 	return "", false
 }
 func (r *singleParamReader) FinishChild() error { return nil }
+
+// ── DataConnectionBase.Open: OnDatabaseLogin / OnAfterDatabaseLogin ──────────
+// Ported from C# ReportSettings.Core.cs OnDatabaseLogin / ReportSettings.cs
+// DatabaseLogin + AfterDatabaseLogin events.
+
+// TestDataConnectionBase_OnDatabaseLogin_CanOverrideDSN verifies that
+// OnDatabaseLogin is called before sql.Open and that replacing the
+// ConnectionString in the callback causes the new DSN to be used.
+func TestDataConnectionBase_OnDatabaseLogin_CanOverrideDSN(t *testing.T) {
+	c := data.NewDataConnectionBase("stub")
+	c.ConnectionString = "original-dsn"
+	var capturedDSN string
+	c.OnDatabaseLogin = func(e *data.DatabaseLoginEventArgs) {
+		capturedDSN = e.ConnectionString
+		e.ConnectionString = "replaced-dsn"
+	}
+	if err := c.Open(); err != nil {
+		t.Fatalf("Open error: %v", err)
+	}
+	if capturedDSN != "original-dsn" {
+		t.Errorf("OnDatabaseLogin received DSN %q, want %q", capturedDSN, "original-dsn")
+	}
+	if c.DB() == nil {
+		t.Error("DB() should not be nil after a successful Open")
+	}
+	_ = c.Close()
+}
+
+// TestDataConnectionBase_OnDatabaseLogin_CalledOnce verifies that
+// OnDatabaseLogin is invoked exactly once per Open() call.
+func TestDataConnectionBase_OnDatabaseLogin_CalledOnce(t *testing.T) {
+	c := data.NewDataConnectionBase("stub")
+	c.ConnectionString = "stub://test"
+	count := 0
+	c.OnDatabaseLogin = func(e *data.DatabaseLoginEventArgs) { count++ }
+	if err := c.Open(); err != nil {
+		t.Fatalf("Open error: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("OnDatabaseLogin called %d times, want 1", count)
+	}
+	_ = c.Close()
+}
+
+// TestDataConnectionBase_OnDatabaseLogin_NotCalledWhenAlreadyOpen verifies
+// that a second Open() call (idempotent) does not fire OnDatabaseLogin again.
+func TestDataConnectionBase_OnDatabaseLogin_NotCalledWhenAlreadyOpen(t *testing.T) {
+	c := data.NewDataConnectionBase("stub")
+	c.ConnectionString = "stub://test"
+	count := 0
+	c.OnDatabaseLogin = func(e *data.DatabaseLoginEventArgs) { count++ }
+	_ = c.Open()
+	_ = c.Open() // second call — db != nil, should return early
+	if count != 1 {
+		t.Errorf("OnDatabaseLogin called %d times, want 1 (second Open is no-op)", count)
+	}
+	_ = c.Close()
+}
+
+// TestDataConnectionBase_OnAfterDatabaseLogin_ReceivesDB verifies that
+// OnAfterDatabaseLogin is called after sql.Open succeeds and receives
+// the non-nil *sql.DB.
+func TestDataConnectionBase_OnAfterDatabaseLogin_ReceivesDB(t *testing.T) {
+	c := data.NewDataConnectionBase("stub")
+	c.ConnectionString = "stub://test"
+	var receivedDB *sql.DB
+	c.OnAfterDatabaseLogin = func(e *data.AfterDatabaseLoginEventArgs) {
+		receivedDB = e.DB
+	}
+	if err := c.Open(); err != nil {
+		t.Fatalf("Open error: %v", err)
+	}
+	if receivedDB == nil {
+		t.Error("OnAfterDatabaseLogin: received nil DB, want non-nil")
+	}
+	if receivedDB != c.DB() {
+		t.Error("OnAfterDatabaseLogin: received DB differs from c.DB()")
+	}
+	_ = c.Close()
+}
+
+// TestDataConnectionBase_OnAfterDatabaseLogin_NotCalledOnError verifies that
+// OnAfterDatabaseLogin is not called when Open() fails.
+func TestDataConnectionBase_OnAfterDatabaseLogin_NotCalledOnError(t *testing.T) {
+	c := data.NewDataConnectionBase("definitely-not-registered-xyz2")
+	c.ConnectionString = "bad://dsn"
+	called := false
+	c.OnAfterDatabaseLogin = func(e *data.AfterDatabaseLoginEventArgs) { called = true }
+	err := c.Open()
+	if err == nil {
+		t.Fatal("expected Open to fail with unregistered driver")
+	}
+	if called {
+		t.Error("OnAfterDatabaseLogin should not be called when Open fails")
+	}
+}
+
+// TestDataConnectionBase_BothCallbacks_Sequence verifies that OnDatabaseLogin
+// fires before sql.Open and OnAfterDatabaseLogin fires after, in order.
+func TestDataConnectionBase_BothCallbacks_Sequence(t *testing.T) {
+	c := data.NewDataConnectionBase("stub")
+	c.ConnectionString = "stub://test"
+	var seq []string
+	c.OnDatabaseLogin = func(e *data.DatabaseLoginEventArgs) { seq = append(seq, "login") }
+	c.OnAfterDatabaseLogin = func(e *data.AfterDatabaseLoginEventArgs) { seq = append(seq, "after") }
+	if err := c.Open(); err != nil {
+		t.Fatalf("Open error: %v", err)
+	}
+	if len(seq) != 2 || seq[0] != "login" || seq[1] != "after" {
+		t.Errorf("callback order = %v, want [login after]", seq)
+	}
+	_ = c.Close()
+}
+
+// TestReportSettings_LoginCallbackFields verifies that database login callbacks
+// can be stored as func fields and wired to DataConnectionBase.OnDatabaseLogin /
+// OnAfterDatabaseLogin. This documents the Go equivalent of the C#
+// ReportSettings.DatabaseLogin / AfterDatabaseLogin event pattern.
+// C# ref: ReportSettings.cs DatabaseLogin + AfterDatabaseLogin events;
+// ReportSettings.Core.cs OnDatabaseLogin → fires DatabaseLogin event.
+func TestReportSettings_LoginCallbackFields(t *testing.T) {
+	loginCalled := false
+	afterCalled := false
+	loginCb := func(e *data.DatabaseLoginEventArgs) { loginCalled = true }
+	afterCb := func(e *data.AfterDatabaseLoginEventArgs) { afterCalled = true }
+	conn := data.NewDataConnectionBase("stub")
+	conn.ConnectionString = "stub://test"
+	conn.OnDatabaseLogin = loginCb
+	conn.OnAfterDatabaseLogin = afterCb
+	if err := conn.Open(); err != nil {
+		t.Fatalf("Open error: %v", err)
+	}
+	if !loginCalled {
+		t.Error("OnDatabaseLogin not called")
+	}
+	if !afterCalled {
+		t.Error("OnAfterDatabaseLogin not called")
+	}
+	_ = conn.Close()
+}

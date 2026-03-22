@@ -89,6 +89,11 @@ type Parent interface {
 type DataSourceBinder interface {
 	// DataSourceName returns the name of the bound data source.
 	DataSourceName() string
+	// UpdateDataSourceRef replaces the bound data source with ds.
+	// The concrete type is data.DataSource; any is used to avoid an import cycle
+	// between the report/ and data/ packages.
+	// Mirrors C# IContainDataSource.UpdateDataSourceRef(DataSourceBase).
+	UpdateDataSourceRef(ds any)
 }
 
 // Translatable is the Go equivalent of ITranslatable (internal interface).

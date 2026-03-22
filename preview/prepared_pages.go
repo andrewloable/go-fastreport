@@ -867,3 +867,20 @@ func (pp *PreparedPages) ClearPageCache() {
 func (pp *PreparedPages) RemovePageCache(index int) {
 	pp.pageCache.Remove(index)
 }
+
+// InterleaveWithBackPage inserts copies of the back-page (at backPageIndex)
+// between every pair of existing pages. Used for duplex printing where the
+// back template is reproduced behind each front page.
+// Mirrors C# PreparedPages.InterleaveWithBackPage (PreparedPages.cs).
+func (pp *PreparedPages) InterleaveWithBackPage(backPageIndex int) {
+	if backPageIndex <= 0 || backPageIndex >= len(pp.pages) {
+		return
+	}
+	backPage := pp.pages[backPageIndex]
+	count := backPageIndex - 1
+	for i := 0; i < count; i++ {
+		insertAt := i*2 + 1
+		pageCopy := *backPage
+		pp.pages = append(pp.pages[:insertAt], append([]*PreparedPage{&pageCopy}, pp.pages[insertAt:]...)...)
+	}
+}

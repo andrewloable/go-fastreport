@@ -1,6 +1,9 @@
 package report
 
 import (
+	"fmt"
+	"strings"
+
 	"github.com/andrewloable/go-fastreport/style"
 	"github.com/andrewloable/go-fastreport/utils"
 )
@@ -75,6 +78,12 @@ type Hyperlink struct {
 	DetailReportName string
 	// ReportParameter is the parameter name to pass to the detail report.
 	ReportParameter string
+	// OpenLinkInNewTab controls whether the link opens in a new browser tab.
+	// Used by HTML export only. Mirrors C# Hyperlink.OpenLinkInNewTab (Hyperlink.cs).
+	OpenLinkInNewTab bool
+	// ValuesSeparator is the separator string for multi-value parameters.
+	// Default is ";" to match C# Hyperlink constructor default (Hyperlink.cs line 352).
+	ValuesSeparator string
 }
 
 // EventArgs holds context passed to report event callbacks.
@@ -520,6 +529,16 @@ func (rc *ReportComponentBase) Serialize(w Writer) error {
 		if h.ReportParameter != "" {
 			w.WriteStr("Hyperlink.ReportParameter", h.ReportParameter)
 		}
+		// ValuesSeparator default is ";" — only write when different.
+		// C# ref: Hyperlink.ShouldSerializeValuesSeparator / Hyperlink.cs line 218.
+		if h.ValuesSeparator != "" && h.ValuesSeparator != ";" {
+			w.WriteStr("Hyperlink.ValuesSeparator", h.ValuesSeparator)
+		}
+		// OpenLinkInNewTab — only write when true (default false).
+		// C# ref: Hyperlink.Serialize (Hyperlink.cs line 318-319).
+		if h.OpenLinkInNewTab {
+			w.WriteBool("Hyperlink.OpenLinkInNewTab", true)
+		}
 	}
 	return nil
 }
@@ -553,9 +572,12 @@ func (rc *ReportComponentBase) Deserialize(r Reader) error {
 	hlDetailPage := r.ReadStr("Hyperlink.DetailPageName", "")
 	hlDetailReport := r.ReadStr("Hyperlink.DetailReportName", "")
 	hlParam := r.ReadStr("Hyperlink.ReportParameter", "")
+	hlSep := r.ReadStr("Hyperlink.ValuesSeparator", "")
+	hlNewTab := r.ReadBool("Hyperlink.OpenLinkInNewTab", false)
 	if hlKind != "" || hlExpr != "" || hlValue != "" || hlTarget != "" ||
-		hlDetailPage != "" || hlDetailReport != "" || hlParam != "" {
-		rc.hyperlink = &Hyperlink{
+		hlDetailPage != "" || hlDetailReport != "" || hlParam != "" ||
+		hlSep != "" || hlNewTab {
+		hl := &Hyperlink{
 			Kind:             hlKind,
 			Expression:       hlExpr,
 			Value:            hlValue,
@@ -563,10 +585,77 @@ func (rc *ReportComponentBase) Deserialize(r Reader) error {
 			DetailPageName:   hlDetailPage,
 			DetailReportName: hlDetailReport,
 			ReportParameter:  hlParam,
+			OpenLinkInNewTab: hlNewTab,
 		}
+		// Apply ValuesSeparator; default in C# is ";" (Hyperlink.cs line 352).
+		if hlSep != "" {
+			hl.ValuesSeparator = hlSep
+		} else {
+			hl.ValuesSeparator = ";"
+		}
+		rc.hyperlink = hl
 	}
 	return nil
 }
+
+// GetExpressions returns the list of expressions used by this
+// ReportComponentBase: the base component expressions (VisibleExpression,
+// PrintableExpression) plus the hyperlink expression, bookmark, and
+// exportable expression.
+//
+// Mirrors C# ReportComponentBase.GetExpressions()
+// (FastReport.Base/ReportComponentBase.cs lines 1018–1044).
+func (rc *ReportComponentBase) GetExpressions() []string {
+	exprs := rc.ComponentBase.GetExpressions()
+	if rc.hyperlink != nil && rc.hyperlink.Expression != "" {
+		exprs = append(exprs, rc.hyperlink.Expression)
+	}
+	if rc.bookmark != "" {
+		exprs = append(exprs, rc.bookmark)
+	}
+	if rc.exportableExpression != "" {
+		expr := rc.exportableExpression
+		if len(expr) > 2 && expr[0] == '[' && expr[len(expr)-1] == ']' {
+			expr = expr[1 : len(expr)-1]
+		}
+		lower := strings.ToLower(expr)
+		if lower == "true" || lower == "false" {
+			expr = lower
+		}
+		exprs = append(exprs, expr)
+	}
+	return exprs
+}
+
+// GetData is called by the report engine to evaluate dynamic properties
+// such as Bookmark and Hyperlink before the object is printed.
+//
+// Mirrors C# ReportComponentBase.GetData()
+// (FastReport.Base/ReportComponentBase.cs lines 1006–1015).
+// The calc function receives a bracket expression and returns its value.
+func (rc *ReportComponentBase) GetData(calc func(string) (any, error)) {
+	// Evaluate Hyperlink expression.
+	if rc.hyperlink != nil && rc.hyperlink.Expression != "" {
+		if val, err := calc(rc.hyperlink.Expression); err == nil && val != nil {
+			rc.hyperlink.Value = fmt.Sprintf("%v", val)
+		}
+	}
+	// Evaluate Bookmark expression.
+	if rc.bookmark != "" {
+		if val, err := calc(rc.bookmark); err == nil {
+			if val == nil {
+				rc.bookmark = ""
+			} else {
+				rc.bookmark = fmt.Sprintf("%v", val)
+			}
+		}
+	}
+}
+
+// ResetData resets any data-bound state from the previous report run.
+// Mirrors C# ReportComponentBase.ResetData() which is virtual and empty by default
+// (FastReport.Base/ReportComponentBase.cs line 920).
+func (rc *ReportComponentBase) ResetData() {}
 
 // Validate checks this component for common structural problems and returns a
 // slice of validation issues. An empty slice means the component is valid.

@@ -299,10 +299,23 @@ type TextureFill struct {
 	ImageOffsetX int
 	// ImageOffsetY is the vertical offset of the tile origin in pixels.
 	ImageOffsetY int
+	// ImageIndex is the BlobStore index used when the FRX is stored with a
+	// BlobStore (designer/preview format). -1 means "not set" (inline path).
+	// Mirrors C# TextureFill.ImageIndex (Fills.cs).
+	ImageIndex int
 }
 
 // FillType implements Fill.
 func (f *TextureFill) FillType() FillType { return FillTypeTexture }
+
+// NewTextureFill returns a TextureFill with ImageIndex set to -1 (not set),
+// matching the C# TextureFill constructor which calls ResetImageIndex().
+func NewTextureFill() *TextureFill {
+	return &TextureFill{
+		WrapMode:   WrapModeTile,
+		ImageIndex: -1,
+	}
+}
 
 // Clone implements Fill.
 func (f *TextureFill) Clone() Fill {

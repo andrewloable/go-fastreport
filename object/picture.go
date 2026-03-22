@@ -228,7 +228,7 @@ type pictureObjectSavedState struct {
 // for pre-compilation by the report engine.
 // Mirrors C# PictureObjectBase.GetExpressions (PictureObjectBase.cs line 875-894).
 func (p *PictureObjectBase) GetExpressions() []string {
-	exprs := p.ReportComponentBase.ComponentBase.GetExpressions()
+	exprs := p.ReportComponentBase.GetExpressions()
 	if p.dataColumn != "" {
 		exprs = append(exprs, p.dataColumn)
 	}

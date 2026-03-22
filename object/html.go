@@ -94,10 +94,13 @@ func (h *HtmlObject) CalcWidth() float32 {
 }
 
 // ApplyCondition applies the visual overrides from a HighlightCondition.
-// Fill (background colour) and Visible flags are supported; Border is omitted
-// because style.HighlightCondition does not carry a full Border value.
+// Fill (background colour), Border, and Visible flags are supported.
 // Mirrors C# HtmlObject.ApplyCondition() (HtmlObject.cs lines 147-155).
 func (h *HtmlObject) ApplyCondition(c style.HighlightCondition) {
+	if c.ApplyBorder {
+		cloned := c.Border.Clone()
+		h.SetBorder(*cloned)
+	}
 	if c.ApplyFill {
 		h.SetFill(&style.SolidFill{Color: c.FillColor})
 	}

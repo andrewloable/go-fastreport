@@ -131,6 +131,8 @@ type MatrixData struct {
 	Rows []*HeaderDescriptor
 	// Cells are the data cell descriptors.
 	Cells []*CellDescriptor
+	// rt holds the runtime header trees and cell store (lazily initialized).
+	rt *matrixDataRuntime
 }
 
 // AddColumn appends a column header descriptor.
@@ -263,9 +265,28 @@ type MatrixObject struct {
 	colIndex map[string]int
 
 	// Multi-level header support (populated by AddDataMultiLevel).
-	rowRoot       *HeaderItem
-	colRoot       *HeaderItem
+	rowRoot        *HeaderItem
+	colRoot        *HeaderItem
 	mlAccumulators map[multiLevelKey]*accumulator
+
+	// Runtime state for engine lifecycle (matrix_lifecycle.go).
+	// C# source: MatrixObject private fields populated by Helper.AddDataRow.
+	ColumnValues []any // current column expression values
+	RowValues2   []any // current row expression values (RowValues is reserved)
+	CellValues   []any // current cell values
+	ColumnIndex  int   // current flat column index
+	RowIndex     int   // current flat row index
+
+	// Event callbacks (set by engine or user code before running).
+	ManualBuildHandler  func(*MatrixObject) // C#: MatrixObject.ManualBuild event
+	ModifyResultHandler func(*MatrixObject) // C#: MatrixObject.ModifyResult event
+	AfterTotalsHandler  func(*MatrixObject) // C#: MatrixObject.AfterTotals event
+
+	// saveVisible holds the pre-run Visible state for RestoreState.
+	saveVisible bool
+	// visible shadows ComponentBase.visible so SaveState/RestoreState work
+	// without depending on the exact embedding depth.
+	visible bool
 }
 
 // New creates a MatrixObject with defaults matching the C# constructor.

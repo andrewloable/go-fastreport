@@ -824,14 +824,12 @@ func TestEncodeAztecBarcode_DifferentInputsDifferentOutput(t *testing.T) {
 
 func TestEncodeAztecBarcode_UserLayers_TooSmall(t *testing.T) {
 	// Force compact layer 1 with data that exceeds its capacity.
-	// This hits the eccCount < 0 branch in encodeAztecBarcode.
+	// The full ZXing-compatible encoder (encodeAztecFull) correctly returns an error
+	// when the data is too large for the user-specified layer, matching the C# reference.
 	longText := strings.Repeat("ABCDEFGHIJ", 5) // 50 bytes, too big for compact layer 1
-	matrix, err := encodeAztecBarcode(longText, 23, 1)
-	if err != nil {
-		t.Fatalf("encodeAztecBarcode: %v", err)
-	}
-	if len(matrix) == 0 {
-		t.Fatal("matrix is empty")
+	_, err := encodeAztecBarcode(longText, 23, 1)
+	if err == nil {
+		t.Fatal("expected error when data exceeds compact layer 1 capacity")
 	}
 }
 

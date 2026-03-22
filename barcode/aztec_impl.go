@@ -189,84 +189,16 @@ func aztecEncodeByte(data []byte) []int {
 // ── Aztec matrix construction ────────────────────────────────────────────────
 
 // encodeAztecBarcode encodes content as an Aztec code and returns the module matrix.
+// Delegates to encodeAztecFull — the full ZXing-compatible encoder in aztec_encoder.go.
 func encodeAztecBarcode(content string, minECCPercent, userLayers int) ([][]bool, error) {
 	if content == "" {
 		return nil, fmt.Errorf("aztec: content must not be empty")
 	}
-
-	data := []byte(content)
-
-	// Encode data as high-level bitstream
-	// Use simple byte encoding: each byte is 8 bits
-	dataBits := len(data) * 8
-
-	// Add mode latch bits (Upper → Byte latch = 5 bits for PS then byte shift)
-	// Simplified: just account for overhead
-	totalDataBits := dataBits + 10 // mode overhead
-
-	// Choose parameters
-	params, err := aztecChooseParams(totalDataBits, minECCPercent)
-	if err != nil {
-		return nil, err
+	eccPct := minECCPercent
+	if eccPct <= 0 {
+		eccPct = aztecDefaultECPercent
 	}
-
-	// Override with user layers if specified
-	if userLayers > 0 {
-		if userLayers <= 4 {
-			params.compact = true
-			params.layers = userLayers
-		} else {
-			params.compact = false
-			params.layers = userLayers
-		}
-		params.wordSize = aztecWordSize(params.layers)
-	}
-
-	// Build codeword stream
-	ws := params.wordSize
-	gf := newAztecGF(aztecPrimitive(ws), 1<<ws)
-
-	// Pack data bits into codewords
-	var rawBits []int
-	for _, b := range data {
-		for i := 7; i >= 0; i-- {
-			rawBits = append(rawBits, (int(b)>>i)&1)
-		}
-	}
-
-	// Pad with zeros to fill codeword boundary
-	for len(rawBits)%ws != 0 {
-		rawBits = append(rawBits, 0)
-	}
-
-	// Convert bit stream to codewords
-	var dataWords []int
-	for i := 0; i < len(rawBits); i += ws {
-		cw := 0
-		for j := 0; j < ws; j++ {
-			cw = (cw << 1) | rawBits[i+j]
-		}
-		dataWords = append(dataWords, cw)
-	}
-
-	// Ensure we don't exceed capacity
-	dataCount := len(dataWords)
-	eccCount := params.codewords - dataCount
-	if eccCount < 0 {
-		eccCount = 3 // minimum ECC
-		params.codewords = dataCount + eccCount
-	}
-
-	// Compute RS error correction
-	eccWords := aztecReedSolomon(dataWords, eccCount, gf)
-
-	// Build final codeword stream: data + ecc
-	allWords := make([]int, 0, params.codewords)
-	allWords = append(allWords, dataWords...)
-	allWords = append(allWords, eccWords...)
-
-	// Build the module matrix
-	return aztecBuildMatrix(allWords, params), nil
+	return encodeAztecFull([]byte(content), eccPct, userLayers)
 }
 
 func aztecPrimitive(wordSize int) int {
@@ -519,12 +451,17 @@ func aztecDrawDataLayers(matrix [][]bool, center int, codewords []int, params az
 }
 
 // GetMatrix encodes b.encodedText as an Aztec code and returns (matrix, rows, cols).
+// Uses the full ZXing-compatible encoder (encodeAztecFull) from aztec_encoder.go.
 func (a *AztecBarcode) GetMatrix() ([][]bool, int, int) {
 	text := a.encodedText
 	if text == "" {
 		text = a.DefaultValue()
 	}
-	matrix, err := encodeAztecBarcode(text, a.MinECCPercent, a.UserSpecifiedLayers)
+	eccPct := a.MinECCPercent
+	if eccPct <= 0 {
+		eccPct = aztecDefaultECPercent
+	}
+	matrix, err := encodeAztecFull([]byte(text), eccPct, a.UserSpecifiedLayers)
 	if err != nil || len(matrix) == 0 {
 		return [][]bool{{true}}, 1, 1
 	}

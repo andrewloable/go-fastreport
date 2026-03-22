@@ -1,6 +1,7 @@
 package xml
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 )
@@ -57,4 +58,34 @@ func (b *ConnectionStringBuilder) Codepage() int {
 		}
 	}
 	return 0
+}
+
+// ── Setters ───────────────────────────────────────────────────────────────────
+
+// SetXmlFile sets the path to the XML data file.
+func (b *ConnectionStringBuilder) SetXmlFile(v string) { b.vals["xmlfile"] = v }
+
+// SetXsdFile sets the path to the XSD schema file.
+func (b *ConnectionStringBuilder) SetXsdFile(v string) { b.vals["xsdfile"] = v }
+
+// SetCodepage sets the code page number.
+func (b *ConnectionStringBuilder) SetCodepage(n int) { b.vals["codepage"] = fmt.Sprintf("%d", n) }
+
+// Build serialises the builder state to a connection string.
+func (b *ConnectionStringBuilder) Build() string {
+	var sb strings.Builder
+	write := func(canonical, key string) {
+		if v, ok := b.vals[key]; ok {
+			if sb.Len() > 0 {
+				sb.WriteByte(';')
+			}
+			sb.WriteString(canonical)
+			sb.WriteByte('=')
+			sb.WriteString(v)
+		}
+	}
+	write("XmlFile", "xmlfile")
+	write("XsdFile", "xsdfile")
+	write("Codepage", "codepage")
+	return sb.String()
 }

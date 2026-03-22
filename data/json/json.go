@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/andrewloable/go-fastreport/data"
 )
@@ -23,18 +25,43 @@ type JSONDataSource struct {
 
 	// sourcePath is the file path to read JSON from (if set).
 	sourcePath string
-	// sourceString is the raw JSON string (if set).
+	// sourceString is the raw JSON string, URL, or file path (if set).
 	sourceString string
 	// rootPath is a dot-separated path to the sub-array within the JSON.
 	// e.g. "data.items" navigates obj["data"]["items"].
 	rootPath string
+	// commandTimeout is the HTTP request timeout in seconds (default 30).
+	commandTimeout int
+	// httpHeaders are extra headers sent with HTTP URL requests.
+	httpHeaders map[string]string
 }
 
 // New creates a JSONDataSource with the given name.
 func New(name string) *JSONDataSource {
 	return &JSONDataSource{
 		BaseDataSource: *data.NewBaseDataSource(name),
+		commandTimeout: 30,
 	}
+}
+
+// NewFromConnectionString creates a JSONDataSource populated from a
+// FastReport JSON connection string.
+// C# ref: JsonDataSourceConnection constructor / InitConnection.
+func NewFromConnectionString(name, connectionString string) *JSONDataSource {
+	j := New(name)
+	j.InitFromConnectionString(connectionString)
+	return j
+}
+
+// InitFromConnectionString re-initialises the data source from a FastReport
+// JSON connection string, overriding any previously configured source.
+func (j *JSONDataSource) InitFromConnectionString(cs string) {
+	b := NewConnectionStringBuilder(cs)
+	if v := b.Json(); v != "" {
+		j.sourceString = v
+		j.sourcePath = ""
+	}
+	// Encoding is informational only for now (JSON is typically UTF-8).
 }
 
 // SetFilePath sets the path to a JSON file as the data source.
@@ -55,6 +82,20 @@ func (j *JSONDataSource) SetRootPath(path string) { j.rootPath = path }
 
 // RootPath returns the dot-separated root path.
 func (j *JSONDataSource) RootPath() string { return j.rootPath }
+
+// SetCommandTimeout sets the HTTP request timeout in seconds.
+func (j *JSONDataSource) SetCommandTimeout(seconds int) { j.commandTimeout = seconds }
+
+// CommandTimeout returns the HTTP request timeout in seconds (default 30).
+func (j *JSONDataSource) CommandTimeout() int { return j.commandTimeout }
+
+// SetHTTPHeaders sets extra headers to include in HTTP URL requests.
+func (j *JSONDataSource) SetHTTPHeaders(headers map[string]string) {
+	j.httpHeaders = headers
+}
+
+// HTTPHeaders returns the configured HTTP headers.
+func (j *JSONDataSource) HTTPHeaders() map[string]string { return j.httpHeaders }
 
 // Init loads and parses the JSON, populating the in-memory row store.
 func (j *JSONDataSource) Init() error {
@@ -124,9 +165,36 @@ func (j *JSONDataSource) Init() error {
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
+// isJSONText returns true if s looks like inline JSON (starts with '{' or '[').
+// C# ref: JsonDataSourceConnection.InitConnection — if (!(jsonText[0] == '{' || jsonText[0] == '['))
+func isJSONText(s string) bool {
+	t := strings.TrimSpace(s)
+	return len(t) > 0 && (t[0] == '{' || t[0] == '[')
+}
+
 func (j *JSONDataSource) readSource() ([]byte, error) {
 	if j.sourceString != "" {
-		return []byte(j.sourceString), nil
+		if isJSONText(j.sourceString) {
+			return []byte(j.sourceString), nil
+		}
+		// Treat as URL if not inline JSON.
+		client := &http.Client{Timeout: time.Duration(j.commandTimeout) * time.Second}
+		req, err := http.NewRequest(http.MethodGet, j.sourceString, nil)
+		if err != nil {
+			return nil, fmt.Errorf("invalid URL %q: %w", j.sourceString, err)
+		}
+		for k, v := range j.httpHeaders {
+			req.Header.Set(k, v)
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("HTTP fetch %q: %w", j.sourceString, err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			return nil, fmt.Errorf("HTTP fetch %q: status %d", j.sourceString, resp.StatusCode)
+		}
+		return io.ReadAll(resp.Body)
 	}
 	if j.sourcePath != "" {
 		f, err := os.Open(j.sourcePath)

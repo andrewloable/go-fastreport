@@ -828,6 +828,9 @@ func (t *TextObject) DeserializeChild(childType string, r report.Reader) bool {
 			c.ApplyFill = r.ReadBool("ApplyFill", false)
 			c.ApplyFont = r.ReadBool("ApplyFont", false)
 			c.ApplyTextFill = r.ReadBool("ApplyTextFill", true)
+			// Border attributes (e.g. "Border.Lines", "Border.Color" etc.)
+			// Mirrors C# StyleBase.Serialize calling Border.Serialize(writer, "Border", …).
+			report.DeserializeBorderInto(r, &c.Border)
 			if cs := r.ReadStr("Fill.Color", ""); cs != "" {
 				if col, err := utils.ParseColor(cs); err == nil {
 					c.FillColor = col
@@ -1020,6 +1023,11 @@ func (h *highlightConditionSerializable) Serialize(w report.Writer) error {
 	}
 	if h.c.Visible != def.Visible {
 		w.WriteBool("Visible", h.c.Visible)
+	}
+	// Border attributes (written before Apply flags to match C# StyleBase.Serialize order).
+	// C# ref: StyleBase.Serialize calls Border.Serialize(writer, "Border", c.Border).
+	if h.c.ApplyBorder {
+		report.SerializeBorderFrom(w, &h.c.Border)
 	}
 	if h.c.ApplyBorder != def.ApplyBorder {
 		w.WriteBool("ApplyBorder", h.c.ApplyBorder)

@@ -176,7 +176,7 @@ func (c *CheckBoxObject) SetEditable(v bool) { c.editable = v }
 // Expression when set.
 // Mirrors C# CheckBoxObject.GetExpressions (CheckBoxObject.cs line 327-337).
 func (c *CheckBoxObject) GetExpressions() []string {
-	exprs := c.ReportComponentBase.ComponentBase.GetExpressions()
+	exprs := c.ReportComponentBase.GetExpressions()
 	if c.dataColumn != "" {
 		exprs = append(exprs, c.dataColumn)
 	}
@@ -198,7 +198,25 @@ func (c *CheckBoxObject) GetData(calc func(string) (any, error)) {
 				c.isChecked = v
 			case int:
 				c.isChecked = v != 0
+			case int8:
+				c.isChecked = v != 0
+			case int16:
+				c.isChecked = v != 0
+			case int32:
+				c.isChecked = v != 0
 			case int64:
+				c.isChecked = v != 0
+			case uint:
+				c.isChecked = v != 0
+			case uint8:
+				c.isChecked = v != 0
+			case uint16:
+				c.isChecked = v != 0
+			case uint32:
+				c.isChecked = v != 0
+			case uint64:
+				c.isChecked = v != 0
+			case float32:
 				c.isChecked = v != 0
 			case float64:
 				c.isChecked = v != 0

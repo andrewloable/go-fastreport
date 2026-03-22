@@ -23,11 +23,12 @@ type HighlightCondition struct {
 	ApplyTextFill bool
 
 	// Visual overrides — applied only when the corresponding Apply flag is true.
-	FillColor     color.RGBA // background fill override
+	FillColor     color.RGBA // background fill override (solid fill colour)
 	TextFillColor color.RGBA // text (foreground) colour override
 	Font          Font       // font override
-	// Border override is intentionally omitted; it is rarely used in highlight
-	// conditions and its serialisation is complex.
+	// Border is the border override applied when ApplyBorder is true.
+	// Mirrors C# StyleBase.Border (StyleBase.cs) used by HighlightCondition.
+	Border Border
 }
 
 // NewHighlightCondition returns a HighlightCondition with the same defaults
@@ -38,6 +39,7 @@ func NewHighlightCondition() HighlightCondition {
 		Visible:       true,
 		ApplyTextFill: true,
 		TextFillColor: color.RGBA{R: 255, A: 255},
+		Border:        *NewBorder(),
 	}
 }
 
@@ -53,12 +55,28 @@ func (h *HighlightCondition) Assign(src HighlightCondition) {
 	h.FillColor = src.FillColor
 	h.TextFillColor = src.TextFillColor
 	h.Font = src.Font
+	// Deep-copy Border lines to avoid sharing pointers.
+	h.Border = src.Border
+	for i, l := range src.Border.Lines {
+		if l != nil {
+			cp := *l
+			h.Border.Lines[i] = &cp
+		}
+	}
 }
 
 // Clone returns a copy of this HighlightCondition.
 // Mirrors C# HighlightCondition.Clone (HighlightCondition.cs line 75-80).
 func (h HighlightCondition) Clone() HighlightCondition {
-	return h
+	c := h
+	// Deep-copy Border lines to avoid sharing pointers.
+	for i, l := range h.Border.Lines {
+		if l != nil {
+			cp := *l
+			c.Border.Lines[i] = &cp
+		}
+	}
+	return c
 }
 
 // Equals reports whether h and other have identical field values.

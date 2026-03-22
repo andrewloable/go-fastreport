@@ -98,3 +98,79 @@ func (b *ConnectionStringBuilder) SimpleStructure() bool {
 	}
 	return false
 }
+
+// ── Setters ───────────────────────────────────────────────────────────────────
+
+// SetJson sets the JSON data (stores as base64 if it contains semicolons/equals).
+func (b *ConnectionStringBuilder) SetJson(v string) {
+	b.vals["json"] = base64.StdEncoding.EncodeToString([]byte(v))
+}
+
+// SetJsonSchema sets the JSON schema.
+func (b *ConnectionStringBuilder) SetJsonSchema(v string) {
+	b.vals["jsonschema"] = base64.StdEncoding.EncodeToString([]byte(v))
+}
+
+// SetEncoding sets the character encoding name.
+func (b *ConnectionStringBuilder) SetEncoding(v string) {
+	b.vals["encoding"] = v
+}
+
+// SetSimpleStructure sets the SimpleStructure flag.
+func (b *ConnectionStringBuilder) SetSimpleStructure(v bool) {
+	if v {
+		b.vals["simplestructure"] = "true"
+	} else {
+		b.vals["simplestructure"] = "false"
+	}
+}
+
+// SetHeaders replaces the HTTP header collection.
+func (b *ConnectionStringBuilder) SetHeaders(headers map[string]string) {
+	// Remove existing header keys.
+	for k := range b.vals {
+		if strings.HasPrefix(k, "header") {
+			delete(b.vals, k)
+		}
+	}
+	i := 0
+	for k, v := range headers {
+		key := fmt.Sprintf("header%d", i)
+		b.vals[key] = base64.StdEncoding.EncodeToString([]byte(k)) + ":" + base64.StdEncoding.EncodeToString([]byte(v))
+		i++
+	}
+}
+
+// Build serialises the builder state to a connection string.
+func (b *ConnectionStringBuilder) Build() string {
+	var sb strings.Builder
+	// Write in deterministic order: json, jsonschema, encoding, simplestructure, headers.
+	keys := []string{"json", "jsonschema", "encoding", "simplestructure"}
+	for _, k := range keys {
+		if v, ok := b.vals[k]; ok {
+			if sb.Len() > 0 {
+				sb.WriteByte(';')
+			}
+			// Use canonical capitalised key names.
+			canonical := map[string]string{
+				"json": "Json", "jsonschema": "JsonSchema",
+				"encoding": "Encoding", "simplestructure": "SimpleStructure",
+			}
+			sb.WriteString(canonical[k])
+			sb.WriteByte('=')
+			sb.WriteString(v)
+		}
+	}
+	// Append headers.
+	for k, v := range b.vals {
+		if strings.HasPrefix(k, "header") {
+			if sb.Len() > 0 {
+				sb.WriteByte(';')
+			}
+			sb.WriteString(k)
+			sb.WriteByte('=')
+			sb.WriteString(v)
+		}
+	}
+	return sb.String()
+}

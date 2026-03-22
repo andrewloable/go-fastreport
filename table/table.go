@@ -341,6 +341,24 @@ func (t *TableBase) CorrectSpansOnColumnChange(colIdx, delta int) {
 	}
 }
 
+// GetExpressions collects expression strings from the table itself and from
+// every cell in every row.  This mirrors the behaviour of C# TableCell.GetExpressions
+// (TableCell.cs lines 336-350) applied at the table level: the engine needs
+// all expressions declared in the table's cells to pre-compile them.
+//
+// The base component expressions (VisibleExpression, PrintableExpression, etc.)
+// are collected first via the embedded BreakableComponent, then each cell's
+// GetExpressions result is appended.
+func (t *TableBase) GetExpressions() []string {
+	exprs := t.BreakableComponent.GetExpressions()
+	for _, row := range t.rows {
+		for _, cell := range row.cells {
+			exprs = append(exprs, cell.GetExpressions()...)
+		}
+	}
+	return exprs
+}
+
 // Assign copies all TableBase properties from src.
 // Mirrors C# TableBase.Assign (TableBase.cs:473-489).
 // Note: rows/columns/cells are not copied — they are structural and managed
@@ -539,6 +557,17 @@ type TableObject struct {
 
 // TypeName returns the FRX element name.
 func (t *TableObject) TypeName() string { return "TableObject" }
+
+// Assign copies all TableObject properties from src, including the TableBase fields.
+// Mirrors C# TableObject.Assign (TableObject.cs:226-233).
+func (t *TableObject) Assign(src *TableObject) {
+	if src == nil {
+		return
+	}
+	t.TableBase.Assign(&src.TableBase)
+	t.ManualBuildAutoSpans = src.ManualBuildAutoSpans
+	t.ManualBuild = src.ManualBuild
+}
 
 // NewTableObject creates a TableObject with defaults.
 func NewTableObject() *TableObject {

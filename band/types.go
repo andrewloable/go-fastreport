@@ -785,6 +785,30 @@ func (d *DataBand) IsDatasourceEmpty() bool {
 	return d.dataSource == nil || d.dataSource.RowCount() == 0
 }
 
+// IsEmpty returns true when the band should be considered empty for print
+// suppression purposes.
+// When a data source is bound and empty, the result is !PrintIfDatasourceEmpty.
+// When no data source is bound, falls back to the base BandBase.IsEmpty()
+// check (objects count).
+// Mirrors C# DataBand.IsEmpty (DataBand.cs line 588-602).
+func (d *DataBand) IsEmpty() bool {
+	if d.dataSource != nil {
+		if d.IsDatasourceEmpty() {
+			return !d.printIfDSEmpty
+		}
+		return false
+	}
+	// No data source: fall back to base band emptiness (no child objects).
+	return d.BandBase.IsEmpty()
+}
+
+// IsEofReached returns true when the bound data source has consumed all rows
+// (i.e. the cursor is past the last row).
+// Mirrors C# DataBand.IsEofReached (DataBand.cs).
+func (d *DataBand) IsEofReached() bool {
+	return d.dataSource != nil && d.dataSource.EOF()
+}
+
 // IsDeepmostDataBand returns true when this DataBand has no nested sub-bands.
 func (d *DataBand) IsDeepmostDataBand() bool {
 	if d.objects == nil {

@@ -154,6 +154,27 @@ func (r *Reader) ReadFloat(name string, def float32) float32 {
 	return float32(f)
 }
 
+// ReadDouble reads the named attribute as a float64, returning def if absent or
+// unparseable. Mirrors C# FRReader.ReadDouble.
+func (r *Reader) ReadDouble(name string, def float64) float64 {
+	v, ok := r.attrs[name]
+	if !ok {
+		return def
+	}
+	f, err := strconv.ParseFloat(v, 64)
+	if err != nil {
+		return def
+	}
+	return f
+}
+
+// HasProperty reports whether the named attribute exists in the current element.
+// Mirrors C# FRReader.HasProperty (used to distinguish absent from zero-value).
+func (r *Reader) HasProperty(name string) bool {
+	_, ok := r.attrs[name]
+	return ok
+}
+
 // NextChild advances to the next immediate child element of the current object.
 // It returns the child's type name and true, or ("", false) when there are no
 // more children (or if the end tag of the parent is reached).

@@ -399,13 +399,18 @@ func (p *ReportPage) AllBands() []report.Base {
 	return all
 }
 
-// AddBand appends a band to the page.
-func (p *ReportPage) AddBand(b report.Base) { p.bands = append(p.bands, b) }
+// AddBand appends a band to the page and sets the band's parent to this page.
+// Mirrors C# BandCollection behaviour: adding a band transfers ownership to the page.
+func (p *ReportPage) AddBand(b report.Base) {
+	p.bands = append(p.bands, b)
+	b.SetParent(p)
+}
 
 // AddBandByTypeName routes a deserialized band to the appropriate page slot
 // based on its FRX type name. Singleton bands (PageHeader, PageFooter, etc.)
 // are placed in their dedicated fields; all other bands go into the ordered list.
 // Both short names ("PageHeader") and full FastReport names ("PageHeaderBand") are accepted.
+// The band's parent is always set to this page.
 func (p *ReportPage) AddBandByTypeName(typeName string, b report.Base) {
 	switch typeName {
 	case "PageHeader", "PageHeaderBand":
@@ -439,7 +444,121 @@ func (p *ReportPage) AddBandByTypeName(typeName string, b report.Base) {
 	default:
 		p.bands = append(p.bands, b)
 	}
+	b.SetParent(p)
 }
+
+// --- report.Parent implementation ---
+
+// CanContain returns true when this page can accept child as a direct child.
+// A ReportPage can contain any band (report.Base that is a band type).
+// Mirrors C# ReportPage.CanContain (ReportPage.cs).
+func (p *ReportPage) CanContain(child report.Base) bool {
+	// Pages accept any band as a child.
+	switch child.(type) {
+	case *band.DataBand, *band.GroupHeaderBand, *band.GroupFooterBand,
+		*band.PageHeaderBand, *band.PageFooterBand,
+		*band.ReportTitleBand, *band.ReportSummaryBand,
+		*band.ColumnHeaderBand, *band.ColumnFooterBand,
+		*band.OverlayBand, *band.ChildBand:
+		return true
+	}
+	return false
+}
+
+// GetChildObjects fills list with all bands on the page (singleton + ordered).
+func (p *ReportPage) GetChildObjects(list *[]report.Base) {
+	*list = append(*list, p.AllBands()...)
+}
+
+// AddChild adds child to the page, routing to the appropriate slot.
+// Equivalent to AddBandByTypeName using the child's type name.
+// Mirrors C# BandCollection.Add (BandCollection.cs).
+func (p *ReportPage) AddChild(child report.Base) {
+	p.AddBandByTypeName(child.BaseName(), child)
+}
+
+// RemoveChild removes child from the page, clearing the parent reference.
+// Mirrors C# BandCollection.Remove (BandCollection.cs).
+func (p *ReportPage) RemoveChild(child report.Base) {
+	// Clear singleton slots.
+	if p.pageHeader == child {
+		p.pageHeader = nil
+		child.SetParent(nil)
+		return
+	}
+	if p.pageFooter == child {
+		p.pageFooter = nil
+		child.SetParent(nil)
+		return
+	}
+	if p.reportTitle == child {
+		p.reportTitle = nil
+		child.SetParent(nil)
+		return
+	}
+	if p.reportSummary == child {
+		p.reportSummary = nil
+		child.SetParent(nil)
+		return
+	}
+	if p.columnHeader == child {
+		p.columnHeader = nil
+		child.SetParent(nil)
+		return
+	}
+	if p.columnFooter == child {
+		p.columnFooter = nil
+		child.SetParent(nil)
+		return
+	}
+	if p.overlay == child {
+		p.overlay = nil
+		child.SetParent(nil)
+		return
+	}
+	// Remove from ordered bands slice.
+	for i, b := range p.bands {
+		if b == child {
+			p.bands = append(p.bands[:i], p.bands[i+1:]...)
+			child.SetParent(nil)
+			return
+		}
+	}
+}
+
+// GetChildOrder returns the index of child in the ordered bands slice, or -1.
+func (p *ReportPage) GetChildOrder(child report.Base) int {
+	for i, b := range p.bands {
+		if b == child {
+			return i
+		}
+	}
+	return -1
+}
+
+// SetChildOrder moves child to the specified position in the ordered bands slice.
+func (p *ReportPage) SetChildOrder(child report.Base, order int) {
+	idx := p.GetChildOrder(child)
+	if idx < 0 {
+		return
+	}
+	// Remove from current position.
+	p.bands = append(p.bands[:idx], p.bands[idx+1:]...)
+	// Clamp target.
+	if order < 0 {
+		order = 0
+	}
+	if order > len(p.bands) {
+		order = len(p.bands)
+	}
+	// Insert at target position.
+	p.bands = append(p.bands, nil)
+	copy(p.bands[order+1:], p.bands[order:])
+	p.bands[order] = child
+}
+
+// UpdateLayout is a no-op for ReportPage; the engine manages band layout.
+func (p *ReportPage) UpdateLayout(dx, dy float32) {}
 
 // --- Style ---
 

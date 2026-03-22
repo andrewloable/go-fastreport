@@ -283,6 +283,22 @@ func serializeBorder(w Writer, b *style.Border) {
 	}
 }
 
+// DeserializeBorderInto reads Border properties from r into b.
+// This is the exported form of deserializeBorder, used by sub-packages
+// (e.g. object) that need to deserialize Border attributes into a
+// style.Border embedded in a struct (e.g. style.HighlightCondition.Border).
+func DeserializeBorderInto(r Reader, b *style.Border) {
+	deserializeBorder(r, b)
+}
+
+// SerializeBorderFrom writes Border properties from b using w.
+// This is the exported form of serializeBorder, used by sub-packages
+// (e.g. object) that need to serialize Border attributes from a
+// style.Border embedded in a struct (e.g. style.HighlightCondition.Border).
+func SerializeBorderFrom(w Writer, b *style.Border) {
+	serializeBorder(w, b)
+}
+
 // deserializeBorder reads Border properties from r into b.
 // b must be non-nil; uninitialized Lines pointers are created on demand.
 func deserializeBorder(r Reader, b *style.Border) {
@@ -453,6 +469,11 @@ func serializeFill(w Writer, f style.Fill) {
 		if ft.ImageOffsetY != 0 {
 			w.WriteInt("Fill.ImageOffsetY", ft.ImageOffsetY)
 		}
+		// Write ImageIndex when set (BlobStore reference path).
+		// C# ref: Fills.cs lines 1062-1063.
+		if ft.ImageIndex >= 0 {
+			w.WriteInt("Fill.ImageIndex", ft.ImageIndex)
+		}
 		if len(ft.ImageData) > 0 {
 			w.WriteStr("Fill.ImageData", base64.StdEncoding.EncodeToString(ft.ImageData))
 		}
@@ -528,17 +549,20 @@ func deserializeFill(r Reader, current style.Fill) style.Fill {
 		return f
 
 	case "Texture":
-		// Mirrors FastReport.TextureFill — inline ImageData path only.
-		// BlobStore image-index mechanism is not implemented in the Go port.
-		f := &style.TextureFill{
-			WrapMode: style.WrapModeTile,
-		}
+		// Mirrors FastReport.TextureFill — both inline ImageData and BlobStore
+		// ImageIndex paths. The BlobStore loading itself is handled by the caller
+		// via BlobStore.Get(ImageIndex) if a BlobStore is available.
+		// C# ref: TextureFill.Deserialize (Fills.cs lines 1068-1079).
+		f := style.NewTextureFill()
 		f.ImageWidth = r.ReadInt("Fill.ImageWidth", 0)
 		f.ImageHeight = r.ReadInt("Fill.ImageHeight", 0)
 		f.PreserveAspectRatio = r.ReadBool("Fill.PreserveAspectRatio", false)
 		f.WrapMode = parseWrapMode(r.ReadStr("Fill.WrapMode", "Tile"))
 		f.ImageOffsetX = r.ReadInt("Fill.ImageOffsetX", 0)
 		f.ImageOffsetY = r.ReadInt("Fill.ImageOffsetY", 0)
+		// Read ImageIndex (BlobStore reference). -1 if not present.
+		// C# ref: Fills.cs line 1072-1073.
+		f.ImageIndex = r.ReadInt("Fill.ImageIndex", -1)
 		if s := r.ReadStr("Fill.ImageData", ""); s != "" {
 			if decoded, err := base64.StdEncoding.DecodeString(s); err == nil {
 				f.ImageData = decoded

@@ -132,7 +132,7 @@ func (b *BarcodeObject) Deserialize(r report.Reader) error {
 // for pre-compilation by the report engine.
 // Mirrors C# BarcodeObject.GetExpressions (BarcodeObject.cs line 557-576).
 func (b *BarcodeObject) GetExpressions() []string {
-	exprs := b.ReportComponentBase.ComponentBase.GetExpressions()
+	exprs := b.ReportComponentBase.GetExpressions()
 	if b.dataColumn != "" {
 		exprs = append(exprs, b.dataColumn)
 	}
@@ -377,7 +377,7 @@ func (z *ZipCodeObject) Assign(src *ZipCodeObject) {
 // by the report engine. Mirrors C# ZipCodeObject.GetExpressions()
 // (ZipCodeObject.cs line 325-335).
 func (z *ZipCodeObject) GetExpressions() []string {
-	exprs := z.ReportComponentBase.ComponentBase.GetExpressions()
+	exprs := z.ReportComponentBase.GetExpressions()
 	if z.dataColumn != "" {
 		exprs = append(exprs, z.dataColumn)
 	}

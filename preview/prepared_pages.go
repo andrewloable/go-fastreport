@@ -563,6 +563,35 @@ func (p *PreparedPage) AddBand(b *PreparedBand) {
 	p.Bands = append(p.Bands, b)
 }
 
+// ReCalcSizes recomputes Width and Height as the maximum right-edge and
+// bottom-edge across all bands.
+// Mirrors C# PreparedPage.ReCalcSizes (PreparedPage.cs).
+func (p *PreparedPage) ReCalcSizes() {
+	var w, h float32
+	for _, b := range p.Bands {
+		if right := b.Left + b.Width; right > w {
+			w = right
+		}
+		if bottom := b.Top + b.Height; bottom > h {
+			h = bottom
+		}
+	}
+	p.Width = w
+	p.Height = h
+}
+
+// MirrorMargins shifts all bands left by (rightMargin - leftMargin) on even
+// pages (MirrorMargins feature). Odd pages are unchanged.
+// Mirrors C# PreparedPage.MirrorMargins (PreparedPage.cs).
+func (p *PreparedPage) MirrorMargins(leftMargin, rightMargin float32) {
+	if p.PageNo%2 == 0 {
+		shift := rightMargin - leftMargin
+		for _, b := range p.Bands {
+			b.Left += shift
+		}
+	}
+}
+
 // ── PreparedPages ─────────────────────────────────────────────────────────────
 
 // PreparedPages is the collection of rendered pages produced by the engine.

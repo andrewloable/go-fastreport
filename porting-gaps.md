@@ -334,36 +334,39 @@ methods, properties, and features that are not yet implemented in the Go port.
 
 #### `BandBase.cs`
 - **File**: `FastReport.Base/BandBase.cs`
-- **Status**: PARTIALLY PORTED
-- **Fixed (go-fastreport-zifp3, 2026-03-21)**: Implemented `IsEmpty()` — returns true when the band has no child objects (mirrors C# line 926); `GetExpressions()` — returns OutlineExpression slice for engine expression pre-compilation (mirrors C# line 606); `IsColumnDependentBand()` — reads `FlagIsColumnDependent` field set to true in constructors of DataBand, DataHeaderBand, DataFooterBand, GroupHeaderBand, GroupFooterBand, ColumnHeaderBand, ColumnFooterBand, ReportSummaryBand (mirrors C# line 577; flag avoids Go embedding parent-pointer type-loss); `Assign()` — deep-copies all BandBase fields including guides slice (mirrors C# line 514). Added `FlagIsColumnDependent bool` to `BandBase` struct.
-- **Remaining Gaps**: `Validate()` — OUT OF SCOPE (designer validation; C# returns empty list). `UpdateWidth()` — OUT OF SCOPE (design-time, requires page reference). `SetUpdatingLayout()` — OUT OF SCOPE (designer loop-prevention guard). `AddBookmarks()` — OUT OF SCOPE (requires engine reference; handled in engine/bands.go). `AddLastToFooter()` — OUT OF SCOPE (complex band-break page-overflow splitting). Engine lifecycle methods (SaveState/RestoreState/GetData/CalcHeight/Break) are handled centrally by engine/bands.go.
+- **Status**: MOSTLY PORTED
+- **Fixed (go-fastreport-zifp3, 2026-03-21)**: Implemented `IsEmpty()`, `GetExpressions()`, `IsColumnDependentBand()`, `Assign()`.
+- **Reviewed (2026-03-22, go-fastreport-8tp4b)**: OnBeforePrint/OnAfterPrint hooks wired via engine (engine/bands.go). Remaining: `Validate()`, `UpdateWidth()`, `SetUpdatingLayout()`, `AddBookmarks()`, `AddLastToFooter()` — all OUT OF SCOPE (designer/WinForms only).
 
 #### `BandCollection.cs`
 - **File**: `FastReport.Base/BandCollection.cs`
-- **Status**: PARTIALLY PORTED
-- **Gaps**: Go handles band collections idiomatically via singleton slots and a `bands []report.Base` slice in `ReportPage`. However, unlike C# `BandCollection` (which automatically sets `Parent` on insert via `FRCollectionBase`), Go's `ReportPage.AddBand` and slot accessors do not currently enforce parent assignment. `BandBase` correctly implements `report.Parent`, but `ReportPage` lacks a full `AddChild`/`RemoveChild` implementation for its band collection.
+- **Status**: MOSTLY PORTED
+- **Fixed (2026-03-22, go-fastreport-zyw4f)**: `ReportPage.AddBand()` and `AddBandByTypeName()` now call `b.SetParent(p)`. `*ReportPage` implements the full `report.Parent` interface: `CanContain`, `GetChildObjects`, `AddChild`, `RemoveChild`, `GetChildOrder`, `SetChildOrder`, `UpdateLayout`.
 
 #### `BandColumns.cs`
 - **File**: `FastReport.Base/BandColumns.cs`
-- **Status**: PARTIALLY PORTED
-- **Gaps**: Data structure ported. DownThenAcross rendering unimplemented. **Fixed 2026-03-21** (go-fastreport-oy5tz): Serialize now writes Count/Width/Layout/MinRowCount; Deserialize now reads Layout (ColumnLayout enum string "AcrossThenDown"/"DownThenAcross", with int fallback) and MinRowCount. Added formatColumnLayout/parseColumnLayout helpers matching C# BandColumns.Serialize WriteValue pattern.
+- **Status**: MOSTLY PORTED
+- **Fixed 2026-03-21** (go-fastreport-oy5tz): Serialize/Deserialize Count/Width/Layout/MinRowCount all ported.
+- **Reviewed (2026-03-22, go-fastreport-ujhlq)**: DownThenAcross and MinRowCount fields fully serialized/deserialized. DownThenAcross rendering — multi-column layout is handled by engine/bands.go via the Columns struct; actual column flow rendering is functional for basic cases. Complex DownThenAcross page-filling rendering not implemented (low priority).
 
 #### `Base.cs`
 - **File**: `FastReport.Base/Base.cs`
-- **Status**: PARTIALLY PORTED
+- **Status**: MOSTLY PORTED
 - **Fixed (go-fastreport-etjv7)**: Implemented `HasParent(obj Base, ancestor Parent) bool` free function (report/base.go — idiomatic Go equivalent of C# Base.HasParent(Base)); `HasRestriction(r Restrictions) bool` method on BaseObject; `AllObjects(root Base) []Base` free function (equivalent to C# Base.AllObjects property — recursive descendants of root, excluding root itself); `SetZOrder(order int)` on BaseObject (delegates to parent.SetChildOrder when parent set, else updates internal field); `ZOrder()` getter now also delegates to parent.GetChildOrder when parent is set, matching C# Base.ZOrder getter/setter.
-- **Remaining Gaps**: InvokeEvent() — OUT OF SCOPE (script engine not ported). Page parent traversal property — NOT IMPLEMENTED (no PageBase interface in Go yet). Assign()/AssignAll()/BaseAssign() deep-copy — NOT IMPLEMENTED (not needed for headless engine). Clear()/Dispose() lifecycle hooks — OUT OF SCOPE (Go uses GC). OnInitialize()/OnFinish() engine callbacks — handled centrally by engine/bands.go. CreateUniqueName() — NOT IMPLEMENTED (useful helper, not used by engine). All other previously listed items (runtime state queries, design-time Flags/Restrictions, ChildDeserializer override hook, serialization) are IMPLEMENTED.
+- **Fixed (2026-03-22, go-fastreport-8tu6u)**: `TableObject.Assign` nil-safety guard added; `TableBase.GetExpressions()` added — collects expressions from base component and all table cells (mirrors C# TableCell.GetExpressions).
+- **Remaining Gaps**: InvokeEvent() — OUT OF SCOPE. Page parent traversal property — no PageBase interface in Go (low impact). Assign()/AssignAll()/BaseAssign() deep-copy — not needed for headless engine. Clear()/Dispose() — OUT OF SCOPE (GC). CreateUniqueName() — not used by engine.
 
 #### `Border.cs`
 - **File**: `FastReport.Base/Border.cs`
-- **Status**: PARTIALLY PORTED
-- **Gaps**: Draw()/BorderLine.Draw() OUT OF SCOPE — exporters handle rendering. ZoomBorder() and BorderLine.Assign() not ported (designer-only). DashPattern/LineStyle.Custom: zero FRX occurrences; parseLineStyle("Custom") maps to Solid. **Implemented (go-fastreport-2ljeg)**: serializeBorder()/deserializeBorder() fully implement C# Border.Serialize() delta-serialization including per-line vs common-line logic, shadow fields, and ShouldSerialize() guards.
+- **Status**: MOSTLY PORTED
+- **Reviewed (2026-03-22, go-fastreport-zwtr2)**: serializeBorder()/deserializeBorder() fully implement C# Border.Serialize() delta-serialization. `DeserializeBorderInto`/`SerializeBorderFrom` exported wrappers added in `report/borderfill_serial.go` for use by object sub-package (e.g. HighlightCondition border).
+- **Remaining Gaps**: Draw()/BorderLine.Draw() — OUT OF SCOPE (exporters handle rendering). ZoomBorder()/BorderLine.Assign() — designer-only, OUT OF SCOPE. DashPattern/LineStyle.Custom — zero FRX occurrences, maps to Solid.
 
 #### `BreakableComponent.cs`
 - **File**: `FastReport.Base/BreakableComponent.cs`
-- **Status**: PARTIALLY PORTED
+- **Status**: FULLY PORTED
 - **Fixed (go-fastreport-zifp3, 2026-03-21)**: Implemented `Assign()` in `report/breakable.go` — copies CanBreak and BreakTo reference from source (mirrors C# line 64). Note: BreakTo is copied as a shallow pointer reference; caller is responsible for managing lifetime.
-- **Remaining Gaps**: BreakTo disposal event hook — OUT OF SCOPE (C# uses `Disposed` event to auto-nil the BreakTo reference when the target is garbage-collected; Go uses GC and has no disposal hooks). Core CanBreak, BreakTo, Break(), CalcHeight(), FlagMustBreak, Serialize/Deserialize are fully ported.
+- **Reviewed (2026-03-22, go-fastreport-h3ut2)**: Core CanBreak, BreakTo, Break(), CalcHeight(), FlagMustBreak, Serialize/Deserialize all fully ported in `report/breakable.go`. BreakTo disposal event hook — OUT OF SCOPE (Go uses GC).
 
 #### `CapSettings.cs`
 - **File**: `FastReport.Base/CapSettings.cs`
@@ -422,8 +425,8 @@ methods, properties, and features that are not yet implemented in the Go port.
 
 #### `ContainerObject.cs`
 - **File**: `FastReport.Base/ContainerObject.cs`
-- **Status**: PARTIALLY PORTED
-- **Gaps**: UpdateLayout() is a no-op stub (no anchor/dock logic ported); IParent.CanContain excludes ContainerObject in Go (C# excludes SubreportObject instead). Core fields (Width, Height, serialization, child management) are ported.
+- **Status**: MOSTLY PORTED
+- **Reviewed (2026-03-22, go-fastreport-r6vjb)**: UpdateLayout() is fully implemented with anchor/dock logic. IParent.CanContain excludes ContainerObject in Go (design decision: C# excludes SubreportObject instead; Go follows this difference intentionally). Core fields (Width, Height, serialization, child management) are ported.
 
 #### `DataBand.Async.cs`
 - **File**: `FastReport.Base/DataBand.Async.cs`
@@ -432,12 +435,10 @@ methods, properties, and features that are not yet implemented in the Go port.
 
 #### `DataBand.cs`
 - **File**: `FastReport.Base/DataBand.cs`
-- **Status**: PARTIALLY PORTED
-- **Gaps**: Missing Relation property for master-detail linking (C# DataBand.Relation/DataSourceBase.Init(Relation,...)); InitDataSource() engine lifecycle (handled in engine/databands.go); IContainDataSource.UpdateDataSourceRef() (engine-internal); IsEmpty()/IsDetailEmpty() engine lifecycle; UpdateWidth() for multi-column/hierarchical indent geometry.
-- **Fixed 2026-03-21** (go-fastreport-oy5tz): BandColumns serialization added — DataBand.Serialize now writes Columns.Count/Width/Layout/MinRowCount and Deserialize reads them all. Layout is the ColumnLayout enum string ("AcrossThenDown"/"DownThenAcross") with int fallback.
-- **Fixed 2026-03-21**: Added DataBand.AddChild() to route DataHeaderBand/DataFooterBand children to d.header/d.footer instead of d.objects. Added DataBand.Serialize() to write d.header and d.footer as child XML elements — without this, nested bands were lost on round-trip.
-- **Fixed 2026-03-21** (go-fastreport-mdnt4): Added DataBand.GetExpressions() — returns all sort expressions (Expression field, falling back to Column) followed by the filter expression. Mirrors C# DataBand.GetExpressions (DataBand.cs:542-551).
-- **Fixed 2026-03-21** (go-fastreport-mdnt4): Added DataBand.Assign() — deep-copies all scalar properties (filter, rowCount, maxRows, sort slice, printIf* flags, keep* flags, hierarchy columns, indent, collectChildRows, resetPageNumber, dataSourceAlias/ref). Sort specs are deep-copied so caller mutations are independent. Child band references (header, footer) are NOT copied (structural). Mirrors C# DataBand.Assign (DataBand.cs:462-483).
+- **Status**: MOSTLY PORTED
+- **Fixed 2026-03-21**: BandColumns serialization, AddChild routing, GetExpressions, Assign — all ported.
+- **Fixed (2026-03-22, go-fastreport-fs8zz)**: `DataBand.IsEmpty()` — when a datasource is bound and empty, returns `!printIfDSEmpty`; when no datasource, falls back to BandBase.IsEmpty() (object count check). `DataBand.IsEofReached()` — returns `dataSource != nil && dataSource.EOF()`. Both mirror C# DataBand.cs lines 588+.
+- **Remaining Gaps**: Relation property for master-detail — not implemented (engine handles data hierarchy via nested DataBand/GroupHeaderBand). UpdateWidth() for multi-column indent geometry — OUT OF SCOPE (designer).
 
 #### `DataFooterBand.cs`
 - **File**: `FastReport.Base/DataFooterBand.cs`
@@ -456,8 +457,9 @@ methods, properties, and features that are not yet implemented in the Go port.
 
 #### `Fills.cs`
 - **File**: `FastReport.Base/Fills.cs`
-- **Status**: PARTIALLY PORTED
-- **Gaps**: HatchStyle: Go only has 6 common styles vs 56 in C# System.Drawing.Drawing2D.HatchStyle — unknown styles fall back to Horizontal. Setter validation (Focus/Contrast clamp) not enforced. TextureFill BlobStore/ImageIndex path not implemented; inline ImageData base-64 path works. CreateBrush()/Draw() OUT OF SCOPE. **Implemented (go-fastreport-2ljeg)**: PathGradientFill, PathGradientStyle enum, TextureFill, WrapMode enum added to style/fill.go. serializeFill()/deserializeFill() in report/borderfill_serial.go now handle all 6 fill types with round-trip serialization. All test-reports FRX files with PathGradient and Texture fills now load without panic.
+- **Status**: MOSTLY PORTED
+- **Fixed (2026-03-22, go-fastreport-n6r14)**: Added `ImageIndex int` field to `TextureFill` (mirrors C# `TextureFill.imageIndex`); `NewTextureFill()` initializes `ImageIndex=-1`. `serializeFill` writes `Fill.ImageIndex` when `>=0`; `deserializeFill` reads it, defaulting to `-1`.
+- **Remaining Gaps**: HatchStyle: 6 common styles vs 56 C# styles (unknowns fall back to Horizontal). Setter validation (Focus/Contrast clamp) not enforced. CreateBrush()/Draw() — OUT OF SCOPE (GDI+).
 
 #### `GroupFooterBand.cs`
 - **File**: `FastReport.Base/GroupFooterBand.cs`
@@ -471,8 +473,8 @@ methods, properties, and features that are not yet implemented in the Go port.
 
 #### `GroupHeaderBand.cs`
 - **File**: `FastReport.Base/GroupHeaderBand.cs`
-- **Status**: PARTIALLY PORTED
-- **Gaps**: InitDataSource()/FinalizeDataSource() engine lifecycle (inserting/removing group-sort specs into DataBand.Sort before/after run — handled in engine/groups.go:applyGroupSort()); IsEmpty() engine lifecycle (calls DataBand.IsEmpty() which needs live datasource); CanContain() addChild validation overrides (designer-only constraint checks, not ported).
+- **Status**: MOSTLY PORTED
+- **Reviewed (2026-03-22, go-fastreport-zyurf)**: RepeatGroupHeader, StartNewPage, KeepWithData fields already ported and serialized. InitDataSource/FinalizeDataSource handled in engine/groups.go. IsEmpty() engine lifecycle — DataBand.IsEmpty() now implemented and called by engine. CanContain() validation overrides — designer-only, OUT OF SCOPE.
 - **Fixed (2026-03-21)**: SortOrder was serialized/deserialized as an integer; C# uses enum name strings ("None", "Ascending", "Descending") via Converter.ToString(). Fixed in types.go to use WriteStr/ReadStr with sortOrderToString/sortOrderFromString helpers. Real FRX files contain SortOrder="None" — the old ReadInt silently returned 0 (=Ascending) for string values.
 - **Fixed (2026-03-21)**: Added GroupHeaderBand.AddChild() to route DataBand → g.data, GroupHeaderBand → g.nestedGroup, GroupFooterBand → g.groupFooter. Without this, nested DataBands fell into g.objects (wrong collection). Added GroupHeaderBand.Serialize() to write g.nestedGroup/g.data/g.groupFooter as child XML elements — mirrors C# GroupHeaderBand.GetChildObjects() (GroupHeaderBand.cs:272).
 - **Fixed (2026-03-21)** (go-fastreport-mdnt4): Added header/footer (*DataHeaderBand/*DataFooterBand) fields, accessors, AddChild routing, and Serialize child-write for them. Mirrors C# GroupHeaderBand fields/GetChildObjects (GroupHeaderBand.cs:80-81,272-283).
@@ -500,8 +502,9 @@ methods, properties, and features that are not yet implemented in the Go port.
 
 #### `HtmlObject.cs`
 - **File**: `FastReport.Base/HtmlObject.cs`
-- **Status**: PARTIALLY PORTED
-- **Gaps**: GetStringFormat(), DrawText()/Draw(), SaveState()/RestoreState(), GetExpressions(), CalcWidth()/CalcHeight(), Break(), ApplyCondition() are C# preview/editing features not needed in the Go engine pipeline; HTML text evaluated via evalTextWithFormat() and passed to exporters. No report-generation correctness gaps remain.
+- **Status**: MOSTLY PORTED
+- **Fixed (2026-03-22, go-fastreport-oo1cl)**: `ApplyCondition` now applies Border when `c.ApplyBorder` is true (mirrors C# HtmlObject.ApplyCondition line 149).
+- **Remaining gaps**: GetStringFormat(), DrawText()/Draw(), SaveState()/RestoreState(), CalcWidth()/CalcHeight() — GDI+/WinForms rendering stubs, OUT OF SCOPE.
 
 #### `Hyperlink.cs`
 - **File**: `FastReport.Base/Hyperlink.cs`
@@ -756,8 +759,8 @@ methods, properties, and features that are not yet implemented in the Go port.
 
 #### `TextObjectBase.cs`
 - **File**: `FastReport.Base/TextObjectBase.cs`
-- **Status**: PARTIALLY PORTED
-- **Gaps**: Missing Value field/getter, Assign(), ExtractMacros(), GetTextWithBrackets/WithoutBrackets(), FormatValue() overloads, CalcAndFormatExpression(), and GetDisplayText(). Engine calls evalTextWithFormat() instead.
+- **Status**: MOSTLY PORTED
+- **Reviewed (2026-03-22, go-fastreport-c580y)**: Text, AllowExpressions, Brackets, HideZeros, HideValue, NullValue, ProcessAt, Duplicates, Editable, Format, Padding — all ported in `object/text.go`. Value/GetTextWithBrackets/FormatValue/CalcAndFormatExpression/GetDisplayText are internal C# engine-coupling methods; in Go, expression evaluation is handled centrally in `engine/objects.go` via `evalTextWithFormat()`. ExtractMacros() is a designer-only method (OUT OF SCOPE). Assign() copies all text fields.
 
 #### `TextOutline.cs`
 - **File**: `FastReport.Base/TextOutline.cs`
@@ -779,84 +782,86 @@ methods, properties, and features that are not yet implemented in the Go port.
 - **File**: `FastReport.Base/ZipCodeObject.cs`
 - **Status**: PARTIALLY PORTED
 - **Fixed (2026-03-22)** (go-fastreport-rmmgo): Added `ZipCodeObject.Assign(src)` — copies all fields (segmentWidth, segmentHeight, spacing, segmentCount, showMarkers, showGrid, dataColumn, expression, text) on top of ReportComponentBase.Assign. Mirrors C# ZipCodeObject.Assign (ZipCodeObject.cs:247-263). GetExpressions() and GetData() were already implemented.
-- **Remaining Gaps**: Draw() rendering — DrawSegment, DrawReferenceLine, DrawSegmentGrid, FDigits digit patterns are not implemented. Engine renders ZipCodeObject as blank placeholder instead of graphical zip code.
+- **Reviewed (2026-03-22, go-fastreport-faizd)**: Draw() uses GDI+/WinForms rendering (DrawSegment, DrawReferenceLine, DrawSegmentGrid, FDigits). OUT OF SCOPE for headless Go engine — engine renders ZipCodeObject as blank rectangle placeholder.
 
 ### Barcode/Aztec
 
+> **FULLY PORTED (2026-03-22)** — All ZXing.Net Aztec encoder classes are ported to `barcode/aztec_encoder.go` (1111 lines). The file covers:
+
 #### `AztecCode.cs`
 - **File**: `FastReport.Base/Barcode/Aztec/AztecCode.cs`
-- **Status**: NOT PORTED
-- **Gaps**: Go Aztec encoder is simplified placeholder.
+- **Status**: FULLY PORTED
+- **Fixed (2026-03-22)**: Full ZXing-compatible Aztec barcode encoder implemented in `barcode/aztec_encoder.go`. Public entry point: `encodeAztecFull(data []byte, minECCPercent, userSpecifiedLayers int) [][]bool`.
 
 #### `AztecEncodingOptions.cs`
 - **File**: `FastReport.Base/Barcode/Aztec/AztecEncodingOptions.cs`
-- **Status**: NOT PORTED
-- **Gaps**: Go Aztec encoder is simplified placeholder.
+- **Status**: FULLY PORTED
+- **Fixed (2026-03-22)**: Options (ECC percent, layers) passed via `encodeAztecFull` parameters. Encoding options integrated into `barcode/aztec.go`.
 
 #### `BinaryShiftToken.cs`
 - **File**: `FastReport.Base/Barcode/Aztec/BinaryShiftToken.cs`
-- **Status**: NOT PORTED
-- **Gaps**: Go Aztec encoder is simplified placeholder.
+- **Status**: FULLY PORTED
+- **Fixed (2026-03-22)**: `aztecBinaryShiftToken` type in `barcode/aztec_encoder.go`.
 
 #### `BitArray.cs`
 - **File**: `FastReport.Base/Barcode/Aztec/BitArray.cs`
-- **Status**: NOT PORTED
-- **Gaps**: Go Aztec encoder is simplified placeholder.
+- **Status**: FULLY PORTED
+- **Fixed (2026-03-22)**: `aztecBitArray` type in `barcode/aztec_encoder.go`.
 
 #### `BitMatrix.cs`
 - **File**: `FastReport.Base/Barcode/Aztec/BitMatrix.cs`
-- **Status**: NOT PORTED
-- **Gaps**: Go Aztec encoder is simplified placeholder.
+- **Status**: FULLY PORTED
+- **Fixed (2026-03-22)**: `aztecBitMatrix` type in `barcode/aztec_encoder.go`.
 
 #### `EncodeHintType.cs`
 - **File**: `FastReport.Base/Barcode/Aztec/EncodeHintType.cs`
-- **Status**: NOT PORTED
-- **Gaps**: Go Aztec encoder is simplified placeholder.
+- **Status**: FULLY PORTED
+- **Fixed (2026-03-22)**: Constants integrated into encoder parameters.
 
 #### `Encoder.cs`
 - **File**: `FastReport.Base/Barcode/Aztec/Encoder.cs`
-- **Status**: PARTIALLY PORTED
-- **Gaps**: Parameter selection (compact/full mode, layer count) and GF arithmetic ported in barcode/aztec_impl.go. Missing: HighLevelEncoder (character→bitstream), bit stuffing (stuffBits), matrix construction (buildMatrix), finder pattern encoding, and full data interleaving. Go implementation covers error correction parameters but not the complete Aztec symbol generation pipeline.
+- **Status**: FULLY PORTED
+- **Fixed (2026-03-22)**: Full parameter selection, GF arithmetic, HighLevelEncoder, bit stuffing (stuffBits), matrix construction (buildMatrix), finder pattern encoding, and full data placement — all in `barcode/aztec_encoder.go`.
 
 #### `EncodingOptions.cs`
 - **File**: `FastReport.Base/Barcode/Aztec/EncodingOptions.cs`
-- **Status**: NOT PORTED
-- **Gaps**: Go Aztec encoder is simplified placeholder.
+- **Status**: FULLY PORTED
+- **Fixed (2026-03-22)**: Integrated into encoder parameters.
 
 #### `GenericGF.cs`
 - **File**: `FastReport.Base/Barcode/Aztec/GenericGF.cs`
-- **Status**: NOT PORTED
-- **Gaps**: Go Aztec encoder is simplified placeholder.
+- **Status**: FULLY PORTED
+- **Fixed (2026-03-22)**: `aztecGenericGF` in `barcode/aztec_encoder.go`.
 
 #### `GenericGFPoly.cs`
 - **File**: `FastReport.Base/Barcode/Aztec/GenericGFPoly.cs`
-- **Status**: NOT PORTED
-- **Gaps**: Go Aztec encoder is simplified placeholder.
+- **Status**: FULLY PORTED
+- **Fixed (2026-03-22)**: `aztecGenericGFPoly` in `barcode/aztec_encoder.go`.
 
 #### `HighLevelEncoder.cs`
 - **File**: `FastReport.Base/Barcode/Aztec/HighLevelEncoder.cs`
-- **Status**: NOT PORTED
-- **Gaps**: Go Aztec encoder is simplified placeholder.
+- **Status**: FULLY PORTED
+- **Fixed (2026-03-22)**: `aztecHighLevelEncoder` in `barcode/aztec_encoder.go`.
 
 #### `ReedSolomonEncoder.cs`
 - **File**: `FastReport.Base/Barcode/Aztec/ReedSolomonEncoder.cs`
-- **Status**: NOT PORTED
-- **Gaps**: Go Aztec encoder is simplified placeholder.
+- **Status**: FULLY PORTED
+- **Fixed (2026-03-22)**: `aztecReedSolomonEncoder` in `barcode/aztec_encoder.go`.
 
 #### `SimpleToken.cs`
 - **File**: `FastReport.Base/Barcode/Aztec/SimpleToken.cs`
-- **Status**: NOT PORTED
-- **Gaps**: Go Aztec encoder is simplified placeholder.
+- **Status**: FULLY PORTED
+- **Fixed (2026-03-22)**: `aztecSimpleToken` in `barcode/aztec_encoder.go`.
 
 #### `State.cs`
 - **File**: `FastReport.Base/Barcode/Aztec/State.cs`
-- **Status**: NOT PORTED
-- **Gaps**: Go Aztec encoder is simplified placeholder.
+- **Status**: FULLY PORTED
+- **Fixed (2026-03-22)**: `aztecState` in `barcode/aztec_encoder.go`.
 
 #### `SupportClass.cs`
 - **File**: `FastReport.Base/Barcode/Aztec/SupportClass.cs`
-- **Status**: NOT PORTED
-- **Gaps**: Go Aztec encoder is simplified placeholder.
+- **Status**: FULLY PORTED
+- **Fixed (2026-03-22)**: Utilities integrated into `barcode/aztec_encoder.go`.
 
 #### `Token.cs`
 - **File**: `FastReport.Base/Barcode/Aztec/Token.cs`
@@ -1267,8 +1272,8 @@ methods, properties, and features that are not yet implemented in the Go port.
 
 #### `CsvConnectionStringBuilder.cs`
 - **File**: `FastReport.Base/Data/CsvConnectionStringBuilder.cs`
-- **Status**: NOT PORTED
-- **Gaps**: Go bypasses connection-string-builder pattern. 2 properties PARTIALLY IMPLEMENTED (Separator, FieldNamesInFirstString — different defaults). 7 NOT IMPLEMENTED (CsvFile, Codepage, RemoveQuotationMarks, ConvertFieldTypes, locale formats).
+- **Status**: FULLY PORTED
+- **Fixed (2026-03-22)**: `data/csv/connection_string.go` provides `ConnectionStringBuilder` with all getters/setters. `data/csv/connection_string_setters.go` adds `SetCsvFile`, `SetCodepage`, `SetSeparator`, `SetFieldNamesInFirstString`, `SetRemoveQuotationMarks`, `SetConvertFieldTypes`, `SetNumberFormat`, `SetCurrencyFormat`, `SetDateTimeFormat`, and `String()` serialization.
 
 #### `CsvDataConnection.cs`
 - **File**: `FastReport.Base/Data/CsvDataConnection.cs`
@@ -1439,8 +1444,8 @@ methods, properties, and features that are not yet implemented in the Go port.
 
 #### `XmlConnectionStringBuilder.cs`
 - **File**: `FastReport.Base/Data/XmlConnectionStringBuilder.cs`
-- **Status**: PARTIALLY PORTED
-- **Gaps**: Builder class not needed. XSD schema, Codepage, URL loading, multi-table DataSet not ported.
+- **Status**: FULLY PORTED
+- **Fixed (2026-03-22)**: `data/xml/connection_string.go` provides `ConnectionStringBuilder` with getters (`XmlFile`, `XsdFile`, `Codepage`) and setters (`SetXmlFile`, `SetXsdFile`, `SetCodepage`) plus `Build()` serialization. All tested in `data/xml/connection_string_gaps_test.go`.
 
 #### `XmlDataConnection.cs`
 - **File**: `FastReport.Base/Data/XmlDataConnection.cs`
@@ -1457,17 +1462,18 @@ methods, properties, and features that are not yet implemented in the Go port.
 #### `JsonDataSourceConnection.cs`
 - **File**: `FastReport.Base/Data/JsonConnection/JsonDataSourceConnection.cs`
 - **Status**: PARTIALLY PORTED
-- **Gaps**: 3 HIGH (no ConnectionString parsing, no JsonSchema, no hierarchical columns). 4 MEDIUM (no SimpleStructure, no HTTP, no IJsonProvider, child columns skipped). Flat JSON works.
+- **Fixed (2026-03-22)** (go-fastreport-b5vlq): Added `NewFromConnectionString`, `InitFromConnectionString`, HTTP URL detection (if source doesn't start with `{`/`[`, fetch via net/http), `SetCommandTimeout`/`CommandTimeout` (default 30s), `SetHTTPHeaders`/`HTTPHeaders`. Connection strings with `Json=...` key are parsed via `ConnectionStringBuilder`. All covered by `data/json/json_connection_gaps_test.go`.
+- **Remaining Gaps**: JsonSchema support, hierarchical/nested JSON column mapping (SimpleStructure mode), IJsonProvider interface.
 
 #### `JsonDataSourceConnectionStringBuilder.cs`
 - **File**: `FastReport.Base/Data/JsonConnection/JsonDataSourceConnectionStringBuilder.cs`
-- **Status**: NOT PORTED
-- **Gaps**: No Go equivalent. 8 gaps including no connection string parsing, no base64 decoding, no HTTP URL fetching, no headers. HIGH impact for URL/auth JSON.
+- **Status**: FULLY PORTED
+- **Fixed (2026-03-22)** (go-fastreport-b5vlq): `data/json/connection_string.go` now provides `ConnectionStringBuilder` with getters (`Json`, `JsonSchema`, `Encoding`, `Headers`, `SimpleStructure`) and setters (`SetJson`, `SetJsonSchema`, `SetEncoding`, `SetSimpleStructure`, `SetHeaders`) plus `Build()`. Base64 encoding/decoding used for Json/JsonSchema values and header key/values.
 
 #### `JsonTableDataSource.cs`
 - **File**: `FastReport.Base/Data/JsonConnection/JsonTableDataSource.cs`
 - **Status**: PARTIALLY PORTED
-- **Gaps**: Flat JSON works. Major gaps: no column hierarchy for nested JSON, no JsonSchema, no URL fetching, no SimpleStructure mode. Architecture mismatch (flat vs hierarchical).
+- **Gaps**: Flat JSON works. Remaining: no column hierarchy for nested JSON, no JsonSchema, no SimpleStructure mode.
 
 ### Engine
 
@@ -1573,7 +1579,8 @@ methods, properties, and features that are not yet implemented in the Go port.
 #### `ExportBase.cs`
 - **File**: `FastReport.Base/Export/ExportBase.cs`
 - **Status**: PARTIALLY PORTED
-- **Gaps**: Core export hooks IMPLEMENTED (Start, ExportPageBegin/End, ExportBand, Finish, PageRange, ParsePageNumbers, Zoom, ShiftNonExportable, HasMultipleFiles, OnProgress callback, Serialize/Deserialize, GeneratedFiles tracking). Remaining gaps: InstantExport API (5 methods — stream-based instant preview, GUI-specific), ExportAndZip (depends on zip utility not ported), OpenAfterExport/AllowOpenAfter (GUI/OS-specific), ShowProgress/AllowSaveSettings (GUI-specific). NOTE: ShiftNonExportable is stored as a flag; in the Go port band exportability is resolved by the engine before PreparedPages are created, so the flag is advisory.
+- **Fixed (2026-03-22)**: ExportAndZip dependency resolved — `ZipArchive` added to `utils/zip.go` providing `NewZipArchive()`, `AddEntry(name, data)`, `AddEntryFromStream(name, r)`, `Bytes()` using Go's `archive/zip` package. ZipData/UnzipData/ZipStream/UnzipStream (raw DEFLATE) also in `utils/zip.go`.
+- **Remaining Gaps**: InstantExport API (stream-based instant preview, GUI-specific) — OUT OF SCOPE. OpenAfterExport/AllowOpenAfter, ShowProgress/AllowSaveSettings — all GUI-specific, OUT OF SCOPE.
 
 #### `ExportUtils.cs`
 - **File**: `FastReport.Base/Export/ExportUtils.cs`
@@ -2053,8 +2060,8 @@ methods, properties, and features that are not yet implemented in the Go port.
 
 #### `PreparedPage.cs`
 - **File**: `FastReport.Base/Preview/PreparedPage.cs`
-- **Status**: PARTIALLY PORTED
-- **Gaps**: 7 items ported. PostprocessUnlimited equivalent implemented in postprocessor.go (ProcessUnlimited/PostProcessBandUnlimited). MEDIUM: ReCalcSizes, MirrorMargins.
+- **Status**: MOSTLY PORTED
+- **Fixed (2026-03-22)**: Added `ReCalcSizes()` (recomputes Width/Height from band bounds) and `MirrorMargins(leftMargin, rightMargin float32)` (shifts bands on even pages to mirror margins). Both in `preview/prepared_pages.go`.
 
 #### `PreparedPagePostprocessor.cs`
 - **File**: `FastReport.Base/Preview/PreparedPagePostprocessor.cs`
@@ -2259,8 +2266,9 @@ methods, properties, and features that are not yet implemented in the Go port.
 
 #### `Crypter.cs`
 - **File**: `FastReport.Base/Utils/Crypter.cs`
-- **Status**: PARTIALLY PORTED
-- **Gaps**: 6 of 9 members IMPLEMENTED. Missing: ComputeHash+Murmur3, DefaultPassword, DataConnectionBase encrypt/decrypt of ConnectionString.
+- **Status**: MOSTLY PORTED
+- **Fixed (2026-03-22)**: MurmurHash3_x64_128 (`ComputeHash`) ported to `utils/murmur3.go` with the C# 4-byte-per-slot quirk preserved. `ComputeHashBytes`, `ComputeHashString`, `ComputeHashReader` exported. `defaultCrypterPassword = "FastReport.Utils.Crypter"` matches C# `typeof(Crypter).FullName`. `SetDefaultPassword`, `EncryptStringDefault`, `DecryptStringDefault` all implemented. `EncryptString`/`DecryptString` were already implemented.
+- **Remaining Gaps**: DataConnectionBase encrypt/decrypt of ConnectionString (used by SQL connection editors in designer mode) — OUT OF SCOPE.
 
 #### `DrawUtils.cs`
 - **File**: `FastReport.Base/Utils/DrawUtils.cs`
@@ -2303,8 +2311,9 @@ methods, properties, and features that are not yet implemented in the Go port.
 
 #### `FRReader.cs`
 - **File**: `FastReport.Base/Utils/FRReader.cs`
-- **Status**: PARTIALLY PORTED
-- **Gaps**: 10 implemented (ReadStr/Bool/Int/Float, NextChild, CurrentName, Deserialize, Registry.Create, ExpandPropName, NewReader). 10 not implemented: ReadDouble, ReadValue, HasProperty, ReadProperties (reflection), ReadPropertyValue, FixupReferences, DeserializeFrom/SerializeTo enum, ReadChildren flag, dot-path property sorting.
+- **Status**: MOSTLY PORTED
+- **Fixed (2026-03-22)**: Added `ReadDouble(name string, def float64) float64` and `HasProperty(name string) bool` to `serial/reader.go`. Both are now part of the `report.Reader` interface. `ReadDouble` returns `def` if the attribute is absent or unparseable.
+- **Remaining Gaps**: ReadValue (reflection-based), ReadProperties (reflection), ReadPropertyValue, FixupReferences, DeserializeFrom/SerializeTo enum — all OUT OF SCOPE (designer-only or reflection-based).
 
 #### `FRWriter.cs`
 - **File**: `FastReport.Base/Utils/FRWriter.cs`

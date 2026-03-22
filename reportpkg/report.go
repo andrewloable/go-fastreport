@@ -1,6 +1,8 @@
 package reportpkg
 
 import (
+	"strings"
+
 	"github.com/andrewloable/go-fastreport/data"
 	"github.com/andrewloable/go-fastreport/export"
 	"github.com/andrewloable/go-fastreport/preview"
@@ -158,6 +160,23 @@ type ReportInfo struct {
 	SaveMode SaveMode
 	// Picture holds the raw bytes of the embedded preview image (PNG/JPEG).
 	Picture []byte
+}
+
+// Clear resets all ReportInfo fields to their default values.
+// Mirrors C# ReportInfo.Clear() (ReportInfo.cs lines 201–217).
+func (ri *ReportInfo) Clear() {
+	ri.Name = ""
+	ri.Author = ""
+	ri.Version = ""
+	ri.Description = ""
+	ri.Tag = ""
+	ri.Picture = nil
+	ri.Created = ""
+	ri.Modified = ""
+	ri.SavePreviewPicture = false
+	ri.PreviewPictureRatio = 0.1
+	ri.CreatorVersion = ""
+	ri.SaveMode = SaveModeAll
 }
 
 // Serialize writes ReportInfo fields as dot-qualified attributes.
@@ -344,6 +363,16 @@ type Report struct {
 	// customFunctions is the registry of user-defined callback functions.
 	// Keys are function names as they appear in report expressions.
 	customFunctions map[string]func(args []any) (any, error)
+
+	// aborted is set to true when Abort() is called; the engine checks this
+	// to stop processing.
+	// Mirrors C# Report.aborted field (Report.cs line 247).
+	aborted bool
+
+	// isParameterChanged tracks whether SetParameterValue has been called
+	// since the last run, which affects IsPrepared.
+	// Mirrors C# Report.isParameterChanged (Report.cs line 254).
+	isParameterChanged bool
 }
 
 // NewReport creates a Report with defaults matching C# ClearReportProperties().
@@ -642,4 +671,118 @@ func (r *Report) ObjectNames() []string {
 		}
 	}
 	return names
+}
+
+// ── Report.cs additional methods ──────────────────────────────────────────────
+
+// Abort signals the report to stop processing.
+// Mirrors C# Report.Abort() (Report.cs line 1745).
+func (r *Report) Abort() { r.aborted = true }
+
+// Aborted returns true if Abort() has been called.
+// Mirrors C# Report.Aborted property (Report.cs line 705).
+func (r *Report) Aborted() bool { return r.aborted }
+
+// SetAborted sets the aborted flag directly (used by the engine).
+// Mirrors C# Report.SetAborted (Report.cs line 1794).
+func (r *Report) SetAborted(v bool) { r.aborted = v }
+
+// IsPrepared returns true when prepared pages are available and no parameter
+// change has occurred since the last run.
+// Mirrors C# Report.IsPrepared (Report.cs line 402–404):
+//
+//	get { return !isParameterChanged && PreparedPages != null && PreparedPages.Count != 0; }
+func (r *Report) IsPrepared() bool {
+	return !r.isParameterChanged && r.preparedPages != nil && r.preparedPages.Count() > 0
+}
+
+// FindObject returns the first named object (page, band, or component) whose
+// Name equals name (case-insensitive), or nil if not found.
+// Mirrors C# Report.FindObject (Report.cs line 1751–1758).
+func (r *Report) FindObject(name string) report.Base {
+	// Check pages first.
+	for _, pg := range r.pages {
+		if strings.EqualFold(pg.Name(), name) {
+			return pg
+		}
+	}
+	// Walk all objects in all pages.
+	for _, obj := range r.allObjects() {
+		if strings.EqualFold(obj.Name(), name) {
+			return obj
+		}
+	}
+	return nil
+}
+
+// ApplyStyles re-applies named styles to every report component that has a
+// StyleName set. Call this after modifying the Styles collection.
+// Mirrors C# Report.ApplyStyles (Report.cs line 1774–1781).
+func (r *Report) ApplyStyles() {
+	ss := r.styles
+	if ss == nil {
+		return
+	}
+	for _, obj := range r.allObjects() {
+		if s, ok := obj.(style.Styleable); ok {
+			ss.ApplyToObject(s)
+		}
+	}
+}
+
+// Clear resets all pages and report properties to defaults.
+// Mirrors C# Report.Clear() (Report.cs line 1762–1766).
+func (r *Report) Clear() {
+	r.pages = nil
+	r.Info.Clear()
+	r.dictionary = data.NewDictionary()
+	r.styles = style.NewStyleSheet()
+	r.ScriptText = ""
+	r.ScriptLanguage = ""
+	r.Compressed = false
+	r.ConvertNulls = true
+	r.DoublePass = false
+	r.TextQuality = TextQualityDefault
+	r.SmoothGraphics = false
+	r.InitialPageNumber = 1
+	r.MaxPages = 0
+	r.StartReportEvent = ""
+	r.FinishReportEvent = ""
+	r.BaseReportPath = ""
+	r.aborted = false
+	r.isParameterChanged = false
+}
+
+// GetParameterValue returns the value of the parameter identified by
+// complexName (dot-separated path for nested parameters).
+// Returns nil when the parameter is not found.
+// Mirrors C# Report.GetParameterValue (Report.cs line 1607–1623).
+func (r *Report) GetParameterValue(complexName string) any {
+	par := data.GetParameter(r.dictionary, complexName)
+	if par == nil {
+		return nil
+	}
+	return par.Value
+}
+
+// SetParameterValue sets the value of the parameter identified by complexName.
+// When the parameter does not exist it is created.
+// Also clears any expression on the parameter and marks isParameterChanged.
+// Mirrors C# Report.SetParameterValue (Report.cs line 1651–1663).
+func (r *Report) SetParameterValue(complexName string, value any) {
+	par := data.GetParameter(r.dictionary, complexName)
+	if par == nil {
+		par = data.CreateParameter(r.dictionary, complexName)
+	}
+	if par != nil {
+		par.Value = value
+		par.Expression = ""
+	}
+	r.isParameterChanged = true
+}
+
+// SetPreparedPages sets the prepared pages (called by the engine after a run).
+// Mirrors C# Report.SetPreparedPages (Report.cs line 1787–1792).
+func (r *Report) SetPreparedPages(pages *preview.PreparedPages) {
+	r.preparedPages = pages
 }

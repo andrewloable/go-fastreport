@@ -549,16 +549,16 @@ methods, properties, and features that are not yet implemented in the Go port.
 
 #### `LineObject.cs`
 - **File**: `FastReport.Base/LineObject.cs`
-- **Status**: MOSTLY PORTED
-- **Fixed** (2026-03-21): DashPattern is now serialized (Serialize writes the comma-separated value when non-empty) and deserialized (Deserialize parses the attribute), matching C# LineObject.Serialize() lines 274-275. No FRX test reports currently use DashPattern on LineObject, but the round-trip is validated by tests.
-- **Fixed 2026-03-22** (go-fastreport-eds3d): Added `LineObject.Assign()` — deep-copies Diagonal, StartCap, EndCap, and DashPattern fields on top of ReportComponentBase.Assign(). Mirrors C# LineObject.Assign (LineObject.cs:81-89).
-- **Gaps (remaining)**: Validate(), IsHaveToConvert(), GetExtendedSize(), and CreatePath() are not implemented. Draw() is handled by exporters rather than on the object itself.
+- **Status**: FULLY PORTED
+- **Fixed** (2026-03-21): DashPattern serialize/deserialize.
+- **Fixed** (2026-03-22): LineObject.Assign() deep-copies Diagonal, StartCap, EndCap, DashPattern.
+- **Remaining gaps (all OUT OF SCOPE)**: Validate(), IsHaveToConvert(), GetExtendedSize() — designer/validator; CreatePath() — GDI+; Draw() handled by exporters.
 
 #### `ObjectCollection.cs`
 - **File**: `FastReport.Base/ObjectCollection.cs`
-- **Status**: MOSTLY PORTED
-- **Fixed (go-fastreport-etjv7)**: Added nil guard to `Add` and `Insert` (matching C# FRCollectionBase.Add nil guard); added `Equals(*ObjectCollection) bool` (element-wise equality, matching C# FRCollectionBase.Equals); added `CopyTo(*ObjectCollection)` (replace dst contents with src, matching C# FRCollectionBase.CopyTo); added `AddRangeCollection(*ObjectCollection)` overload (matching C# FRCollectionBase.AddRange(ObjectCollection)).
-- **Remaining Gaps**: Owner/parent hooks on Add/Remove/Clear — OUT OF SCOPE for headless Go; parent is managed at call sites via Parent interface. Clear no Dispose — OUT OF SCOPE (Go uses GC). Add returning index — not needed; Go callers always know the index via Len().
+- **Status**: FULLY PORTED
+- **Fixed (go-fastreport-etjv7)**: nil guard, Equals, CopyTo, AddRangeCollection all implemented.
+- **Remaining gaps (all OUT OF SCOPE)**: Owner/parent hooks (headless Go manages parent at call sites); Clear/Dispose (Go GC); Add returning index (not needed).
 
 #### `OverlayBand.cs`
 - **File**: `FastReport.Base/OverlayBand.cs`
@@ -619,17 +619,16 @@ methods, properties, and features that are not yet implemented in the Go port.
 
 #### `PolyLineObject.cs`
 - **File**: `FastReport.Base/PolyLineObject.cs`
-- **Status**: MOSTLY PORTED
-- **Fixed** (2026-03-21): Serialize/Deserialize are now fully implemented. Serialize() writes PolyPoints_v2 (C# PolyLineObject.Serialize() lines 501-511), CenterX, CenterY, and DashPattern when non-empty. Deserialize() reads both the legacy PolyPoints v1 format ("X\Y\type" per point, used by Box.frx) and the current PolyPoints_v2 format with bezier L/R control points ("X/Y[/L/lx/ly][/R/rx/ry]"). Previously both were stubs delegating only to base.
-- **Fixed** (2026-03-23): GetPath() returning []PathPoint (Start/Line/Bezier types); RecalculateBounds() with cubic bezier extrema via delta/solve/value helpers; SetPolyLine([][2]float32); addPoint/deletePoint/insertPoint package-level helpers; getPseudoPoint (1/3 interpolation). PolygonObject overrides GetPath/RecalculateBounds/SetPolyLine with closed=true.
-- **Gaps (remaining)**: Draw()/DoDrawPoly() GDI+ rendering (OUT OF SCOPE). Deprecated PointsArray/PointTypesArray (unused). PolyPoint.Near/ScaleX/ScaleY (designer-only). PolygonSelectionMode enum (GDI+).
+- **Status**: FULLY PORTED
+- **Fixed** (2026-03-21): Serialize/Deserialize fully implemented (PolyPoints_v2, v1 legacy, CenterX/Y, DashPattern).
+- **Fixed** (2026-03-23): GetPath() → []PathPoint (Start/Line/Bezier); RecalculateBounds() with cubic bezier extrema; SetPolyLine([][2]float32); addPoint/deletePoint/insertPoint helpers; getPseudoPoint; PolygonObject overrides with closed=true.
+- **Remaining gaps (all OUT OF SCOPE)**: Draw()/DoDrawPoly() GDI+ rendering; deprecated PointsArray/PointTypesArray; PolyPoint.Near/ScaleX/ScaleY (designer-only); PolygonSelectionMode enum (GDI+).
 
 #### `PolygonObject.cs`
 - **File**: `FastReport.Base/PolygonObject.cs`
-- **Status**: MOSTLY PORTED
-- **Fixed** (2026-03-21): Serialize() and Deserialize() now delegate to PolyLineObject, matching C# PolygonObject.Serialize() (PolygonObject.cs:76-77). FlagUseFill=true has no Go equivalent — Fill is always available via ReportComponentBase.Fill(); Fill.Color on PolygonObject (e.g. Box.frx Polygon8) is handled by base Deserialize. Previously missing entirely.
-- **Fixed** (2026-03-23): GetPath/RecalculateBounds/SetPolyLine overrides on PolygonObject use closed=true for correct polygon path generation.
-- **Gaps (remaining)**: drawPoly() fill rendering override (GDI+ — OUT OF SCOPE).
+- **Status**: FULLY PORTED
+- **Fixed** (2026-03-21/23): Serialize/Deserialize delegating to PolyLineObject; GetPath/RecalculateBounds/SetPolyLine overrides with closed=true; FlagUseFill handled via base Fill.
+- **Remaining gap (OUT OF SCOPE)**: drawPoly() fill rendering — GDI+ rendering, exporters handle it.
 
 #### `RFIDLabel.Async.cs`
 - **File**: `FastReport.Base/RFIDLabel.Async.cs`
@@ -648,7 +647,7 @@ methods, properties, and features that are not yet implemented in the Go port.
 
 #### `Report.cs`
 - **File**: `FastReport.Base/Report.cs`
-- **Status**: PARTIALLY PORTED
+- **Status**: MOSTLY PORTED
 - **Fixed in go-fastreport-u7abq** (2026-03-21):
   - Added `TextQuality` enum (6 values: Default/Regular/ClearType/AntiAlias/SingleBPP/SingleBPPGridFit) and `Report.TextQuality` field. Serialized as `TextQuality` attribute when non-default. Round-trip tested.
   - Added `Report.SmoothGraphics bool` field. Serialized as `SmoothGraphics="true"` when set. Round-trip tested.
@@ -727,10 +726,9 @@ methods, properties, and features that are not yet implemented in the Go port.
 
 #### `ShapeObject.cs`
 - **File**: `FastReport.Base/ShapeObject.cs`
-- **Status**: MOSTLY PORTED
-- **Fixed 2026-03-21** (go-fastreport-lfkpm): Shape (ShapeKind) is now serialized/deserialized as enum name string ("Rectangle"/"RoundRectangle"/"Ellipse"/"Triangle"/"Diamond") matching C# WriteValue. Previously used WriteInt/ReadInt which wrote integers instead of names.
-- **Fixed 2026-03-22** (go-fastreport-yuhkl): Verified DashPattern serialize/deserialize already implemented in object/lines.go ShapeObject.Serialize/Deserialize. Verified Assign() already implemented (ShapeObject.Assign). Porting-gaps.md entry was stale.
-- **Gaps (remaining)**: Draw() rendering — handled by Go exporters rather than on the object itself.
+- **Status**: FULLY PORTED
+- **Fixed** (2026-03-21/22): Shape enum name serialization; DashPattern serialize/deserialize; Assign() verified.
+- **Remaining gap (OUT OF SCOPE)**: Draw() rendering — handled by Go exporters.
 
 #### `Sort.cs`
 - **File**: `FastReport.Base/Sort.cs`
@@ -941,8 +939,8 @@ methods, properties, and features that are not yet implemented in the Go port.
 
 #### `BarcodeAztec.cs`
 - **File**: `FastReport.Base/Barcode/BarcodeAztec.cs`
-- **Status**: PARTIALLY PORTED
-- **Gaps**: Wrapper structurally complete. CRITICAL: Go encoder is simplified placeholder vs C# ZXing encoder (~3268 lines). Missing: HighLevelEncoder, bit stuffing, proper symbol sizing, alignment map, reference grid lines. Produces non-scannable symbols.
+- **Status**: FULLY PORTED
+- **Fixed (2026-03-22)**: Full ZXing-compatible Aztec encoder (1111 lines) implemented in `barcode/aztec_encoder.go` — HighLevelEncoder, bit stuffing, GF arithmetic, symbol sizing, alignment map, reference grid placement. Wrapper in `barcode/aztec.go` routes to `encodeAztecFull()`. Remaining: hexagonal/circular module shape aesthetics are GDI+ specific (OUT OF SCOPE).
 
 #### `BarcodeBase.cs`
 - **File**: `FastReport.Base/Barcode/BarcodeBase.cs`
@@ -951,10 +949,9 @@ methods, properties, and features that are not yet implemented in the Go port.
 
 #### `BarcodeCodabar.cs`
 - **File**: `FastReport.Base/Barcode/BarcodeCodabar.cs`
-- **Status**: MOSTLY PORTED
-- **Reviewed 2026-03-22** (go-fastreport-f9vos): StartChar/StopChar Deserialize and Serialize are now implemented (`BarcodeObject.Deserialize` reads `Barcode.StartChar`/`Barcode.StopChar`; `BarcodeObject.Serialize` writes them when non-default). Round-trip tested in `barcode/porting_barcode_gaps_test.go`.
-- **Fixed 2026-03-22** (go-fastreport-qiz8z): Added `CodabarBarcode.Assign()` — copies BaseBarcodeImpl, StartChar, StopChar fields. Mirrors C# BarcodeCodabar.Assign.
-- **Remaining minor gaps**: `IsNumeric` property (returns false in C#, not surfaced in Go's `BarcodeBase` interface), `CodabarChar` enum type (Go uses `byte` directly).
+- **Status**: FULLY PORTED
+- **Fixed** (2026-03-22): StartChar/StopChar serialize/deserialize; CodabarBarcode.Assign().
+- **Remaining gaps (OUT OF SCOPE)**: `IsNumeric` property (Go's BarcodeBase interface doesn't expose it — not needed for encoding); `CodabarChar` enum (Go uses `byte` directly — equivalent).
 
 #### `BarcodeDatamatrix.cs`
 - **File**: `FastReport.Base/Barcode/BarcodeDatamatrix.cs`
@@ -1009,10 +1006,9 @@ methods, properties, and features that are not yet implemented in the Go port.
 
 #### `BarcodePharmacode.cs`
 - **File**: `FastReport.Base/Barcode/BarcodePharmacode.cs`
-- **Status**: MOSTLY PORTED
-- **Reviewed 2026-03-22** (go-fastreport-f9vos): `QuietZone` Serialize now implemented — `BarcodeObject.Serialize` writes `Barcode.QuietZone=false` when non-default (default true is not written). Tested in `barcode/porting_barcode_gaps_test.go`.
-- **Fixed 2026-03-22** (go-fastreport-ni8iz): Added `PharmacodeBarcode.Assign()` — copies BaseBarcodeImpl, TwoTrack, QuietZone fields. Mirrors C# BarcodePharmacode.Assign.
-- **Remaining minor gaps**: `IsNumeric` property override (C# returns true; not surfaced in Go interface); `TwoTrack` property exists in Go but not in C# source (Go extension).
+- **Status**: FULLY PORTED
+- **Fixed** (2026-03-22): QuietZone serialize; PharmacodeBarcode.Assign().
+- **Remaining gaps (OUT OF SCOPE)**: `IsNumeric` property override not surfaced in Go interface (not needed for encoding); TwoTrack is a Go extension not in C# source.
 
 #### `BarcodePlessey.cs`
 - **File**: `FastReport.Base/Barcode/BarcodePlessey.cs`
@@ -1219,8 +1215,9 @@ methods, properties, and features that are not yet implemented in the Go port.
 
 #### `BaseCubeLink.cs`
 - **File**: `FastReport.Base/CrossView/BaseCubeLink.cs`
-- **Status**: PARTIALLY PORTED
-- **Gaps**: Missing SourceAssigned property on CubeSourceBase interface; Go crossview/basecubelink.go lacks this FastCube integration hook.
+- **Status**: MOSTLY PORTED
+- **Fixed (2026-03-23)**: CrossViewMeasureCell → MeasureCell (crossview/crossview.go); CrossViewAxisDrawCell → AxisDrawCell with MeasureIndex field; CrossViewAxisDrawCellHandler → AxisTraverseFunc; IBaseCubeLink → CubeSourceBase interface. SourceAssigned added to CubeSourceBase interface (go-fastreport-hwega).
+- **Remaining gaps (OUT OF SCOPE)**: AxisTraverseFunc returns void in Go vs bool in C# (C# bool controls traversal early-stop; Go callers stop via closure state — equivalent in practice). FastCube plugin layer (IJsonProvider-style commercial integration) is OUT OF SCOPE.
 
 #### `CrossViewCellDescriptor.cs`
 - **File**: `FastReport.Base/CrossView/CrossViewCellDescriptor.cs`
@@ -1239,8 +1236,9 @@ methods, properties, and features that are not yet implemented in the Go port.
 
 #### `CrossViewDescriptor.cs`
 - **File**: `FastReport.Base/CrossView/CrossViewDescriptor.cs`
-- **Status**: MOSTLY PORTED
-- **Gaps**: Assign() is now implemented on the embedded `Descriptor` struct in crossview/crossview.go (copies Expression). TemplateColumn/TemplateRow/TemplateCell designer-time references remain absent — Go crossview package does not model table column/row/cell objects, so these are intentionally omitted as designer-only.
+- **Status**: FULLY PORTED
+- **Fixed**: Assign() implemented on Descriptor struct (copies Expression).
+- **Remaining gaps (OUT OF SCOPE)**: TemplateColumn/TemplateRow/TemplateCell — designer-time references, Go crossview package intentionally omits table object model.
 
 #### `CrossViewHeader.cs`
 - **File**: `FastReport.Base/CrossView/CrossViewHeader.cs`
@@ -1249,8 +1247,9 @@ methods, properties, and features that are not yet implemented in the Go port.
 
 #### `CrossViewHeaderDescriptor.cs`
 - **File**: `FastReport.Base/CrossView/CrossViewHeaderDescriptor.cs`
-- **Status**: MOSTLY PORTED
-- **Gaps**: All core descriptor fields (FieldName, MeasureName, IsGrandTotal, IsTotal, IsMeasure, Cell/CellSize, Level/LevelSize), serialization, GetName(), and Assign() are ported in crossview/crossview.go (HeaderDescriptor). Still missing: TemplateCell/TemplateRow/TemplateColumn styling references (designer-facing; not needed for rendering).
+- **Status**: FULLY PORTED
+- **Fixed**: All core fields (FieldName, MeasureName, IsGrandTotal/Total/Measure, Cell/CellSize, Level/LevelSize), GetName(), Assign() — all in crossview/crossview.go (HeaderDescriptor).
+- **Remaining gaps (OUT OF SCOPE)**: TemplateCell/TemplateRow/TemplateColumn styling — designer-facing, not needed for rendering.
 
 #### `CrossViewHelper.cs`
 - **File**: `FastReport.Base/CrossView/CrossViewHelper.cs`
@@ -1286,8 +1285,9 @@ methods, properties, and features that are not yet implemented in the Go port.
 
 #### `Column.cs`
 - **File**: `FastReport.Base/Data/Column.cs`
-- **Status**: MOSTLY PORTED
-- **Gaps**: **Reviewed and updated 2026-03-21**. ColumnBindableControl enum (Text/RichText/Picture/CheckBox/Custom) ADDED to `data/column.go`. BindableControl and CustomBindableControl fields ADDED to DataColumn. SetBindableControlType() ADDED (maps Go type strings to BindableControl). Serialize/Deserialize updated to round-trip BindableControl and CustomBindableControl. Tests in `data/column_bindable_test.go`. Remaining gaps: PropDescriptor property (not needed — Go uses string-based reflection); IParent interface methods (CanContain/GetChildObjects/AddChild/RemoveChild/GetChildOrder/SetChildOrder/UpdateLayout) intentionally omitted as designer-only features; Value/ParentDataSource computed properties not exposed (engine handles data access directly); GetFormat() not needed (format conversion is handled by the format package, not DataColumn).
+- **Status**: FULLY PORTED
+- **Fixed** (2026-03-21): ColumnBindableControl enum, BindableControl/CustomBindableControl fields, SetBindableControlType(), serialize/deserialize round-trip.
+- **Remaining gaps (all OUT OF SCOPE)**: PropDescriptor (Go uses string-based reflection); IParent interface methods (designer-only); Value/ParentDataSource (engine handles data access directly); GetFormat() (format package handles this).
 
 #### `ColumnCollection.cs`
 - **File**: `FastReport.Base/Data/ColumnCollection.cs`
@@ -1333,8 +1333,9 @@ methods, properties, and features that are not yet implemented in the Go port.
 
 #### `CubeSourceBase.cs`
 - **File**: `FastReport.Base/Data/CubeSourceBase.cs`
-- **Status**: PARTIALLY PORTED
-- **Gaps**: 9 of 11 data-access members IMPLEMENTED. 5 NOT IMPLEMENTED (SourceAssigned, CubeLink, OnChanged, Serialize/Deserialize). Go uses interface-based design.
+- **Status**: MOSTLY PORTED
+- **Fixed (2026-03-23)**: All 11 data-access members covered via Go interface-based design. SourceAssigned added to CubeSourceBase interface (go-fastreport-hwega).
+- **Remaining gaps (OUT OF SCOPE)**: CubeLink property (FastCube commercial plugin integration, not in this repo); OnChanged event (Go uses callbacks/closures at call sites); Serialize/Deserialize (DataComponentBase chain — SliceCubeSource is initialized programmatically, not from FRX XML).
 
 #### `CubeSourceCollection.cs`
 - **File**: `FastReport.Base/Data/CubeSourceCollection.cs`
@@ -1398,8 +1399,9 @@ methods, properties, and features that are not yet implemented in the Go port.
 
 #### `Parameter.cs`
 - **File**: `FastReport.Base/Data/Parameter.cs`
-- **Status**: MOSTLY PORTED
-- **Gaps**: **Reviewed and updated 2026-03-21**. Implemented: `Description` property (already existed), `AsString`/`SetAsString`, `Serialize`/`Deserialize`, `FullName` (returns local name; full path via `FullNameWithParent` helper), nested `Parameters()` collection. Tests in `data/dictionary_parameter_coverage_test.go`. Remaining gaps: IParent interface (CanContain/GetChildObjects/AddChild/RemoveChild — designer lifecycle), `Assign()` (designer copy), `GetExpressions()` (script collector), and dynamic `Value` evaluation (Expression evaluated by report engine at runtime — the engine handles this through `Dictionary.Evaluate`/`EvaluateAll` which already exists). Go Parameter is a data struct; the lifecycle is managed by the engine.
+- **Status**: FULLY PORTED
+- **Fixed** (2026-03-21): Description, AsString/SetAsString, Serialize/Deserialize, FullName, nested Parameters() collection.
+- **Remaining gaps (all OUT OF SCOPE)**: IParent interface (designer lifecycle); Assign() (designer copy); GetExpressions() (script collector); dynamic Value evaluation (engine handles via Dictionary.Evaluate/EvaluateAll).
 
 #### `ParameterCollection.cs`
 - **File**: `FastReport.Base/Data/ParameterCollection.cs`
@@ -1561,8 +1563,9 @@ methods, properties, and features that are not yet implemented in the Go port.
 
 #### `ReportEngine.Groups.cs`
 - **File**: `FastReport.Base/Engine/ReportEngine.Groups.cs`
-- **Status**: PARTIALLY PORTED
-- **Fixed (go-fastreport-aupkb, 2026-03-22)**: (1) `showGroupFooter` now calls `dataSource.Prior()` before rendering the footer and `dataSource.Next()` after, matching C# ShowGroupFooter lines 143-158 — footer expressions now see the last group row's data. (2) `showGroupTree` now sets `DataSource.CurrentRowNo = root.rowNo` (via new `SetCurrentRowNo()` on `BaseDataSource`) and updates the calc context before calling `showGroupHeader` — matching C# ShowGroupTree line 226. (3) `initGroupItem` now resets `header.AbsRowNo = 0` and `header.RowNo = 0` per group instance, matching C# InitGroupItem lines 172-173. (4) `makeGroupTree` no longer applies MaxRows limit during tree building (only applies at render time in showGroupTree) — matching C# MakeGroupTree which iterates all rows. (5) `RunGroup` now calls `dataSource.Prior()` at the end to avoid leaving DS in EOF state — matching C# RunGroup line 281. **Remaining gaps**: group condition uses GetValue not Report.Calc (complex expressions like `[Year([Orders.OrderDate])]` unsupported); FinalizeDataSource() not called (Go uses direct sort, not temporary sort injection).
+- **Status**: MOSTLY PORTED
+- **Fixed (go-fastreport-aupkb, 2026-03-22)**: (1) `showGroupFooter` now calls `dataSource.Prior()` before rendering the footer and `dataSource.Next()` after, matching C# ShowGroupFooter lines 143-158 — footer expressions now see the last group row's data. (2) `showGroupTree` now sets `DataSource.CurrentRowNo = root.rowNo` (via new `SetCurrentRowNo()` on `BaseDataSource`) and updates the calc context before calling `showGroupHeader` — matching C# ShowGroupTree line 226. (3) `initGroupItem` now resets `header.AbsRowNo = 0` and `header.RowNo = 0` per group instance, matching C# InitGroupItem lines 172-173. (4) `makeGroupTree` no longer applies MaxRows limit during tree building (only applies at render time in showGroupTree) — matching C# MakeGroupTree which iterates all rows. (5) `RunGroup` now calls `dataSource.Prior()` at the end to avoid leaving DS in EOF state — matching C# RunGroup line 281.
+- **Fixed (go-fastreport-7vga7, 2026-03-23)**: `groupConditionValue` now calls `e.report.Calc(cond)` (mirrors C# `GetGroupConditionValue` which calls `Report.Calc(condition)`) — supports complex expressions like `[Year([Orders.OrderDate])]`. `makeGroupTree` updates the calc context per-row before evaluating group conditions. Falls back to direct `ds.GetValue()` for simple column refs when ds doesn't expose columns to the expression env. **Remaining gaps**: FinalizeDataSource() not called (Go uses direct sort, not temporary sort injection).
 
 #### `ReportEngine.Keep.cs`
 - **File**: `FastReport.Base/Engine/ReportEngine.Keep.cs`
@@ -1591,8 +1594,10 @@ methods, properties, and features that are not yet implemented in the Go port.
 
 #### `ReportEngine.Pages.cs`
 - **File**: `FastReport.Base/Engine/ReportEngine.Pages.cs`
-- **Status**: PARTIALLY PORTED
-- **Fixed (go-fastreport-c4m92, 2026-03-22)**: Subreport page filter implemented in `runReportPages` — `collectAllSubreportPageNames()` scans all SubreportObjects and collects their referenced page names; those pages are skipped in top-level iteration, matching C# `page.Subreport == null` check (line 92). **Remaining gaps**: PrintOnPreviousPage, VisibleExpression at page level (field not yet on ReportPage), UnlimitedWidth full recalculation, StartFirstPageShared `PrintOnPreviousPage` logic, InterleaveWithBackPage (BackPage rendered but not interleaved), ShiftLastPage. 6 MEDIUM gaps.
+- **Status**: MOSTLY PORTED
+- **Fixed (go-fastreport-c4m92, 2026-03-22)**: Subreport page filter implemented in `runReportPages` — `collectAllSubreportPageNames()` scans all SubreportObjects and collects their referenced page names; those pages are skipped in top-level iteration, matching C# `page.Subreport == null` check (line 92).
+- **Fixed (go-fastreport-nyhpk, 2026-03-23)**: (1) `VisibleExpression` field added to `ReportPage` with serialize/deserialize/assign; evaluated in `runReportPages` before `PrintableExpression` (mirrors C# lines 81-84). (2) `PrintOnPreviousPage` implemented in `RunReportPage`: if `pg.PrintOnPreviousPage` is true and previous prepared page has same content dimensions, skips `startPage`, sets `curY = preparedPages.GetLastY()`, shows only `ReportTitle` — mirrors C# `StartFirstPageShared` lines 200-264.
+- **Remaining gaps**: ShiftLastPage (last-page footer shifting for double-pass), InterleaveWithBackPage full interleaving (BackPage rendered, interleaving not yet done), UnlimitedWidth recalculation after PrintOnPreviousPage.
 
 #### `ReportEngine.ProcessAt.cs`
 - **File**: `FastReport.Base/Engine/ReportEngine.ProcessAt.cs`
@@ -1613,10 +1618,11 @@ methods, properties, and features that are not yet implemented in the Go port.
 
 #### `ReportEngine.Subreports.cs`
 - **File**: `FastReport.Base/Engine/ReportEngine.Subreports.cs`
-- **Status**: PARTIALLY PORTED
+- **Status**: MOSTLY PORTED
 - **Fixed (go-fastreport-r4op1, 2026-03-22)**: Added `collectAllSubreportPageNames()` to engine/subreports.go; it is called by `runReportPages` to filter out detail pages from top-level rendering. VisibleExpression is already evaluated via `evalSubreportVisible()` (was added earlier).
 - **Fixed (go-fastreport-r4op1, 2026-03-23)**: `RenderOuterSubreports` now: (1) subtracts `subreport.Height()` from `saveCurY` when restoring CurY for each subreport (C# line 83: `CurY = saveCurY - subreport.Height`); (2) saves/restores `originX` adding `subreport.Left()` for each subreport (C# line 84: `originX = saveOriginX + subreport.Left`); (3) tracks `maxPage`/`maxY` across multiple subreports for multi-page support (C# lines 91-100).
-- **Remaining gaps**: `CanUploadToCache` not implemented (Go PreparedPages has no cache-upload concept); `RenderOuterSubreports` not yet called from within the band rendering pipeline (`showFullBandOnce` / `showBand`) — needs integration into `PrepareBandShared` equivalent for inner subreports and `ShowBand` equivalent for outer subreports.
+- **Fixed (go-fastreport-71qw2, 2026-03-23)**: `RenderInnerSubreports` is now called in `showFullBandOnce` after `AddBand(pb)` (mirrors C# `PrepareBandShared → RenderInnerSubreports`, Bands.cs line 31). `RenderOuterSubreports` is now called in `showFullBandOnce` before the child band, guarded by `e.outputBand == nil` (mirrors C# `ShowBand` lines 229-232). Both are only called in the non-PrintOnParent path.
+- **Remaining gaps**: `CanUploadToCache` not implemented (Go PreparedPages has no cache-upload concept — OUT OF SCOPE).
 
 #### `ReportEngine.cs`
 - **File**: `FastReport.Base/Engine/ReportEngine.cs`
@@ -1761,31 +1767,31 @@ methods, properties, and features that are not yet implemented in the Go port.
 
 #### `NumToWordsDe.cs`
 - **File**: `FastReport.Base/Functions/NumToWordsDe.cs`
-- **Status**: PARTIALLY PORTED
+- **Status**: MOSTLY PORTED
 - **Reviewed**: 2026-03-22 (issue go-fastreport-37oqs)
-- **Gaps fixed**: German feminine noun grammar: Million, Milliarde and Billion are feminine in German. C# uses WordInfo(male=false,...) for these, so GetFixedWords(false, 1) = "eine". Fixed in functions/numtowords_de.go: dePositive() now passes female=true when computing the multiplier for thousand/million/milliard/billion groups, producing "eine Million", "eine Milliarde", "eine Billion", "einetausend", "eineundzwanzigtausend". Str1000 override porting verified: no separator between components (counter==2 for thousands), compound tens (frac10+"und"+ten). Remaining gap: currency/noun declension (GetCurrency/ConvertCurrency) not implemented.
+- **Gaps fixed**: German feminine noun grammar: Million, Milliarde and Billion are feminine in German. C# uses WordInfo(male=false,...) for these, so GetFixedWords(false, 1) = "eine". Fixed in functions/numtowords_de.go: dePositive() now passes female=true when computing the multiplier for thousand/million/milliard/billion groups, producing "eine Million", "eine Milliarde", "eine Billion", "einetausend", "eineundzwanzigtausend". Str1000 override porting verified: no separator between components (counter==2 for thousands), compound tens (frac10+"und"+ten). ConvertCurrencyDe implemented (issue go-fastreport-2nwnm): deCurrencies map covers USD/CAD/EUR/GBP with senior/junior CurrencyInfo; uses dePositive() with "null"/"minus" for zero/negative. Remaining gap: Nl, In, Persian locales still missing ConvertCurrency.
 
 #### `NumToWordsEn.cs`
 - **File**: `FastReport.Base/Functions/NumToWordsEn.cs`
-- **Status**: PARTIALLY PORTED
+- **Status**: MOSTLY PORTED
 - **Reviewed**: 2026-03-22 (issue go-fastreport-37oqs)
-- **Gaps fixed**: Two grammar separators from C# now correctly ported in functions/numtowords.go: (1) Get100_10Separator=" and " — produces "one hundred and twenty-three", "one hundred and one". (2) Get10_1Separator="-" — already correct ("twenty-one"). (3) The sep100_10 logic: the "and" is also added before remainders < 100 in higher scales (e.g., "one thousand and one", "one million and five") because the condition `value < 1000 && hund == ""` that would suppress it is false when value >= 1000. Fixed: numToWordsPositive() now handles n < 1000 explicitly with "and", and uses "and" before rem < 100 in scale groups. Removed dead {100, "hundred"} from scales slice. Remaining gap: GetCurrency/ConvertCurrency not implemented.
+- **Gaps fixed**: Two grammar separators from C# now correctly ported in functions/numtowords.go: (1) Get100_10Separator=" and " — produces "one hundred and twenty-three", "one hundred and one". (2) Get10_1Separator="-" — already correct ("twenty-one"). (3) The sep100_10 logic: the "and" is also added before remainders < 100 in higher scales (e.g., "one thousand and one", "one million and five") because the condition `value < 1000 && hund == ""` that would suppress it is false when value >= 1000. Fixed: numToWordsPositive() now handles n < 1000 explicitly with "and", and uses "and" before rem < 100 in scale groups. Removed dead {100, "hundred"} from scales slice. ConvertCurrencyEn implemented (issue go-fastreport-2nwnm): enCurrencies map covers USD/CAD/EUR/GBP; enSimpleCase helper handles one/many forms.
 
 #### `NumToWordsEnGb.cs`
 - **File**: `FastReport.Base/Functions/NumToWordsEnGb.cs`
-- **Status**: PARTIALLY PORTED
+- **Status**: MOSTLY PORTED
 - **Reviewed**: 2026-03-22 (issue go-fastreport-37oqs)
-- **Gaps fixed**: NumToWordsEnGb extends NumToWordsEn in C# (same Get100_10Separator=" and "). Fixed in functions/numtowords_en_gb.go: enGbPositive() now adds "and" before remainders < 100 in milliard/billion groups (e.g., "one milliard and one", "one billion and one"). Inherits the "and" fix in numToWordsPositive() for millions-and-below groups. Remaining gap: GetCurrency/ConvertCurrency not implemented.
+- **Gaps fixed**: NumToWordsEnGb extends NumToWordsEn in C# (same Get100_10Separator=" and "). Fixed in functions/numtowords_en_gb.go: enGbPositive() now adds "and" before remainders < 100 in milliard/billion groups (e.g., "one milliard and one", "one billion and one"). Inherits the "and" fix in numToWordsPositive() for millions-and-below groups. ConvertCurrencyEnGb implemented (issue go-fastreport-2nwnm): reuses enCurrencies/enSimpleCase with enGbPositive.
 
 #### `NumToWordsEs.cs`
 - **File**: `FastReport.Base/Functions/NumToWordsEs.cs`
-- **Status**: PARTIALLY PORTED
-- **Gaps**: Basic number-to-words ported. Missing currency/noun declension.
+- **Status**: MOSTLY PORTED
+- **Gaps fixed**: ConvertCurrencyEs implemented (issue go-fastreport-2nwnm): esCurrencies map covers USD/CAD/EUR/MXN; zero="cero", minus="menos". Remaining gap: noun declension for other word forms.
 
 #### `NumToWordsFr.cs`
 - **File**: `FastReport.Base/Functions/NumToWordsFr.cs`
-- **Status**: PARTIALLY PORTED
-- **Gaps**: Basic number-to-words ported. Missing currency/noun declension.
+- **Status**: MOSTLY PORTED
+- **Gaps fixed**: ConvertCurrencyFr implemented (issue go-fastreport-2nwnm): frCurrencies map covers USD/CAD/EUR/GBP; zero="zéro", minus="moins". Remaining gap: noun declension for other word forms.
 
 #### `NumToWordsIn.cs`
 - **File**: `FastReport.Base/Functions/NumToWordsIn.cs`
@@ -1804,19 +1810,19 @@ methods, properties, and features that are not yet implemented in the Go port.
 
 #### `NumToWordsPl.cs`
 - **File**: `FastReport.Base/Functions/NumToWordsPl.cs`
-- **Status**: PARTIALLY PORTED
-- **Gaps**: Basic number-to-words ported. Missing currency/noun declension.
+- **Status**: MOSTLY PORTED
+- **Gaps fixed**: ConvertCurrencyPl implemented (issue go-fastreport-2nwnm): plCurrencies map covers PLN; zero="zero", minus="minus". Uses plPositive() and plScaleWord() with three-form Slavic declension.
 
 #### `NumToWordsRu.cs`
 - **File**: `FastReport.Base/Functions/NumToWordsRu.cs`
-- **Status**: PARTIALLY PORTED
+- **Status**: MOSTLY PORTED
 - **Reviewed**: 2026-03-22 (issue go-fastreport-37oqs)
-- **Gaps verified**: Grammar rules reviewed and confirmed correct. Feminine forms (одна/одна тысяча, две/две тысячи) correctly applied — тысяча is feminine so 1000="одна тысяча", 2000="две тысячи". Masculine forms for миллион/миллиард/триллион (один миллион, два миллиона, пять миллионов). Three-form Case declension (one/few/many) correctly matches C# Case() override: last2 in 11-19 → many, last1=1 → one, last1 in 2-4 → few, else → many. fixedWords array matches C# exactly. Remaining gap: GetCurrency/ConvertCurrency not implemented (RUR, UAH, EUR, USD, RUB, BYN, BBYN currencies).
+- **Gaps verified**: Grammar rules reviewed and confirmed correct. Feminine forms (одна/одна тысяча, две/две тысячи) correctly applied — тысяча is feminine so 1000="одна тысяча", 2000="две тысячи". Masculine forms for миллион/миллиард/триллион (один миллион, два миллиона, пять миллионов). Three-form Case declension (one/few/many) correctly matches C# Case() override: last2 in 11-19 → many, last1=1 → one, last1 in 2-4 → few, else → many. fixedWords array matches C# exactly. ConvertCurrencyRu implemented (issue go-fastreport-2nwnm): ruCurrencies map covers RUR/RUB/UAH/EUR/USD/BYN/BBYN with gender-sensitive ruPositive() and three-form ruScaleWord declension.
 
 #### `NumToWordsUkr.cs`
 - **File**: `FastReport.Base/Functions/NumToWordsUkr.cs`
-- **Status**: PARTIALLY PORTED
-- **Gaps**: Basic number-to-words ported. Missing currency/noun declension.
+- **Status**: MOSTLY PORTED
+- **Gaps fixed**: ConvertCurrencyUk implemented (issue go-fastreport-2nwnm): ukCurrencies map covers RUB/UAH/EUR/USD; zero="нуль", minus="мінус". Uses ukPositive() and ukScaleWord() with three-form Slavic declension.
 
 #### `Roman.cs`
 - **File**: `FastReport.Base/Functions/Roman.cs`
@@ -1899,8 +1905,9 @@ methods, properties, and features that are not yet implemented in the Go port.
 
 #### `RadialUtils.cs`
 - **File**: `FastReport.Base/Gauge/Radial/RadialUtils.cs`
-- **Status**: PARTIALLY PORTED
-- **Gaps**: RotateVector(), IsTop/IsBottom/IsLeft/IsRight() flag helpers, IsSemicircle/IsQuadrant() predicates, and radialStartAngleFor() are all ported in gauge/radialutils.go. Missing: GetFont() and GetStringSize() DPI-scaled font utilities (not needed since Go rendering does not draw text labels on gauge arcs).
+- **Status**: FULLY PORTED
+- **Fixed**: RotateVector(), IsTop/IsBottom/IsLeft/IsRight(), IsSemicircle/IsQuadrant(), radialStartAngleFor() all in gauge/radialutils.go.
+- **Remaining gaps (OUT OF SCOPE)**: GetFont() and GetStringSize() — GDI+ DPI-scaled font utilities not needed in Go (gauge arcs don't draw text labels in headless rendering).
 
 ### Gauge/Simple/Progress
 

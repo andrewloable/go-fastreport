@@ -223,6 +223,11 @@ type ReportPage struct {
 	// Mirrors C# PageBase.PrintableExpression (inherited from ComponentBase).
 	PrintableExpression string
 
+	// VisibleExpression is an expression that, when set, overrides the static
+	// Visible flag for this page. Evaluated by the engine before running the page.
+	// Mirrors C# ComponentBase.VisibleExpression (ReportEngine.Pages.cs lines 81-84).
+	VisibleExpression string
+
 	// inherited marks this page as coming from a base (parent) report.
 	inherited bool
 }
@@ -761,6 +766,9 @@ func (p *ReportPage) Serialize(w report.Writer) error {
 	if p.PrintableExpression != "" {
 		w.WriteStr("PrintableExpression", p.PrintableExpression)
 	}
+	if p.VisibleExpression != "" {
+		w.WriteStr("VisibleExpression", p.VisibleExpression)
+	}
 
 	// Page columns — mirror PageColumns.Serialize (FastReport.Base/PageColumns.cs:101-111).
 	// Count != 1 (C# default) triggers column serialization; Go default is 0 (single column).
@@ -898,6 +906,7 @@ func (p *ReportPage) Deserialize(r report.Reader) error {
 	p.BackPage = r.ReadStr("BackPage", "")
 	p.BackPageOddEven = r.ReadInt("BackPageOddEven", 0)
 	p.PrintableExpression = r.ReadStr("PrintableExpression", "")
+	p.VisibleExpression = r.ReadStr("VisibleExpression", "")
 	p.Columns.Count = r.ReadInt("Columns.Count", 0)
 	p.Columns.Width = r.ReadFloat("Columns.Width", 0)
 	if posStr := r.ReadStr("Columns.Positions", ""); posStr != "" {
@@ -967,6 +976,7 @@ func (p *ReportPage) Assign(src *ReportPage) {
 	p.FinishPageEvent = src.FinishPageEvent
 	p.ManualBuildEvent = src.ManualBuildEvent
 	p.PrintableExpression = src.PrintableExpression
+	p.VisibleExpression = src.VisibleExpression
 }
 
 // SetColumnsCount sets the number of columns and auto-calculates Width and Positions

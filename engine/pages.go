@@ -541,7 +541,7 @@ func (e *ReportEngine) bandHeight(b report.Base) float32 {
 //
 // Matches C# RunReportPage flow:
 //  1. Set current page, initReprint
-//  2. StartFirstPage (startPage with isFirst=true)
+//  2. StartFirstPage (startPage with isFirst=true) — or PrintOnPreviousPage path
 //  3. Fire ReportPageStarted + PageStarted events
 //  4. Find deepest DataBand and set KeepSummary=true
 //  5. Run bands (manual build or automatic)
@@ -551,8 +551,31 @@ func (e *ReportEngine) RunReportPage(pg *reportpkg.ReportPage) error {
 	e.currentPage = pg
 	e.initReprint()
 
+	// PrintOnPreviousPage: if set and a previous prepared page exists with the
+	// same dimensions, continue rendering on that page instead of creating a new one.
+	// Mirrors C# StartFirstPageShared lines 200-264.
+	if pg.PrintOnPreviousPage && e.preparedPages != nil && e.preparedPages.Count() > 0 {
+		prevPg := e.preparedPages.GetPage(e.preparedPages.Count() - 1)
+		const mmPerPx = 3.78
+		curW := (pg.PaperWidth - pg.LeftMargin - pg.RightMargin) * mmPerPx
+		curH := (pg.PaperHeight - pg.TopMargin - pg.BottomMargin) * mmPerPx
+		sameW := pg.UnlimitedWidth || (prevPg != nil && prevPg.Width == curW)
+		sameH := pg.UnlimitedHeight || (prevPg != nil && prevPg.Height == curH)
+		if sameW && sameH {
+			// Continue on the previous page at the last rendered Y position.
+			e.curY = e.preparedPages.GetLastY()
+			e.syncPageVariables()
+			// Only show ReportTitle (no overlay/header) — mirrors C# StartFirstPage
+			// returning previousPage=true and only calling ShowBand(page.ReportTitle).
+			e.showBand(pg.ReportTitle())
+			goto runBands
+		}
+	}
+
 	// Start the first physical page for this template.
 	e.startPage(pg, true)
+
+runBands:
 
 	// Fire C# events: ReportPageStarted, then PageStarted.
 	e.OnStateChanged(pg, EngineStateReportPageStarted)

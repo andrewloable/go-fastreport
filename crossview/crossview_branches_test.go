@@ -325,6 +325,7 @@ func (z *zeroColSource) DataRowCount() int              { return 1 }
 func (z *zeroColSource) MeasuresInXAxis() bool          { return false }
 func (z *zeroColSource) MeasuresInYAxis() bool          { return false }
 func (z *zeroColSource) MeasuresLevel() int             { return -1 }
+func (z *zeroColSource) SourceAssigned() bool           { return true }
 func (z *zeroColSource) TraverseXAxis(fn crossview.AxisTraverseFunc) {
 	fn(crossview.AxisDrawCell{Text: "A", Cell: 0, Level: 0, SizeCell: 1, SizeLevel: 1})
 }
@@ -363,6 +364,7 @@ func (z *zeroRowSource) DataRowCount() int              { return 0 } // zero dat
 func (z *zeroRowSource) MeasuresInXAxis() bool          { return false }
 func (z *zeroRowSource) MeasuresInYAxis() bool          { return false }
 func (z *zeroRowSource) MeasuresLevel() int             { return -1 }
+func (z *zeroRowSource) SourceAssigned() bool           { return true }
 func (z *zeroRowSource) TraverseXAxis(fn crossview.AxisTraverseFunc) {}
 func (z *zeroRowSource) TraverseYAxis(fn crossview.AxisTraverseFunc) {
 	fn(crossview.AxisDrawCell{Text: "North", Cell: 0, Level: 0, SizeCell: 1, SizeLevel: 1})
@@ -401,6 +403,7 @@ func (z *zeroColsAndRowsSource) DataRowCount() int              { return 0 }
 func (z *zeroColsAndRowsSource) MeasuresInXAxis() bool          { return false }
 func (z *zeroColsAndRowsSource) MeasuresInYAxis() bool          { return false }
 func (z *zeroColsAndRowsSource) MeasuresLevel() int             { return -1 }
+func (z *zeroColsAndRowsSource) SourceAssigned() bool           { return false }
 func (z *zeroColsAndRowsSource) TraverseXAxis(_ crossview.AxisTraverseFunc) {}
 func (z *zeroColsAndRowsSource) TraverseYAxis(_ crossview.AxisTraverseFunc) {}
 func (z *zeroColsAndRowsSource) GetMeasureCell(x, y int) crossview.MeasureCell {

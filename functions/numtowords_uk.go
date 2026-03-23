@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"strings"
+	"unicode"
 )
 
 // NumToWordsUk converts an integer to its Ukrainian word representation.
@@ -68,6 +69,73 @@ var ukHundreds = []string{
 	"\u043F'\u044F\u0442\u0441\u043E\u0442", "\u0448\u0456\u0441\u0442\u0441\u043E\u0442",
 	"\u0441\u0456\u043C\u0441\u043E\u0442", "\u0432\u0456\u0441\u0456\u043C\u0441\u043E\u0442",
 	"\u0434\u0435\u0432'\u044F\u0442\u0441\u043E\u0442",
+}
+
+// ukCurrencies maps ISO currency codes to their Ukrainian word forms.
+var ukCurrencies = map[string]struct {
+	male        bool
+	s1, s2, sm  string
+	j1, j2, jm  string
+	jmale       bool
+}{
+	"RUB": {true, "рубль", "рубля", "рублів", "копійка", "копійки", "копійок", false},
+	"UAH": {false, "гривня", "гривні", "гривень", "копійка", "копійки", "копійок", false},
+	"EUR": {true, "євро", "євро", "євро", "євроцент", "євроцента", "євроценту", true},
+	"USD": {true, "долар", "долара", "доларів", "цент", "цента", "центів", true},
+}
+
+// ConvertCurrencyUk converts a float64 monetary value to Ukrainian words for the given ISO currency code.
+// If decimalPartToWord is true, the cents are also expressed in words; otherwise as a numeric "NN" prefix.
+func ConvertCurrencyUk(value float64, currencyName string, decimalPartToWord bool) (string, error) {
+	cur, ok := ukCurrencies[currencyName]
+	if !ok {
+		return "", fmt.Errorf("unknown currency: %s", currencyName)
+	}
+	n := int64(math.Abs(value))
+	cents := int(math.Round((math.Abs(value) - float64(n)) * 100))
+	if cents >= 100 {
+		n++
+		cents = 0
+	}
+	negative := value < 0
+
+	var wholeWords string
+	if n == 0 {
+		wholeWords = "нуль"
+	} else {
+		wholeWords = strings.TrimSpace(ukPositive(n, !cur.male))
+	}
+	seniorWord := ukScaleWord(n, cur.s1, cur.s2, cur.sm)
+	result := wholeWords + " " + seniorWord
+
+	if negative {
+		result = "мінус " + result
+	}
+
+	if cur.j1 != "" {
+		var juniorPart string
+		if decimalPartToWord {
+			var centsWords string
+			if cents == 0 {
+				centsWords = "нуль"
+			} else {
+				centsWords = strings.TrimSpace(ukPositive(int64(cents), !cur.jmale))
+			}
+			juniorWord := ukScaleWord(int64(cents), cur.j1, cur.j2, cur.jm)
+			juniorPart = centsWords + " " + juniorWord
+		} else {
+			juniorWord := ukScaleWord(int64(cents), cur.j1, cur.j2, cur.jm)
+			juniorPart = fmt.Sprintf("%02d ", cents) + juniorWord
+		}
+		result = result + " " + juniorPart
+	}
+
+	r := []rune(result)
+	if len(r) > 0 {
+		r[0] = unicode.ToUpper(r[0])
+		result = string(r)
+	}
+	return result, nil
 }
 
 func ukScaleWord(n int64, one, few, many string) string {

@@ -519,12 +519,26 @@ func (e *ReportEngine) showFullBandOnce(b *band.BandBase) {
 			}
 		}
 		_ = e.preparedPages.AddBand(pb)
+		// Render inner subreports (PrintOnParent=true) into this prepared band.
+		// Mirrors C# PrepareBandShared → RenderInnerSubreports (Bands.cs line 31).
+		// Must be called AFTER AddBand so the PreparedBand exists in pg.Bands
+		// and can be found by RenderInnerSubreport's backward search.
+		e.RenderInnerSubreports(b)
 	}
 	e.AdvanceY(height)
 	b.FireAfterLayout()
 	// Fire AfterPrint after the band has been added to the prepared pages,
 	// mirroring the C# ReportEngine.ShowBand which calls band.OnAfterPrint last.
 	b.FireAfterPrint()
+
+	// Render outer subreports (PrintOnParent=false) before the child band.
+	// Mirrors C# ShowBand lines 229-232:
+	//   if (band.Visible) RenderOuterSubreports(band);
+	// Only when not already in PrintOnParent mode (outputBand != nil would
+	// indicate we are inside a subreport rendering).
+	if e.outputBand == nil {
+		e.RenderOuterSubreports(b)
+	}
 
 	// Show child band. Skip if child is used to fill empty space (processed above)
 	// or excluded by the DataBand/ChildBand filtering conditions.

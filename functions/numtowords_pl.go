@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"strings"
+	"unicode"
 )
 
 // NumToWordsPl converts an integer to its Polish word representation.
@@ -48,6 +49,70 @@ var plTens = []string{
 var plHundreds = []string{
 	"", "sto", "dwieście", "trzysta", "czterysta", "pięćset",
 	"sześćset", "siedemset", "osiemset", "dziewięćset",
+}
+
+// plCurrencies maps ISO currency codes to their Polish word forms.
+var plCurrencies = map[string]struct {
+	male        bool
+	s1, s2, sm  string
+	j1, j2, jm  string
+	jmale       bool
+}{
+	"PLN": {true, "złoty", "zlote", "złotych", "grosz", "grosze", "groszy", true},
+}
+
+// ConvertCurrencyPl converts a float64 monetary value to Polish words for the given ISO currency code.
+// If decimalPartToWord is true, the cents are also expressed in words; otherwise as a numeric "NN" prefix.
+func ConvertCurrencyPl(value float64, currencyName string, decimalPartToWord bool) (string, error) {
+	cur, ok := plCurrencies[currencyName]
+	if !ok {
+		return "", fmt.Errorf("unknown currency: %s", currencyName)
+	}
+	n := int64(math.Abs(value))
+	cents := int(math.Round((math.Abs(value) - float64(n)) * 100))
+	if cents >= 100 {
+		n++
+		cents = 0
+	}
+	negative := value < 0
+
+	var wholeWords string
+	if n == 0 {
+		wholeWords = "zero"
+	} else {
+		wholeWords = strings.TrimSpace(plPositive(n, !cur.male))
+	}
+	seniorWord := plScaleWord(n, cur.s1, cur.s2, cur.sm)
+	result := wholeWords + " " + seniorWord
+
+	if negative {
+		result = "minus " + result
+	}
+
+	if cur.j1 != "" {
+		var juniorPart string
+		if decimalPartToWord {
+			var centsWords string
+			if cents == 0 {
+				centsWords = "zero"
+			} else {
+				centsWords = strings.TrimSpace(plPositive(int64(cents), !cur.jmale))
+			}
+			juniorWord := plScaleWord(int64(cents), cur.j1, cur.j2, cur.jm)
+			juniorPart = centsWords + " " + juniorWord
+		} else {
+			juniorWord := plScaleWord(int64(cents), cur.j1, cur.j2, cur.jm)
+			juniorPart = fmt.Sprintf("%02d ", cents) + juniorWord
+		}
+		result = result + " " + juniorPart
+	}
+
+	r := []rune(result)
+	if len(r) > 0 {
+		r[0] = unicode.ToUpper(r[0])
+		result = string(r)
+	}
+	return result, nil
 }
 
 // plScaleWord returns the correct declension for a scale word.

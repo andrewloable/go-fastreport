@@ -68,6 +68,10 @@ type CubeSourceBase interface {
 	MeasuresInXAxis() bool
 	MeasuresInYAxis() bool
 	MeasuresLevel() int
+
+	// SourceAssigned returns true when the source has been loaded and is
+	// ready to serve data. Mirrors IBaseCubeLink.SourceAssigned (BaseCubeLink.cs).
+	SourceAssigned() bool
 }
 
 // ── Descriptor base ───────────────────────────────────────────────────────────

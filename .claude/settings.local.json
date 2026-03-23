@@ -117,7 +117,8 @@
       "Bash(jq -r .message.content[0].text)",
       "Bash(sed -n '247,280p' /Volumes/mandark-1Tb/projects/loabletech/go-fastreport/original-dotnet/FastReport.Base/ZipCodeObject.cs)",
       "Bash(sed -n '325,345p' /Volumes/mandark-1Tb/projects/loabletech/go-fastreport/original-dotnet/FastReport.Base/ZipCodeObject.cs)",
-      "Bash(echo 'no aztec dir' ls /Volumes/mandark-1Tb/projects/loabletech/go-fastreport/barcode/*.go)"
+      "Bash(echo 'no aztec dir' ls /Volumes/mandark-1Tb/projects/loabletech/go-fastreport/barcode/*.go)",
+      "Bash(git stash:*)"
     ]
   }
 }

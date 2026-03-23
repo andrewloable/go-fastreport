@@ -44,6 +44,7 @@ func (m *mockCube) DataRowCount() int              { return len(m.yValues) }
 func (m *mockCube) MeasuresInXAxis() bool          { return false }
 func (m *mockCube) MeasuresInYAxis() bool          { return false }
 func (m *mockCube) MeasuresLevel() int             { return -1 }
+func (m *mockCube) SourceAssigned() bool           { return len(m.cells) > 0 }
 
 func (m *mockCube) TraverseXAxis(fn crossview.AxisTraverseFunc) {
 	for i, v := range m.xValues {
@@ -267,6 +268,7 @@ func (m *multiLevelCube) DataRowCount() int              { return 1 }
 func (m *multiLevelCube) MeasuresInXAxis() bool          { return false }
 func (m *multiLevelCube) MeasuresInYAxis() bool          { return false }
 func (m *multiLevelCube) MeasuresLevel() int             { return -1 }
+func (m *multiLevelCube) SourceAssigned() bool           { return true }
 
 func (m *multiLevelCube) TraverseXAxis(fn crossview.AxisTraverseFunc) {
 	// Level 0: 2024 spanning both quarters
@@ -337,6 +339,7 @@ func (m *multiMeasureCube) DataRowCount() int              { return 2 }
 func (m *multiMeasureCube) MeasuresInXAxis() bool          { return true }
 func (m *multiMeasureCube) MeasuresInYAxis() bool          { return false }
 func (m *multiMeasureCube) MeasuresLevel() int             { return -1 } // innermost
+func (m *multiMeasureCube) SourceAssigned() bool           { return true }
 
 func (m *multiMeasureCube) TraverseXAxis(fn crossview.AxisTraverseFunc) {
 	// Level 0: Region values (each spans 2 measure columns)

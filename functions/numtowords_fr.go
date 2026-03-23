@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"strings"
+	"unicode"
 )
 
 // NumToWordsFr converts an integer to its French word representation.
@@ -29,6 +30,79 @@ func NumToWordsFrFloat(v float64) string {
 		result += fmt.Sprintf(" et %d/100", cents)
 	}
 	return result
+}
+
+// frCurrencies maps ISO currency codes to their French word forms.
+var frCurrencies = map[string]struct {
+	s1, sm string
+	j1, jm string
+}{
+	"USD": {"dollar", "dollars", "cent", "cents"},
+	"CAD": {"dollar", "dollars", "cent", "cents"},
+	"EUR": {"euro", "euros", "cent", "cents"},
+	"GBP": {"GBP", "GBP", "penny", "penny"},
+}
+
+// frSimpleCase returns one if n==1, otherwise many.
+func frSimpleCase(n int64, one, many string) string {
+	if n == 1 {
+		return one
+	}
+	return many
+}
+
+// ConvertCurrencyFr converts a float64 monetary value to French words for the given ISO currency code.
+// If decimalPartToWord is true, the cents are also expressed in words; otherwise as a numeric "NN" prefix.
+func ConvertCurrencyFr(value float64, currencyName string, decimalPartToWord bool) (string, error) {
+	cur, ok := frCurrencies[currencyName]
+	if !ok {
+		return "", fmt.Errorf("unknown currency: %s", currencyName)
+	}
+	n := int64(math.Abs(value))
+	cents := int(math.Round((math.Abs(value) - float64(n)) * 100))
+	if cents >= 100 {
+		n++
+		cents = 0
+	}
+	negative := value < 0
+
+	var wholeWords string
+	if n == 0 {
+		wholeWords = "zéro"
+	} else {
+		wholeWords = strings.TrimSpace(frPositive(n, false, true))
+	}
+	seniorWord := frSimpleCase(n, cur.s1, cur.sm)
+	result := wholeWords + " " + seniorWord
+
+	if negative {
+		result = "moins " + result
+	}
+
+	if cur.j1 != "" {
+		var juniorPart string
+		if decimalPartToWord {
+			var centsWords string
+			if cents == 0 {
+				centsWords = "zéro"
+			} else {
+				centsWords = strings.TrimSpace(frPositive(int64(cents), false, true))
+			}
+			juniorWord := frSimpleCase(int64(cents), cur.j1, cur.jm)
+			juniorPart = centsWords + " " + juniorWord
+		} else {
+			juniorWord := frSimpleCase(int64(cents), cur.j1, cur.jm)
+			juniorPart = fmt.Sprintf("%02d ", cents) + juniorWord
+		}
+		result = result + " " + juniorPart
+	}
+
+	r := []rune(result)
+	if len(r) > 0 {
+		r[0] = unicode.ToUpper(r[0])
+		result = string(r)
+	}
+	return result, nil
 }
 
 var frOnes = []string{

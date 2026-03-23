@@ -180,6 +180,12 @@ func (s *SliceCubeSource) MeasuresInYAxis() bool { return !s.measuresInX }
 // MeasuresLevel returns the nesting level at which measure headers are inserted.
 func (s *SliceCubeSource) MeasuresLevel() int { return s.measuresLevel }
 
+// SourceAssigned returns true when Build() has been called and the source has
+// data. Mirrors IBaseCubeLink.SourceAssigned (BaseCubeLink.cs).
+func (s *SliceCubeSource) SourceAssigned() bool {
+	return s.cellData != nil
+}
+
 // TraverseXAxis calls fn for each X-axis header cell in level-major order.
 // When MeasuresInXAxis and MeasuresCount > 1, an extra level is emitted for
 // measure names. The Cell coordinate is the 0-based data-column index.

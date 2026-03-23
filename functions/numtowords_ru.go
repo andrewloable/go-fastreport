@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"strings"
+	"unicode"
 )
 
 // NumToWordsRu converts an integer to its Russian word representation.
@@ -69,6 +70,76 @@ func ruScaleWord(n int64, one, few, many string) string {
 		return few
 	}
 	return many
+}
+
+// ruCurrencies maps ISO currency codes to their Russian word forms.
+var ruCurrencies = map[string]struct {
+	male        bool
+	s1, s2, sm  string
+	j1, j2, jm  string
+	jmale       bool
+}{
+	"RUR":  {true, "рубль", "рубля", "рублей", "копейка", "копейки", "копеек", false},
+	"RUB":  {true, "рубль", "рубля", "рублей", "копейка", "копейки", "копеек", false},
+	"UAH":  {false, "гривна", "гривны", "гривен", "копейка", "копейки", "копеек", false},
+	"EUR":  {true, "евро", "евро", "евро", "евроцент", "евроцента", "евроцентов", true},
+	"USD":  {true, "доллар", "доллара", "долларов", "цент", "цента", "центов", true},
+	"BYN":  {true, "рубль", "рубля", "рублей", "копейка", "копейки", "копеек", false},
+	"BBYN": {true, "белорусский рубль", "белорусских рубля", "белорусских рублей", "белорусская копейка", "белорусских копейки", "белорусских копеек", false},
+}
+
+// ConvertCurrencyRu converts a float64 monetary value to Russian words for the given ISO currency code.
+// If decimalPartToWord is true, the cents are also expressed in words; otherwise as a numeric "NN" prefix.
+func ConvertCurrencyRu(value float64, currencyName string, decimalPartToWord bool) (string, error) {
+	cur, ok := ruCurrencies[currencyName]
+	if !ok {
+		return "", fmt.Errorf("unknown currency: %s", currencyName)
+	}
+	n := int64(math.Abs(value))
+	cents := int(math.Round((math.Abs(value) - float64(n)) * 100))
+	if cents >= 100 {
+		n++
+		cents = 0
+	}
+	negative := value < 0
+
+	var wholeWords string
+	if n == 0 {
+		wholeWords = "ноль"
+	} else {
+		wholeWords = strings.TrimSpace(ruPositive(n, !cur.male))
+	}
+	seniorWord := ruScaleWord(n, cur.s1, cur.s2, cur.sm)
+	result := wholeWords + " " + seniorWord
+
+	if negative {
+		result = "минус " + result
+	}
+
+	if cur.j1 != "" {
+		var juniorPart string
+		if decimalPartToWord {
+			var centsWords string
+			if cents == 0 {
+				centsWords = "ноль"
+			} else {
+				centsWords = strings.TrimSpace(ruPositive(int64(cents), !cur.jmale))
+			}
+			juniorWord := ruScaleWord(int64(cents), cur.j1, cur.j2, cur.jm)
+			juniorPart = centsWords + " " + juniorWord
+		} else {
+			juniorWord := ruScaleWord(int64(cents), cur.j1, cur.j2, cur.jm)
+			juniorPart = fmt.Sprintf("%02d ", cents) + juniorWord
+		}
+		result = result + " " + juniorPart
+	}
+
+	r := []rune(result)
+	if len(r) > 0 {
+		r[0] = unicode.ToUpper(r[0])
+		result = string(r)
+	}
+	return result, nil
 }
 
 // ruPositive converts n > 0 to Russian.

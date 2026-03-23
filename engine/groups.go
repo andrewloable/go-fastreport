@@ -38,16 +38,24 @@ func (g *groupTreeItem) addItem(item *groupTreeItem) *groupTreeItem {
 
 // ── Group value tracking ──────────────────────────────────────────────────────
 
-// groupConditionValue returns a string representing the current group condition
-// value for the given GroupHeaderBand. The Condition field holds either a bare
-// column name or a bracketed expression like "[DataSource.Field]". We strip
-// brackets if present and query the data source directly.
-func groupConditionValue(b *band.GroupHeaderBand, ds band.DataSource) string {
+// groupConditionValue evaluates the group condition expression for the given
+// GroupHeaderBand. Mirrors C# GetGroupConditionValue which calls Report.Calc,
+// supporting complex expressions like [Year([Orders.OrderDate])].
+// Falls back to direct ds.GetValue for simple column references when the
+// data source doesn't expose columns to the expression environment.
+func (e *ReportEngine) groupConditionValue(b *band.GroupHeaderBand, ds band.DataSource) string {
 	cond := b.Condition()
 	if cond == "" {
 		return ""
 	}
-	// Strip surrounding brackets if any: [Column] → Column
+	// Primary: use Report.Calc for full expression support (mirrors C#).
+	if e.report != nil {
+		v, err := e.report.Calc(cond)
+		if err == nil && v != nil {
+			return fmt.Sprintf("%v", v)
+		}
+	}
+	// Fallback: strip brackets and query the data source directly.
 	col := cond
 	if len(col) > 2 && col[0] == '[' && col[len(col)-1] == ']' {
 		col = col[1 : len(col)-1]
@@ -78,9 +86,9 @@ func (gs *groupValueState) reset(b *band.GroupHeaderBand) {
 }
 
 // changed returns true if the current value for b differs from the last seen
-// value, and updates the stored value.
-func (gs *groupValueState) changed(b *band.GroupHeaderBand, ds band.DataSource) bool {
-	v := groupConditionValue(b, ds)
+// value, and updates the stored value. calcFn is e.groupConditionValue.
+func (gs *groupValueState) changed(b *band.GroupHeaderBand, calcFn func(*band.GroupHeaderBand) string) bool {
+	v := calcFn(b)
 	if !gs.hasValue[b] || gs.lastValue[b] != v {
 		gs.lastValue[b] = v
 		gs.hasValue[b] = true
@@ -116,11 +124,24 @@ func (e *ReportEngine) makeGroupTree(groupBand *band.GroupHeaderBand) *groupTree
 	gs := newGroupValueState()
 	rowIdx := 0
 
+	// calcFn captures ds so groupConditionValue can fall back to direct
+	// column access when the data source doesn't implement data.DataSource.
+	calcFn := func(b *band.GroupHeaderBand) string {
+		return e.groupConditionValue(b, ds)
+	}
+
 	for rowIdx < total && !ds.EOF() {
+		// Update calc context per-row so Report.Calc evaluates complex
+		// expressions like [Year([Orders.OrderDate])] against the current row.
+		if e.report != nil {
+			if fullDS, ok := ds.(data.DataSource); ok {
+				e.report.SetCalcContext(fullDS)
+			}
+		}
 		if rowIdx == 0 {
-			initGroupItem(groupBand, root, rowIdx, gs, ds)
+			initGroupItem(groupBand, root, rowIdx, gs, calcFn)
 		} else {
-			checkGroupItem(groupBand, root, rowIdx, gs, ds)
+			checkGroupItem(groupBand, root, rowIdx, gs, calcFn)
 		}
 		if err := ds.Next(); err != nil {
 			break
@@ -139,10 +160,10 @@ func (e *ReportEngine) makeGroupTree(groupBand *band.GroupHeaderBand) *groupTree
 // group value change.
 // Also resets AbsRowNo and RowNo to 0 on each header band, matching C# InitGroupItem
 // lines 172-173: header.AbsRowNo = 0; header.RowNo = 0.
-func initGroupItem(header *band.GroupHeaderBand, curItem *groupTreeItem, rowIdx int, gs *groupValueState, ds band.DataSource) {
+func initGroupItem(header *band.GroupHeaderBand, curItem *groupTreeItem, rowIdx int, gs *groupValueState, calcFn func(*band.GroupHeaderBand) string) {
 	for header != nil {
 		gs.reset(header)
-		gs.changed(header, ds) // consume current value as the baseline
+		gs.changed(header, calcFn) // consume current value as the baseline
 
 		// C# InitGroupItem lines 172-173: reset per-group counters.
 		header.SetAbsRowNo(0)
@@ -156,11 +177,11 @@ func initGroupItem(header *band.GroupHeaderBand, curItem *groupTreeItem, rowIdx 
 
 // checkGroupItem walks the nested group chain and finds the outermost level
 // where the group condition value changed, then re-initialises from that level.
-func checkGroupItem(header *band.GroupHeaderBand, curItem *groupTreeItem, rowIdx int, gs *groupValueState, ds band.DataSource) {
+func checkGroupItem(header *band.GroupHeaderBand, curItem *groupTreeItem, rowIdx int, gs *groupValueState, calcFn func(*band.GroupHeaderBand) string) {
 	for header != nil {
-		if gs.changed(header, ds) {
+		if gs.changed(header, calcFn) {
 			// Re-initialise this level and all nested levels.
-			initGroupItem(header, curItem, rowIdx, gs, ds)
+			initGroupItem(header, curItem, rowIdx, gs, calcFn)
 			return
 		}
 		// Same group: increment row count on the current last child.

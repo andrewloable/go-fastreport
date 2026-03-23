@@ -601,6 +601,15 @@ func (e *ReportEngine) runReportPages() error {
 		if !pg.Visible() {
 			continue
 		}
+		// Evaluate VisibleExpression — mirrors C# ReportEngine.Pages.cs lines 81-84.
+		// When set, it overrides the static Visible flag.
+		if expr := pg.VisibleExpression; expr != "" && e.report != nil {
+			if val, err := e.report.Calc(expr); err == nil {
+				if bv, ok := val.(bool); ok && !bv {
+					continue
+				}
+			}
+		}
 		// Skip pages referenced as subreport detail pages.
 		// C# RunReportPages line 92: if (page.Subreport == null).
 		if subreportPages[pg.Name()] {

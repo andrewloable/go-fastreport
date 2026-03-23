@@ -164,7 +164,21 @@ func (e *ReportEngine) endPage(pg *reportpkg.ReportPage, isLast bool) {
 
 		savedX := e.curX
 		e.curX = 0
-		e.showBand(pg.PageFooter())
+		// C# ShowPageFooter(startPage=true) — mirrors ReportEngine.Pages.cs lines 119-131.
+		// In double-pass reports on the last page, if the footer is LastPage-only,
+		// call ShiftLastPage() instead of showing the band (adds a virtual page entry
+		// so TotalPages accounts for the extra page the footer will occupy).
+		pf := pg.PageFooter()
+		if !e.FirstPass() &&
+			e.knownTotalPages > 0 &&
+			e.curPage == e.knownTotalPages-1 &&
+			pf != nil &&
+			(pf.PrintOn()&report.PrintOnLastPage) != 0 &&
+			(pf.PrintOn()&report.PrintOnFirstPage) == 0 {
+			e.ShiftLastPage()
+		} else {
+			e.showBand(pf)
+		}
 		e.curX = savedX
 	}
 }
@@ -231,9 +245,10 @@ func (e *ReportEngine) showBandNoAdvance(b report.Base) {
 	}
 	if e.preparedPages != nil {
 		pb := &preview.PreparedBand{
-			Name:   b.Name() + "_back",
-			Top:    e.curY,
-			Height: height,
+			Name:          b.Name() + "_back",
+			Top:           e.curY,
+			Height:        height,
+			NotExportable: bandNotExportable(b),
 		}
 		type hasObjects interface{ Objects() *report.ObjectCollection }
 		if ho, ok := b.(hasObjects); ok {
@@ -411,10 +426,11 @@ func (e *ReportEngine) showBand(b report.Base) {
 		}
 	} else if e.preparedPages != nil {
 		pb := &preview.PreparedBand{
-			Name:   b.Name(),
-			Left:   e.curX,
-			Top:    e.curY,
-			Height: height,
+			Name:          b.Name(),
+			Left:          e.curX,
+			Top:           e.curY,
+			Height:        height,
+			NotExportable: bandNotExportable(b),
 		}
 		// Set band kind so GetLastY can exclude PageFooter and Overlay bands,
 		// mirroring C# PreparedPage.GetLastY() checks.
@@ -450,7 +466,23 @@ func (e *ReportEngine) showBand(b report.Base) {
 				pb.Objects[i].Left += e.curX
 			}
 		}
-		_ = e.preparedPages.AddBand(pb)
+		// Do not put page bands twice — this may happen when rendering a subreport
+		// or appending one report to another. Mirrors C# AddToPreparedPages lines 484-499
+		// (ReportEngine.Bands.cs):
+		//   if (isPageBand) bandAlreadyExists = PreparedPages.ContainsBand(band.GetType())
+		//   if (!bandAlreadyExists) PreparedPages.AddBand(band)
+		bandAlreadyExists := false
+		switch b.(type) {
+		case *band.PageHeaderBand:
+			bandAlreadyExists = e.preparedPages.ContainsBandPrefix("PageHeader")
+		case *band.PageFooterBand:
+			bandAlreadyExists = e.preparedPages.ContainsBandPrefix("PageFooter")
+		case *band.OverlayBand:
+			bandAlreadyExists = e.preparedPages.ContainsBandPrefix("Overlay")
+		}
+		if !bandAlreadyExists {
+			_ = e.preparedPages.AddBand(pb)
+		}
 	}
 
 	// C# pattern: OverlayBand does not advance CurY (it sits behind other bands).
@@ -648,9 +680,13 @@ func (e *ReportEngine) attachWatermark(pg *reportpkg.ReportPage) {
 		return
 	}
 	wm := pg.Watermark
+	// Evaluate bracket expressions in the watermark text, matching C# TextObject.GetData()
+	// called from DrawText (Watermark.cs:275). System variables like [Page#]/[TotalPages#]
+	// and data column references are expanded here at page-render time.
+	wmText := e.evalText(wm.Text)
 	pw := &preview.PreparedWatermark{
 		Enabled:           wm.Enabled,
-		Text:              wm.Text,
+		Text:              wmText,
 		Font:              wm.Font,
 		TextColor:         wm.TextFillColor,
 		TextRotation:      preview.WatermarkTextRotation(wm.TextRotation),

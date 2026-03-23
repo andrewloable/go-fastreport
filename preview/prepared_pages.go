@@ -311,6 +311,11 @@ type PreparedBand struct {
 	Border style.Border
 	// Objects holds rendered object snapshots (text, images, etc.).
 	Objects []PreparedObject
+	// NotExportable, when true, causes all exporters to skip this band.
+	// Zero-value (false) means the band IS exported (matching C# default Exportable=true).
+	// Set by the engine when band.Exportable()==false.
+	// C# ref: ExportBase.cs line 542 "if (band.Exportable || webPreview) ExportBand(band)".
+	NotExportable bool
 }
 
 // ObjectType distinguishes the kind of report object stored in PreparedObject.
@@ -349,6 +354,34 @@ const (
 	// after stripping RTF control words via utils.StripRTF.
 	ObjectTypeRTF
 )
+
+// LineCapStyle mirrors object.CapStyle without creating an import cycle.
+// Values match C# FastReport.CapStyle enum order (CapSettings.cs).
+type LineCapStyle int
+
+const (
+	// LineCapStyleNone draws no cap (default).
+	LineCapStyleNone LineCapStyle = iota
+	// LineCapStyleCircle draws a circle cap.
+	LineCapStyleCircle
+	// LineCapStyleSquare draws a square cap.
+	LineCapStyleSquare
+	// LineCapStyleDiamond draws a diamond cap.
+	LineCapStyleDiamond
+	// LineCapStyleArrow draws an arrow cap.
+	LineCapStyleArrow
+)
+
+// LineCap holds the rendering parameters for one end of a LineObject.
+// Mirrors C# FastReport.CapSettings (CapSettings.cs).
+type LineCap struct {
+	// Style is the cap shape. Default: LineCapStyleNone.
+	Style LineCapStyle
+	// Width is the cap width in pixels. Default: 8.
+	Width float32
+	// Height is the cap height in pixels. Default: 8.
+	Height float32
+}
 
 // MergeMode controls how adjacent text objects with the same content are
 // merged. Mirrors FastReport.MergeMode flags (bitfield: Vertical=2, Horizontal=1).
@@ -398,6 +431,11 @@ type PreparedObject struct {
 	ShapeCurve float32
 	// LineDiagonal indicates a diagonal line (for ObjectTypeLine).
 	LineDiagonal bool
+	// LineStartCap is the start-cap decoration for ObjectTypeLine.
+	// Style values mirror object.CapStyle: 0=None, 1=Circle, 2=Square, 3=Diamond, 4=Arrow.
+	LineStartCap LineCap
+	// LineEndCap is the end-cap decoration for ObjectTypeLine.
+	LineEndCap LineCap
 	// Points holds vertex coordinates for ObjectTypePolyLine and ObjectTypePolygon.
 	// Each element is [x, y] in pixels relative to the object's Left/Top origin.
 	Points [][2]float32
@@ -458,10 +496,29 @@ type PreparedObject struct {
 	// PaddingLeft, PaddingTop, PaddingRight, PaddingBottom are interior spacing
 	// in pixels, sourced from TextObject.Padding.
 	PaddingLeft, PaddingTop, PaddingRight, PaddingBottom float32
+	// Trimming controls how text is trimmed when it overflows the bounds.
+	// Mirrors object.StringTrimming: 0=None, 1=Character, 2=Word,
+	// 3=EllipsisCharacter, 4=EllipsisWord, 5=EllipsisPath.
+	// HTML exporter maps 3/4/5 to CSS text-overflow:ellipsis.
+	Trimming int
+
 	// ParagraphOffset is the first-line text indent in pixels.
 	ParagraphOffset float32
+	// ParagraphFirstLineIndent is the first-line indent from ParagraphFormat.FirstLineIndent.
+	// Positive = indent right; negative = hanging indent. Mirrors C# ParagraphFormat (TextObject.cs).
+	ParagraphFirstLineIndent float32
+	// ParagraphLineSpacing and ParagraphLineSpacingType mirror
+	// TextObject.ParagraphFormat.LineSpacing and LineSpacingType.
+	// ParagraphLineSpacingType: 0=Single, 1=AtLeast, 2=Exactly, 3=Multiple.
+	// Applied to CSS line-height by the HTML exporter.
+	ParagraphLineSpacing     float32
+	ParagraphLineSpacingType int
 	// LineHeight is the explicit line height in pixels (0 = use default).
 	LineHeight float32
+	// ForceJustify forces justification of the last line when HorzAlign=Justify.
+	// HTML exporter maps this to CSS text-align-last:justify.
+	// Mirrors TextObject.ForceJustify (TextObject.cs).
+	ForceJustify bool
 	// RTL indicates right-to-left text direction.
 	RTL bool
 	// Clip indicates whether the object should clip its content.
@@ -499,6 +556,11 @@ type PreparedObject struct {
 	// (0=None,1=TopLeft,...,9=BottomRight).
 	// C# PictureObjectBase.ImageAlign (PictureObjectBase.cs).
 	PictureImageAlign int
+	// NotExportable, when true, causes all exporters to skip this object.
+	// Zero-value (false) means the object IS exported (matching C# default Exportable=true).
+	// Set by the engine when obj.Exportable()==false after ExportableExpression evaluation.
+	// C# ref: ReportEngine.Bands.cs lines 287-296, HTMLExportLayers.cs line 967.
+	NotExportable bool
 }
 
 // ── PreparedWatermark ─────────────────────────────────────────────────────────
@@ -859,6 +921,23 @@ func (pp *PreparedPages) ContainsBand(name string) bool {
 	}
 	for _, b := range pg.Bands {
 		if b.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+// ContainsBandPrefix reports whether any band on the current page has a name
+// starting with the given prefix. Used to detect duplicate page bands (PageHeader,
+// PageFooter, Overlay) by their type-prefix convention.
+// Mirrors the C# PreparedPages.ContainsBand(Type type) overload (Bands.cs:495).
+func (pp *PreparedPages) ContainsBandPrefix(prefix string) bool {
+	pg := pp.CurrentPage()
+	if pg == nil {
+		return false
+	}
+	for _, b := range pg.Bands {
+		if len(b.Name) >= len(prefix) && b.Name[:len(prefix)] == prefix {
 			return true
 		}
 	}

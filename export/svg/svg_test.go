@@ -627,6 +627,57 @@ func TestSVGExporter_LineObject_WithBorderLine(t *testing.T) {
 	}
 }
 
+func TestSVGExporter_LineObject_ArrowCap(t *testing.T) {
+	pp := buildPageWithObjects([]preview.PreparedObject{
+		{
+			Name: "L", Kind: preview.ObjectTypeLine,
+			Left: 0, Top: 0, Width: 100, Height: 1,
+			LineEndCap: preview.LineCap{Style: preview.LineCapStyleArrow, Width: 8, Height: 8},
+		},
+	})
+	out := exportSVG(t, pp)
+	if !strings.Contains(out, "<defs>") {
+		t.Error("arrow cap: expected <defs> block in SVG output")
+	}
+	if !strings.Contains(out, `marker-end="url(#`) {
+		t.Errorf("arrow cap: expected marker-end attribute on line element, got:\n%s", out)
+	}
+	if !strings.Contains(out, `<path d="M0,0 L6,3 L0,6 Z"`) {
+		t.Error("arrow cap: expected arrow path in SVG defs")
+	}
+}
+
+func TestSVGExporter_LineObject_BothCaps(t *testing.T) {
+	pp := buildPageWithObjects([]preview.PreparedObject{
+		{
+			Name: "L", Kind: preview.ObjectTypeLine,
+			Left: 0, Top: 0, Width: 100, Height: 1,
+			LineStartCap: preview.LineCap{Style: preview.LineCapStyleCircle, Width: 8, Height: 8},
+			LineEndCap:   preview.LineCap{Style: preview.LineCapStyleArrow, Width: 8, Height: 8},
+		},
+	})
+	out := exportSVG(t, pp)
+	if !strings.Contains(out, `marker-start="url(#`) {
+		t.Error("both caps: expected marker-start attribute")
+	}
+	if !strings.Contains(out, `marker-end="url(#`) {
+		t.Error("both caps: expected marker-end attribute")
+	}
+}
+
+func TestSVGExporter_LineObject_NoCaps_NoDefs(t *testing.T) {
+	pp := buildPageWithObjects([]preview.PreparedObject{
+		{
+			Name: "L", Kind: preview.ObjectTypeLine,
+			Left: 0, Top: 0, Width: 100, Height: 1,
+		},
+	})
+	out := exportSVG(t, pp)
+	if strings.Contains(out, "<defs>") {
+		t.Error("no-cap line: should not emit <defs> block")
+	}
+}
+
 // ── Shape objects ─────────────────────────────────────────────────────────────
 
 func TestSVGExporter_ShapeObject_Rectangle(t *testing.T) {

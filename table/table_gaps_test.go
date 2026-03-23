@@ -531,3 +531,140 @@ func TestTableBase_CalcHeight_SkipsInvisibleRows(t *testing.T) {
 		t.Errorf("CalcHeight() with one invisible row = %v, want 50", h)
 	}
 }
+
+// ── TableBase.ProcessDuplicates ───────────────────────────────────────────────
+
+// buildSimpleTable creates a nRows×nCols table with rows of height 30 and
+// columns of width 100. Each cell is given Name=name and Text=text.
+func buildSimpleTable(cells [][]struct{ name, text string }) *table.TableBase {
+	tbl := table.NewTableBase()
+	nRows := len(cells)
+	nCols := 0
+	if nRows > 0 {
+		nCols = len(cells[0])
+	}
+	for ci := 0; ci < nCols; ci++ {
+		col := table.NewTableColumn()
+		col.SetWidth(100)
+		tbl.AddColumn(col)
+	}
+	for ri := 0; ri < nRows; ri++ {
+		row := table.NewTableRow()
+		row.SetHeight(30)
+		for ci := 0; ci < nCols; ci++ {
+			cell := table.NewTableCell()
+			cell.SetName(cells[ri][ci].name)
+			cell.SetText(cells[ri][ci].text)
+			row.AddCell(cell)
+		}
+		tbl.AddRow(row)
+	}
+	return tbl
+}
+
+func TestProcessDuplicates_ShowIsNoop(t *testing.T) {
+	// CellDuplicatesShow (default) must not change anything.
+	tbl := buildSimpleTable([][]struct{ name, text string }{
+		{{"A", "X"}, {"A", "X"}},
+	})
+	tbl.ProcessDuplicates()
+	if got := tbl.Cell(0, 0).Text(); got != "X" {
+		t.Errorf("cell(0,0).Text = %q, want X", got)
+	}
+	if got := tbl.Cell(0, 1).Text(); got != "X" {
+		t.Errorf("cell(0,1).Text = %q, want X", got)
+	}
+}
+
+func TestProcessDuplicates_Clear_HorizontalRun(t *testing.T) {
+	// Three consecutive cells in same row with same Name+Text → Clear blanks [1] and [2].
+	tbl := buildSimpleTable([][]struct{ name, text string }{
+		{{"A", "hello"}, {"A", "hello"}, {"A", "hello"}},
+	})
+	tbl.Cell(0, 0).SetDuplicates(table.CellDuplicatesClear)
+	tbl.Cell(0, 1).SetDuplicates(table.CellDuplicatesClear)
+	tbl.Cell(0, 2).SetDuplicates(table.CellDuplicatesClear)
+	tbl.ProcessDuplicates()
+	if got := tbl.Cell(0, 0).Text(); got != "hello" {
+		t.Errorf("origin text = %q, want hello", got)
+	}
+	if got := tbl.Cell(0, 1).Text(); got != "" {
+		t.Errorf("dup[1] text = %q, want empty", got)
+	}
+	if got := tbl.Cell(0, 2).Text(); got != "" {
+		t.Errorf("dup[2] text = %q, want empty", got)
+	}
+}
+
+func TestProcessDuplicates_Clear_DifferentTextStops(t *testing.T) {
+	// Second cell has different text → only first two are cleared (none).
+	tbl := buildSimpleTable([][]struct{ name, text string }{
+		{{"A", "hello"}, {"A", "world"}, {"A", "hello"}},
+	})
+	tbl.Cell(0, 0).SetDuplicates(table.CellDuplicatesClear)
+	tbl.Cell(0, 1).SetDuplicates(table.CellDuplicatesClear)
+	tbl.Cell(0, 2).SetDuplicates(table.CellDuplicatesClear)
+	tbl.ProcessDuplicates()
+	// All texts unchanged because the run of duplicates at col=0 has length=1
+	if got := tbl.Cell(0, 0).Text(); got != "hello" {
+		t.Errorf("cell(0,0) = %q, want hello", got)
+	}
+	if got := tbl.Cell(0, 1).Text(); got != "world" {
+		t.Errorf("cell(0,1) = %q, want world", got)
+	}
+}
+
+func TestProcessDuplicates_Merge_ExpandsSpan(t *testing.T) {
+	// Two cells in same row with same Name+Text → first cell ColSpan becomes 2.
+	tbl := buildSimpleTable([][]struct{ name, text string }{
+		{{"B", "val"}, {"B", "val"}, {"B", "other"}},
+	})
+	tbl.Cell(0, 0).SetDuplicates(table.CellDuplicatesMerge)
+	tbl.Cell(0, 1).SetDuplicates(table.CellDuplicatesMerge)
+	tbl.Cell(0, 2).SetDuplicates(table.CellDuplicatesMerge)
+	tbl.ProcessDuplicates()
+	if got := tbl.Cell(0, 0).ColSpan(); got != 2 {
+		t.Errorf("ColSpan = %d, want 2", got)
+	}
+}
+
+func TestProcessDuplicates_MergeNonEmpty_SkipsEmpty(t *testing.T) {
+	// MergeNonEmpty with empty text must NOT expand the span.
+	tbl := buildSimpleTable([][]struct{ name, text string }{
+		{{"C", ""}, {"C", ""}},
+	})
+	tbl.Cell(0, 0).SetDuplicates(table.CellDuplicatesMergeNonEmpty)
+	tbl.Cell(0, 1).SetDuplicates(table.CellDuplicatesMergeNonEmpty)
+	tbl.ProcessDuplicates()
+	if got := tbl.Cell(0, 0).ColSpan(); got != 1 {
+		t.Errorf("ColSpan for empty text = %d, want 1 (no merge)", got)
+	}
+}
+
+func TestProcessDuplicates_MergeNonEmpty_MergesWhenNonEmpty(t *testing.T) {
+	tbl := buildSimpleTable([][]struct{ name, text string }{
+		{{"C", "hi"}, {"C", "hi"}},
+	})
+	tbl.Cell(0, 0).SetDuplicates(table.CellDuplicatesMergeNonEmpty)
+	tbl.Cell(0, 1).SetDuplicates(table.CellDuplicatesMergeNonEmpty)
+	tbl.ProcessDuplicates()
+	if got := tbl.Cell(0, 0).ColSpan(); got != 2 {
+		t.Errorf("ColSpan for non-empty = %d, want 2", got)
+	}
+}
+
+func TestProcessDuplicates_VerticalMerge(t *testing.T) {
+	// Same name+text in two rows, same column → RowSpan becomes 2.
+	tbl := buildSimpleTable([][]struct{ name, text string }{
+		{{"D", "same"}},
+		{{"D", "same"}},
+		{{"D", "diff"}},
+	})
+	tbl.Cell(0, 0).SetDuplicates(table.CellDuplicatesMerge)
+	tbl.Cell(1, 0).SetDuplicates(table.CellDuplicatesMerge)
+	tbl.Cell(2, 0).SetDuplicates(table.CellDuplicatesMerge)
+	tbl.ProcessDuplicates()
+	if got := tbl.Cell(0, 0).RowSpan(); got != 2 {
+		t.Errorf("RowSpan = %d, want 2", got)
+	}
+}

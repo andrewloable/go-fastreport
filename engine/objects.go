@@ -70,6 +70,10 @@ func (e *ReportEngine) populateBandObjects2(parentBand *band.BandBase, objs *rep
 						base = built
 					}
 				}
+				// Apply CellDuplicates deduplication before rendering.
+				// Mirrors C# TableResult.GeneratePages() calling ProcessDuplicates()
+				// (FastReport.Base/Table/TableResult.cs lines 334, 359).
+				base.ProcessDuplicates()
 				e.populateTableObjects(base, tbl.Left(), tbl.Top(), pb)
 			}
 			// Render AdvMatrixObject physical cells as individual PreparedObjects.
@@ -92,7 +96,51 @@ func (e *ReportEngine) populateBandObjects2(parentBand *band.BandBase, objs *rep
 				capturedFmt := txt.Format()
 				pb.Objects[idx].Text = "" // placeholder: blank until deferred state fires
 				evalFn := func() {
-					capturedPb.Objects[capturedIdx].Text = e.evalTextWithFormat(capturedTxt.Text(), capturedFmt)
+					// Mirrors C# ProcessInfo.Process() (ReportEngine.ProcessAt.cs lines 88-108):
+					// re-evaluate text expression and re-apply highlight conditions with the
+					// current data context, then update text, FillColor, TextColor, Font on
+					// the already-placed PreparedObject.
+					po := &capturedPb.Objects[capturedIdx]
+					po.Text = e.evalTextWithFormat(capturedTxt.Text(), capturedFmt)
+					// Restore design-time base fill/text-color/font.
+					if f, ok2 := capturedTxt.Fill().(*style.SolidFill); ok2 && f.Color.A > 0 {
+						po.FillColor = f.Color
+					} else {
+						po.FillColor = color.RGBA{}
+					}
+					po.TextColor = capturedTxt.TextColor()
+					po.Font = capturedTxt.Font()
+					// Suppress invisible text (alpha=0 text color).
+					if po.TextColor.A == 0 && po.Text != "" {
+						po.Text = ""
+					}
+					// Re-apply highlight conditions with the new data context.
+					if e.report != nil {
+						for _, cond := range capturedTxt.Highlights() {
+							result, err := e.report.Calc(cond.Expression)
+							if err != nil {
+								continue
+							}
+							matched, _ := result.(bool)
+							if !matched {
+								continue
+							}
+							if !cond.Visible {
+								po.Text = ""
+								break
+							}
+							if cond.ApplyFill {
+								po.FillColor = cond.FillColor
+							}
+							if cond.ApplyTextFill {
+								po.TextColor = cond.TextFillColor
+							}
+							if cond.ApplyFont {
+								po.Font = cond.Font
+							}
+							break
+						}
+					}
 				}
 				if txt.ProcessAt() == object.ProcessAtCustom {
 					// Custom: register for manual ProcessObject(obj) call.
@@ -162,6 +210,11 @@ func (e *ReportEngine) populateTableObjects(tbl *table.TableBase, originX, origi
 		rowH := row.Height()
 		for ci, cell := range row.Cells() {
 			if cell == nil {
+				continue
+			}
+			// Skip cells that are covered by another cell's span.
+			// Mirrors C# LayerTable: if (!table.IsInsideSpan(table[j, i])).
+			if tbl.IsInsideSpan(ci, ri) {
 				continue
 			}
 			// Compute cell width from ColSpan.
@@ -715,14 +768,36 @@ func (e *ReportEngine) buildPreparedObject(obj report.Base) *preview.PreparedObj
 		return nil // no geometry = not a renderable object
 	}
 
+	// Evaluate ExportableExpression and snapshot Exportable flag.
+	// Mirrors C# ReportEngine.Bands.cs lines 287-296 (CanPrint block).
+	// Unlike Printable (which excludes from PreparedPages), Exportable is
+	// snapshotted so exporters can choose to skip non-exportable objects.
+	type hasExportable interface {
+		Exportable() bool
+		ExportableExpression() string
+		SetExportable(bool)
+	}
+	notExportable := false
+	if ex, ok := obj.(hasExportable); ok {
+		if expr := ex.ExportableExpression(); expr != "" && e.report != nil {
+			if val, err := e.report.Calc(expr); err == nil {
+				if b, ok2 := val.(bool); ok2 {
+					ex.SetExportable(b)
+				}
+			}
+		}
+		notExportable = !ex.Exportable()
+	}
+
 	po := &preview.PreparedObject{
-		Name:    obj.Name(),
-		Left:    geom.Left(),
-		Top:     geom.Top(),
-		Width:   geom.Width(),
-		Height:  geom.Height(),
-		BlobIdx: -1,
-		Font:    style.DefaultFont(),
+		Name:          obj.Name(),
+		Left:          geom.Left(),
+		Top:           geom.Top(),
+		Width:         geom.Width(),
+		Height:        geom.Height(),
+		BlobIdx:       -1,
+		Font:          style.DefaultFont(),
+		NotExportable: notExportable,
 	}
 
 	// Populate hyperlink from ReportComponentBase if present.
@@ -798,8 +873,15 @@ func (e *ReportEngine) buildPreparedObject(obj report.Base) *preview.PreparedObj
 		po.PaddingTop = pad.Top
 		po.PaddingRight = pad.Right
 		po.PaddingBottom = pad.Bottom
+		po.Trimming = int(v.Trimming())
+		po.ForceJustify = v.ForceJustify()
 		po.ParagraphOffset = v.ParagraphOffset()
 		po.LineHeight = v.LineHeight()
+		// ParagraphFormat — mirrors C# context.paragraphFormat assignment (TextObject.cs line 1199).
+		pf := v.ParagraphFormat()
+		po.ParagraphFirstLineIndent = pf.FirstLineIndent
+		po.ParagraphLineSpacing = pf.LineSpacing
+		po.ParagraphLineSpacingType = int(pf.LineSpacingType)
 		po.RTL = v.RightToLeft()
 		po.Clip = v.Clip()
 		// Apply highlight conditions — first matching condition wins.
@@ -869,6 +951,18 @@ func (e *ReportEngine) buildPreparedObject(obj report.Base) *preview.PreparedObj
 		po.Border = v.Border()
 		if f, ok := v.Fill().(*style.SolidFill); ok {
 			po.FillColor = f.Color
+		}
+		// Propagate cap settings so exporters can render caps.
+		// Mirrors C# LineObject.GetConvertedObjects() cap path (LineObject.OpenSource.cs).
+		po.LineStartCap = preview.LineCap{
+			Style:  preview.LineCapStyle(v.StartCap.Style),
+			Width:  v.StartCap.Width,
+			Height: v.StartCap.Height,
+		}
+		po.LineEndCap = preview.LineCap{
+			Style:  preview.LineCapStyle(v.EndCap.Style),
+			Width:  v.EndCap.Width,
+			Height: v.EndCap.Height,
 		}
 
 	case *object.ShapeObject:

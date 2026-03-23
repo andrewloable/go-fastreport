@@ -301,6 +301,11 @@ func (e *ExportBase) Export(pages *preview.PreparedPages, w io.Writer, exp Expor
 			return fmt.Errorf("export: page %d begin: %w", idx+1, err)
 		}
 		for _, b := range pg.Bands {
+			// Skip non-exportable bands. Mirrors C# ExportBase.cs line 542:
+			// "if (band.Exportable || webPreview) ExportBand(band)".
+			if b.NotExportable {
+				continue
+			}
 			if err := exp.ExportBand(b); err != nil {
 				return fmt.Errorf("export: page %d band %q: %w", idx+1, b.Name, err)
 			}

@@ -9,6 +9,7 @@ package engine
 //  4. showBandNoAdvance: valid visible band → advances curY
 //  5. endColumn: curColumn >= cols → reset to 0, return false (all columns filled)
 //  6. runBands: default branch (band that is not DataBand or GroupHeaderBand)
+//  8. showBand: ContainsBand dedup — page bands not added twice to same page
 
 import (
 	"testing"
@@ -179,5 +180,108 @@ func TestRunBands_Aborted_StopsEarly(t *testing.T) {
 	after := len(pg0.Bands)
 	if after != before {
 		t.Errorf("runBands aborted: expected no bands added; before=%d after=%d", before, after)
+	}
+}
+
+// ── 8: showBand — ContainsBand deduplication for page bands ──────────────────
+// Mirrors C# AddToPreparedPages lines 484-499 (ReportEngine.Bands.cs):
+// page bands (PageHeader, PageFooter, Overlay) must not be added to the same
+// prepared page twice (as can happen when rendering subreports).
+
+func TestShowBand_PageHeaderDedup_NotAddedTwice(t *testing.T) {
+	e := buildPagesInternalEngine(t)
+
+	ph := band.NewPageHeaderBand()
+	ph.SetName("PageHeader1")
+	ph.SetHeight(30)
+	ph.SetVisible(true)
+
+	pg0 := e.preparedPages.GetPage(0)
+	countBefore := len(pg0.Bands)
+
+	// Call showBand twice with the same PageHeaderBand type.
+	e.showBand(ph)
+	countAfter1 := len(pg0.Bands)
+	e.showBand(ph)
+	countAfter2 := len(pg0.Bands)
+
+	if countAfter1 != countBefore+1 {
+		t.Errorf("first showBand: want %d bands, got %d", countBefore+1, countAfter1)
+	}
+	if countAfter2 != countAfter1 {
+		t.Errorf("second showBand (duplicate): want %d bands (no change), got %d", countAfter1, countAfter2)
+	}
+}
+
+func TestShowBand_PageFooterDedup_NotAddedTwice(t *testing.T) {
+	e := buildPagesInternalEngine(t)
+
+	pf := band.NewPageFooterBand()
+	pf.SetName("PageFooter1")
+	pf.SetHeight(25)
+	pf.SetVisible(true)
+
+	pg0 := e.preparedPages.GetPage(0)
+	countBefore := len(pg0.Bands)
+
+	e.showBand(pf)
+	countAfter1 := len(pg0.Bands)
+	e.showBand(pf)
+	countAfter2 := len(pg0.Bands)
+
+	if countAfter1 != countBefore+1 {
+		t.Errorf("first showBand PageFooter: want %d bands, got %d", countBefore+1, countAfter1)
+	}
+	if countAfter2 != countAfter1 {
+		t.Errorf("second showBand PageFooter (duplicate): want %d bands (no change), got %d", countAfter1, countAfter2)
+	}
+}
+
+func TestShowBand_OverlayDedup_NotAddedTwice(t *testing.T) {
+	e := buildPagesInternalEngine(t)
+
+	ov := band.NewOverlayBand()
+	ov.SetName("Overlay1")
+	ov.SetHeight(20)
+	ov.SetVisible(true)
+
+	pg0 := e.preparedPages.GetPage(0)
+	countBefore := len(pg0.Bands)
+
+	e.showBand(ov)
+	countAfter1 := len(pg0.Bands)
+	e.showBand(ov)
+	countAfter2 := len(pg0.Bands)
+
+	if countAfter1 != countBefore+1 {
+		t.Errorf("first showBand Overlay: want %d bands, got %d", countBefore+1, countAfter1)
+	}
+	if countAfter2 != countAfter1 {
+		t.Errorf("second showBand Overlay (duplicate): want %d bands (no change), got %d", countAfter1, countAfter2)
+	}
+}
+
+func TestShowBand_DataBand_AllowedTwice(t *testing.T) {
+	e := buildPagesInternalEngine(t)
+
+	db := band.NewDataBand()
+	db.SetName("DataBand1")
+	db.SetHeight(20)
+	db.SetVisible(true)
+
+	pg0 := e.preparedPages.GetPage(0)
+	countBefore := len(pg0.Bands)
+
+	// Non-page bands (DataBand) should always be added — no deduplication.
+	e.showBand(db)
+	countAfter1 := len(pg0.Bands)
+	e.showBand(db)
+	countAfter2 := len(pg0.Bands)
+
+	if countAfter1 != countBefore+1 {
+		t.Errorf("first showBand DataBand: want %d bands, got %d", countBefore+1, countAfter1)
+	}
+	if countAfter2 != countAfter1+1 {
+		t.Errorf("second showBand DataBand: want %d bands (added again), got %d", countAfter1+1, countAfter2)
 	}
 }

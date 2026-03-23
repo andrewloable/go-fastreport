@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"strings"
+	"unicode"
 )
 
 // NumToWordsNl converts an integer to its Dutch word representation.
@@ -45,6 +46,82 @@ var nlTens = []string{
 var nlHundreds = []string{
 	"", "honderd", "tweehonderd", "driehonderd", "vierhonderd", "vijfhonderd",
 	"zeshonderd", "zevenhonderd", "achthonderd", "negenhonderd",
+}
+
+// nlCurrencies maps ISO currency codes to their Dutch word forms.
+// CAD is aliased to USD as in the C# source (NumToWordsNl.cs GetCurrency).
+var nlCurrencies = map[string]struct {
+	s1, sm string
+	j1, jm string
+}{
+	"USD": {"dollar", "dollar", "cent", "cent"},
+	"CAD": {"dollar", "dollar", "cent", "cent"},
+	"EUR": {"euro", "euro", "cent", "cent"},
+	"GBP": {"pound", "pound", "penny", "penny"},
+}
+
+// nlSimpleCase returns one if n==1, otherwise many.
+func nlSimpleCase(n int64, one, many string) string {
+	if n == 1 {
+		return one
+	}
+	return many
+}
+
+// ConvertCurrencyNl converts a float64 monetary value to Dutch words for the given ISO currency code.
+// If decimalPartToWord is true, the cents are also expressed in words; otherwise as a numeric "NN " prefix.
+// Mirrors NumToWordsNl.cs / NumToWordsBase.cs ConvertCurrency logic.
+func ConvertCurrencyNl(value float64, currencyName string, decimalPartToWord bool) (string, error) {
+	cur, ok := nlCurrencies[strings.ToUpper(currencyName)]
+	if !ok {
+		return "", fmt.Errorf("unknown currency: %s", currencyName)
+	}
+	n := int64(math.Abs(value))
+	cents := int(math.Round((math.Abs(value) - float64(n)) * 100))
+	if cents >= 100 {
+		n++
+		cents = 0
+	}
+	negative := value < 0
+
+	var wholeWords string
+	if n == 0 {
+		wholeWords = "nul"
+	} else {
+		wholeWords = strings.TrimSpace(nlPositive(n))
+	}
+	seniorWord := nlSimpleCase(n, cur.s1, cur.sm)
+	result := wholeWords + " " + seniorWord
+
+	if negative {
+		result = "min " + result
+	}
+
+	if cur.j1 != "" {
+		var juniorPart string
+		if decimalPartToWord {
+			var centsWords string
+			if cents == 0 {
+				centsWords = "nul"
+			} else {
+				centsWords = strings.TrimSpace(nlPositive(int64(cents)))
+			}
+			juniorWord := nlSimpleCase(int64(cents), cur.j1, cur.jm)
+			juniorPart = centsWords + " " + juniorWord
+		} else {
+			juniorWord := nlSimpleCase(int64(cents), cur.j1, cur.jm)
+			juniorPart = fmt.Sprintf("%02d ", cents) + juniorWord
+		}
+		// C# appends GetDecimalSeparator() + decimalPart → "en " + juniorPart
+		result = result + " en " + juniorPart
+	}
+
+	r := []rune(result)
+	if len(r) > 0 {
+		r[0] = unicode.ToUpper(r[0])
+		result = string(r)
+	}
+	return result, nil
 }
 
 func nlPositive(n int64) string {

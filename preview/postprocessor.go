@@ -32,7 +32,27 @@ func NewPostprocessor(pp *PreparedPages) *Postprocessor {
 // Call this once after the engine has finished its final pass.
 func (p *Postprocessor) Process() {
 	total := p.pp.Count()
-	totalStr := fmt.Sprintf("%d", total)
+
+	// Compute logical total pages, accounting for InitialPageNumber.
+	// C# equivalent: preparedPages.Count + Report.InitialPageNumber - 1
+	// (PreparedPages.cs line 283). In Go, InitialPageNumber is embedded in
+	// each page's PageNo: first page has PageNo = InitialPageNumber, so
+	// logicalTotal = firstPage.PageNo + count - 1.
+	logicalTotal := total
+	if total > 0 {
+		logicalTotal = p.pp.pages[0].PageNo + total - 1
+	}
+	totalStr := fmt.Sprintf("%d", logicalTotal)
+
+	// macroReplace replaces all TotalPages/Page macros in text.
+	macroReplace := func(t, pageStr string) string {
+		t = strings.ReplaceAll(t, "[TotalPages]", totalStr)
+		t = strings.ReplaceAll(t, "[PageCount]", totalStr)
+		t = strings.ReplaceAll(t, "[Page]", pageStr)
+		t = strings.ReplaceAll(t, "[PAGE#]", pageStr)
+		t = strings.ReplaceAll(t, "[TOTALPAGES#]", totalStr)
+		return t
+	}
 
 	// Pass 1: macro substitution (TotalPages, Page).
 	for i := range p.pp.pages {
@@ -45,14 +65,14 @@ func (p *Postprocessor) Process() {
 				if obj.Text == "" {
 					continue
 				}
-				t := obj.Text
-				t = strings.ReplaceAll(t, "[TotalPages]", totalStr)
-				t = strings.ReplaceAll(t, "[PageCount]", totalStr)
-				t = strings.ReplaceAll(t, "[Page]", pageStr)
-				t = strings.ReplaceAll(t, "[PAGE#]", pageStr)
-				t = strings.ReplaceAll(t, "[TOTALPAGES#]", totalStr)
-				obj.Text = t
+				obj.Text = macroReplace(obj.Text, pageStr)
 			}
+		}
+		// Also replace macros in watermark text.
+		// C# equivalent: PreparedPagePostprocessor calls b.ExtractMacros() on
+		// watermark objects (PreparedPagePostprocessor.cs line 224, Base.cs line 611).
+		if pg.Watermark != nil && pg.Watermark.Text != "" {
+			pg.Watermark.Text = macroReplace(pg.Watermark.Text, pageStr)
 		}
 	}
 

@@ -293,3 +293,73 @@ func TestProcess_Duplicates_NonTextKind_Skipped(t *testing.T) {
 
 	preview.NewPostprocessor(pp).Process() // should not panic
 }
+
+// ── InitialPageNumber TotalPages fix ─────────────────────────────────────────
+
+// TestProcess_TotalPages_InitialPageNumber verifies that [TotalPages] macro
+// accounts for InitialPageNumber (i.e. is logicalTotal = firstPage.PageNo + count - 1).
+// C# reference: PreparedPages.cs line 283: macroValues["TotalPages#"] = count + InitialPageNumber - 1.
+func TestProcess_TotalPages_InitialPageNumber(t *testing.T) {
+	pp := preview.New()
+	// Simulate InitialPageNumber=3 with 2 pages (PageNo 3,4)
+	pp.AddPage(595, 842, 3)
+	pg1 := pp.CurrentPage()
+	pg1.Bands = append(pg1.Bands, &preview.PreparedBand{
+		Objects: []preview.PreparedObject{
+			{Name: "txt", Text: "[TotalPages]"},
+		},
+	})
+
+	pp.AddPage(595, 842, 4)
+	pg2 := pp.CurrentPage()
+	pg2.Bands = append(pg2.Bands, &preview.PreparedBand{
+		Objects: []preview.PreparedObject{
+			{Name: "txt", Text: "[TotalPages]"},
+		},
+	})
+
+	preview.NewPostprocessor(pp).Process()
+
+	// With InitialPageNumber=3 and count=2: logicalTotal = 3 + 2 - 1 = 4
+	want := "4"
+	got := pp.GetPage(0).Bands[0].Objects[0].Text
+	if got != want {
+		t.Errorf("page1 TotalPages = %q, want %q", got, want)
+	}
+	got = pp.GetPage(1).Bands[0].Objects[0].Text
+	if got != want {
+		t.Errorf("page2 TotalPages = %q, want %q", got, want)
+	}
+}
+
+// TestProcess_WatermarkMacro verifies that [TotalPages] and [Page] macros
+// are replaced in the PreparedPage.Watermark.Text field.
+// C# reference: PreparedPagePostprocessor.cs line 224 calls ExtractMacros on watermark.
+func TestProcess_WatermarkMacro(t *testing.T) {
+	pp := preview.New()
+	pp.AddPage(595, 842, 1)
+	pg := pp.CurrentPage()
+	pg.Watermark = &preview.PreparedWatermark{
+		Enabled: true,
+		Text:    "Page [PAGE#] of [TOTALPAGES#]",
+	}
+
+	pp.AddPage(595, 842, 2)
+	pg2 := pp.CurrentPage()
+	pg2.Watermark = &preview.PreparedWatermark{
+		Enabled: true,
+		Text:    "Page [PAGE#] of [TOTALPAGES#]",
+	}
+
+	preview.NewPostprocessor(pp).Process()
+
+	// 2 pages, InitialPageNumber=1 → logicalTotal = 2
+	got := pp.GetPage(0).Watermark.Text
+	if got != "Page 1 of 2" {
+		t.Errorf("page1 watermark = %q, want \"Page 1 of 2\"", got)
+	}
+	got = pp.GetPage(1).Watermark.Text
+	if got != "Page 2 of 2" {
+		t.Errorf("page2 watermark = %q, want \"Page 2 of 2\"", got)
+	}
+}

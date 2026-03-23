@@ -273,6 +273,16 @@ func calcBandLayout(bb *band.BandBase, baseHeight float32, evalFn func(string) s
 	return bandLayout{height: maxBottom, shifts: shifts, effectiveH: effectiveH}
 }
 
+// bandNotExportable returns true when the band's Exportable flag is false.
+// Returns false (exportable) for types that do not implement the interface.
+func bandNotExportable(b report.Base) bool {
+	type hasExportable interface{ Exportable() bool }
+	if ex, ok := b.(hasExportable); ok {
+		return !ex.Exportable()
+	}
+	return false // default: exportable
+}
+
 // ── AddBandToPreparedPages ────────────────────────────────────────────────────
 
 // AddBandToPreparedPages adds b to the current PreparedPage.
@@ -306,10 +316,11 @@ func (e *ReportEngine) AddBandToPreparedPages(b *band.BandBase) bool {
 	}
 
 	pb := &preview.PreparedBand{
-		Name:   b.Name(),
-		Left:   e.curX,
-		Top:    e.curY,
-		Height: height,
+		Name:          b.Name(),
+		Left:          e.curX,
+		Top:           e.curY,
+		Height:        height,
+		NotExportable: !b.Exportable(),
 	}
 	e.populateBandObjects(b, pb)
 	applyAnchorAdjustments(b, pb, 0, height-b.Height(), 0)
@@ -491,11 +502,12 @@ func (e *ReportEngine) showFullBandOnce(b *band.BandBase) {
 		}
 	} else if e.preparedPages != nil {
 		pb := &preview.PreparedBand{
-			Name:   b.Name(),
-			Left:   e.curX,
-			Top:    e.curY,
-			Height: height,
-			Width:  b.Width(),
+			Name:          b.Name(),
+			Left:          e.curX,
+			Top:           e.curY,
+			Height:        height,
+			Width:         b.Width(),
+			NotExportable: !b.Exportable(),
 		}
 		// Populate fill/border for band background rendering.
 		populateBandProps(b, pb)
@@ -516,6 +528,17 @@ func (e *ReportEngine) showFullBandOnce(b *band.BandBase) {
 		if e.curX != 0 {
 			for i := range pb.Objects {
 				pb.Objects[i].Left += e.curX
+			}
+		}
+		// Apply hierarchy indent: shift the band right and narrow its width.
+		// Mirrors C# ReportEngine.Bands.cs lines 469-476:
+		//   band.Left += hierarchyIndent; band.Width -= hierarchyIndent;
+		// Only non-zero during hierarchical DataBand rendering.
+		if e.hierarchyIndent > 0 {
+			pb.Left += e.hierarchyIndent
+			pb.Width -= e.hierarchyIndent
+			for i := range pb.Objects {
+				pb.Objects[i].Left += e.hierarchyIndent
 			}
 		}
 		_ = e.preparedPages.AddBand(pb)

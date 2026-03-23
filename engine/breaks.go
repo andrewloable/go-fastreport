@@ -51,9 +51,10 @@ func (e *ReportEngine) BreakBand(b *band.BandBase) {
 		// ── build top PreparedBand ────────────────────────────────────────
 		if e.preparedPages != nil {
 			pbTop := &preview.PreparedBand{
-				Name:   b.Name(),
-				Top:    e.curY,
-				Height: breakLine,
+				Name:          b.Name(),
+				Top:           e.curY,
+				Height:        breakLine,
+				NotExportable: !b.Exportable(),
 			}
 			e.splitPopulateTop(b.Objects(), pbTop, breakLine)
 			_ = e.preparedPages.AddBand(pbTop)
@@ -67,9 +68,10 @@ func (e *ReportEngine) BreakBand(b *band.BandBase) {
 		remainder := height - breakLine
 		if remainder > 0 && e.preparedPages != nil {
 			pbRem := &preview.PreparedBand{
-				Name:   b.Name(),
-				Top:    e.curY,
-				Height: remainder,
+				Name:          b.Name(),
+				Top:           e.curY,
+				Height:        remainder,
+				NotExportable: !b.Exportable(),
 			}
 			e.splitPopulateBottom(b.Objects(), pbRem, breakLine)
 			_ = e.preparedPages.AddBand(pbRem)
@@ -80,9 +82,10 @@ func (e *ReportEngine) BreakBand(b *band.BandBase) {
 		e.startNewPageForCurrent()
 		if e.preparedPages != nil {
 			pb := &preview.PreparedBand{
-				Name:   b.Name(),
-				Top:    e.curY,
-				Height: height,
+				Name:          b.Name(),
+				Top:           e.curY,
+				Height:        height,
+				NotExportable: !b.Exportable(),
 			}
 			e.populateBandObjects(b, pb)
 			_ = e.preparedPages.AddBand(pb)

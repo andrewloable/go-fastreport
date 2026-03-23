@@ -103,6 +103,11 @@ func (e *Exporter) ExportPageBegin(pg *preview.PreparedPage) error {
 		e.sb.WriteString(fmt.Sprintf("  <title>%s</title>\n", xmlEscape(e.Title)))
 	}
 
+	// Emit SVG marker defs for any line caps used on this page.
+	// Pre-scan bands to determine which cap styles are needed.
+	// Mirrors C# LineObject.GetConvertedObjects() cap-to-bitmap logic (LineObject.OpenSource.cs).
+	e.emitLineCapDefs(pg)
+
 	// White page background.
 	e.sb.WriteString(fmt.Sprintf(
 		`  <rect x="0" y="0" width="%.2f" height="%.2f" fill="#FFFFFF"/>`, w, h,
@@ -122,6 +127,86 @@ func (e *Exporter) ExportPageBegin(pg *preview.PreparedPage) error {
 	// Open a group for the page content.
 	e.sb.WriteString(fmt.Sprintf(`  <g id="page%d">`+"\n", e.pageIdx))
 	return nil
+}
+
+// emitLineCapDefs pre-scans pg for line objects with non-None caps and emits
+// a <defs> block containing the necessary SVG <marker> elements.
+// Each marker ID is scoped to the page index to avoid cross-page conflicts.
+// C# equivalent: LineObject.GetConvertedObjects() renders caps via GDI+;
+// Go uses SVG markers instead (LineObject.OpenSource.cs).
+func (e *Exporter) emitLineCapDefs(pg *preview.PreparedPage) {
+	needed := make(map[preview.LineCapStyle]bool)
+	for _, b := range pg.Bands {
+		for _, obj := range b.Objects {
+			if obj.Kind != preview.ObjectTypeLine {
+				continue
+			}
+			if obj.LineStartCap.Style != preview.LineCapStyleNone {
+				needed[obj.LineStartCap.Style] = true
+			}
+			if obj.LineEndCap.Style != preview.LineCapStyleNone {
+				needed[obj.LineEndCap.Style] = true
+			}
+		}
+	}
+	if len(needed) == 0 {
+		return
+	}
+	e.sb.WriteString("  <defs>\n")
+	for style := range needed {
+		e.sb.WriteString(e.svgCapMarkerDef(style))
+	}
+	e.sb.WriteString("  </defs>\n")
+}
+
+// svgCapMarkerDef returns the SVG <marker> definition for a given cap style.
+// Each marker is sized relative to stroke width via markerUnits="strokeWidth".
+func (e *Exporter) svgCapMarkerDef(s preview.LineCapStyle) string {
+	id := e.capMarkerID(s)
+	switch s {
+	case preview.LineCapStyleArrow:
+		// Arrow: right-pointing filled triangle, auto-oriented.
+		return fmt.Sprintf(
+			`    <marker id="%s" markerWidth="6" markerHeight="6" refX="6" refY="3" orient="auto" markerUnits="strokeWidth">`+"\n"+
+				`      <path d="M0,0 L6,3 L0,6 Z" fill="context-stroke"/>`+"\n"+
+				`    </marker>`+"\n", id)
+	case preview.LineCapStyleCircle:
+		return fmt.Sprintf(
+			`    <marker id="%s" markerWidth="4" markerHeight="4" refX="2" refY="2" orient="auto" markerUnits="strokeWidth">`+"\n"+
+				`      <circle cx="2" cy="2" r="2" fill="context-stroke"/>`+"\n"+
+				`    </marker>`+"\n", id)
+	case preview.LineCapStyleSquare:
+		return fmt.Sprintf(
+			`    <marker id="%s" markerWidth="4" markerHeight="4" refX="2" refY="2" orient="auto" markerUnits="strokeWidth">`+"\n"+
+				`      <rect x="0" y="0" width="4" height="4" fill="context-stroke"/>`+"\n"+
+				`    </marker>`+"\n", id)
+	case preview.LineCapStyleDiamond:
+		return fmt.Sprintf(
+			`    <marker id="%s" markerWidth="4" markerHeight="4" refX="2" refY="2" orient="auto" markerUnits="strokeWidth">`+"\n"+
+				`      <path d="M2,0 L4,2 L2,4 L0,2 Z" fill="context-stroke"/>`+"\n"+
+				`    </marker>`+"\n", id)
+	default:
+		return ""
+	}
+}
+
+// capMarkerID returns a stable SVG marker element ID for the given cap style.
+// Scoped to the page index to avoid cross-page conflicts in multi-page SVG output.
+func (e *Exporter) capMarkerID(s preview.LineCapStyle) string {
+	var name string
+	switch s {
+	case preview.LineCapStyleArrow:
+		name = "arrow"
+	case preview.LineCapStyleCircle:
+		name = "circle"
+	case preview.LineCapStyleSquare:
+		name = "square"
+	case preview.LineCapStyleDiamond:
+		name = "diamond"
+	default:
+		name = "none"
+	}
+	return fmt.Sprintf("cap-p%d-%s", e.pageIdx, name)
 }
 
 // ExportBand renders all objects in a band onto the current SVG page.
@@ -318,7 +403,9 @@ func (e *Exporter) renderText(obj preview.PreparedObject, x, y, w, h float32) {
 	e.sb.WriteString("    </foreignObject>\n")
 }
 
-// renderLine emits a <line> or diagonal <line> SVG element.
+// renderLine emits a <line> SVG element, optionally with marker-start/marker-end
+// for line-cap decorations (Arrow, Circle, Square, Diamond).
+// Mirrors C# LineObject rendering with cap support (LineObject.OpenSource.cs).
 func (e *Exporter) renderLine(obj preview.PreparedObject, x, y, w, h float32) {
 	lineColor := color.RGBA{A: 255}
 	lineWidth := float32(1)
@@ -334,10 +421,19 @@ func (e *Exporter) renderLine(obj preview.PreparedObject, x, y, w, h float32) {
 	stroke := rgbHex(lineColor)
 	strokeOpacity := alphaF(lineColor.A)
 
+	// Build optional marker attributes for start/end caps.
+	var markerAttrs string
+	if obj.LineStartCap.Style != preview.LineCapStyleNone {
+		markerAttrs += fmt.Sprintf(` marker-start="url(#%s)"`, e.capMarkerID(obj.LineStartCap.Style))
+	}
+	if obj.LineEndCap.Style != preview.LineCapStyleNone {
+		markerAttrs += fmt.Sprintf(` marker-end="url(#%s)"`, e.capMarkerID(obj.LineEndCap.Style))
+	}
+
 	if obj.LineDiagonal {
 		e.sb.WriteString(fmt.Sprintf(
-			`    <line x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f" stroke="%s" stroke-opacity="%.3f" stroke-width="%.2f"/>`,
-			x, y, x+w, y+h, stroke, strokeOpacity, lineWidth,
+			`    <line x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f" stroke="%s" stroke-opacity="%.3f" stroke-width="%.2f"%s/>`,
+			x, y, x+w, y+h, stroke, strokeOpacity, lineWidth, markerAttrs,
 		))
 	} else {
 		// Horizontal or vertical based on dominant dimension.
@@ -345,15 +441,15 @@ func (e *Exporter) renderLine(obj preview.PreparedObject, x, y, w, h float32) {
 			// Horizontal line.
 			midY := y + h/2
 			e.sb.WriteString(fmt.Sprintf(
-				`    <line x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f" stroke="%s" stroke-opacity="%.3f" stroke-width="%.2f"/>`,
-				x, midY, x+w, midY, stroke, strokeOpacity, lineWidth,
+				`    <line x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f" stroke="%s" stroke-opacity="%.3f" stroke-width="%.2f"%s/>`,
+				x, midY, x+w, midY, stroke, strokeOpacity, lineWidth, markerAttrs,
 			))
 		} else {
 			// Vertical line.
 			midX := x + w/2
 			e.sb.WriteString(fmt.Sprintf(
-				`    <line x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f" stroke="%s" stroke-opacity="%.3f" stroke-width="%.2f"/>`,
-				midX, y, midX, y+h, stroke, strokeOpacity, lineWidth,
+				`    <line x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f" stroke="%s" stroke-opacity="%.3f" stroke-width="%.2f"%s/>`,
+				midX, y, midX, y+h, stroke, strokeOpacity, lineWidth, markerAttrs,
 			))
 		}
 	}

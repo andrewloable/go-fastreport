@@ -282,6 +282,11 @@ func (e *Exporter) ExportBand(b *preview.PreparedBand) error {
 		// absolute coordinates (band.Top + obj.Top) and ascending z-index.
 		bandTop := b.Top
 		for _, obj := range b.Objects {
+			// Skip non-exportable objects. Mirrors C# HTMLExportLayers.cs line 967:
+			// "if (c is ReportComponentBase obj && obj.Exportable)".
+			if obj.NotExportable {
+				continue
+			}
 			layered := obj
 			layered.Top += bandTop
 			e.renderObjectLayered(layered, scale)
@@ -291,6 +296,10 @@ func (e *Exporter) ExportBand(b *preview.PreparedBand) error {
 
 	// Flat rendering: render each object with page-absolute top coordinate (no band wrappers).
 	for _, obj := range b.Objects {
+		// Skip non-exportable objects (same check as layers mode above).
+		if obj.NotExportable {
+			continue
+		}
 		flat := obj
 		flat.Top += b.Top
 		e.renderObject(flat, scale)
@@ -731,6 +740,14 @@ func (e *Exporter) renderTextObject(obj preview.PreparedObject, scale float32) {
 	// Convert font size from pt to px (96dpi / 72pt = 1.3333...) to match C# output.
 	fontPx := font.Size * 96.0 / 72.0
 
+	// Wingdings/Webdings symbol fonts: remap characters to the Unicode Private Use Area
+	// so browsers can display them correctly.
+	// Mirrors C# HTMLExportLayers.LayerText lines 230-233.
+	text := obj.Text
+	if strings.EqualFold(font.Name, "Wingdings") || strings.EqualFold(font.Name, "Webdings") {
+		text = utils.WingdingsToUnicode(text)
+	}
+
 	// ── Build outer CSS class (matches C# GetStyle + GetStyleFromObject) ──
 	var outerCSS strings.Builder
 
@@ -753,9 +770,18 @@ func (e *Exporter) renderTextObject(obj preview.PreparedObject, scale float32) {
 	// C# uses unquoted font-family and "line-height: " (space after colon).
 	outerCSS.WriteString(fmt.Sprintf("font-family:%s;font-size:%spx;", font.Name, pxVal(fontPx)))
 
-	// Line height: C# computes font.FontFamily.GetLineSpacing(style) / GetEmHeight(style),
-	// then rounds to 2 decimals. If the object has an explicit LineHeight > 0, use that.
-	if obj.LineHeight > 0 {
+	// Line height: ParagraphFormat.LineSpacingType takes precedence over LineHeight.
+	// Mirrors C# AdvancedTextRenderer line-spacing computation (HtmlTextRenderer.cs lines 1670-1684).
+	if obj.ParagraphLineSpacingType != 0 && obj.ParagraphLineSpacing > 0 {
+		switch obj.ParagraphLineSpacingType {
+		case 2: // Exactly — total line height is exactly LineSpacing px
+			outerCSS.WriteString(fmt.Sprintf("line-height: %spx;", pxVal(obj.ParagraphLineSpacing*scale)))
+		case 3: // Multiple — LineSpacing is a multiplier of the natural line height
+			outerCSS.WriteString(fmt.Sprintf("line-height: %.2f;", obj.ParagraphLineSpacing))
+		default: // AtLeast (1) — use as minimum; CSS line-height is already an "at least" spec
+			outerCSS.WriteString(fmt.Sprintf("line-height: %spx;", pxVal(obj.ParagraphLineSpacing*scale)))
+		}
+	} else if obj.LineHeight > 0 {
 		outerCSS.WriteString(fmt.Sprintf("line-height: %spx;", pxVal(obj.LineHeight)))
 	} else {
 		outerCSS.WriteString(fmt.Sprintf("line-height: %s;", fontLineHeightRatio(font.Name)))
@@ -774,6 +800,11 @@ func (e *Exporter) renderTextObject(obj preview.PreparedObject, scale float32) {
 		}
 	case 3:
 		outerCSS.WriteString("justify")
+		// ForceJustify: also justify the last line via CSS text-align-last.
+		// Mirrors C# ForceJustify → AdvancedTextRenderer parameter (TextObject.cs line 1212).
+		if obj.ForceJustify {
+			outerCSS.WriteString(";text-align-last:justify")
+		}
 	default:
 		if obj.RTL {
 			outerCSS.WriteString("right")
@@ -827,7 +858,11 @@ func (e *Exporter) renderTextObject(obj preview.PreparedObject, scale float32) {
 	innerCSS.WriteString(fmt.Sprintf("display:block;border:0;width:%spx;", pxVal(innerW)))
 
 	// Paragraph offset / text-indent.
-	if obj.ParagraphOffset != 0 {
+	// ParagraphFirstLineIndent (from ParagraphFormat) takes precedence over ParagraphOffset
+	// when non-zero. Mirrors C# GetStartPosition() (HtmlTextRenderer.cs lines 1278-1283).
+	if obj.ParagraphFirstLineIndent != 0 {
+		innerCSS.WriteString(fmt.Sprintf("text-indent:%spx;", pxVal(obj.ParagraphFirstLineIndent*scale)))
+	} else if obj.ParagraphOffset != 0 {
 		innerCSS.WriteString(fmt.Sprintf("text-indent:%spx;", pxVal(obj.ParagraphOffset*scale)))
 	}
 	// Padding (C# GetSpanText: only emits non-zero values).
@@ -863,9 +898,16 @@ func (e *Exporter) renderTextObject(obj preview.PreparedObject, scale float32) {
 		}
 	}
 
-	// No-wrap for non-wrapping text objects (C# GetSpanText).
+	// No-wrap / ellipsis trimming for non-wrapping text objects (C# GetSpanText).
+	// Trimming 3=EllipsisCharacter, 4=EllipsisWord, 5=EllipsisPath → CSS text-overflow:ellipsis.
+	// Mirrors C# StringTrimming.EllipsisCharacter/EllipsisWord/EllipsisPath handling
+	// (TextRenderer.cs AdvancedTextRenderer.WrapLines).
 	if !obj.WordWrap {
-		innerCSS.WriteString("overflow: hidden; text-wrap: nowrap;")
+		if obj.Trimming >= 3 {
+			innerCSS.WriteString("overflow:hidden;white-space:nowrap;text-overflow:ellipsis;")
+		} else {
+			innerCSS.WriteString("overflow: hidden; text-wrap: nowrap;")
+		}
 	}
 
 	// In class mode, register CSS classes (C# flow: inner registered first via
@@ -875,8 +917,16 @@ func (e *Exporter) renderTextObject(obj preview.PreparedObject, scale float32) {
 	outerClass := e.cssClass(outerCSS.String())
 
 	// ── Format text content ──
-	// C# HtmlString converts line breaks to <p> tags and double-spaces to &nbsp;&nbsp;.
-	innerText := formatTextContent(obj.Text, fontPx)
+	// TextRenderType 1=HtmlTags and 2=HtmlParagraph: the text already contains HTML markup
+	// (evaluated from FRX with inline <b>/<i>/<font> tags). Pass through without escaping.
+	// Mirrors C# HTMLExport: HtmlTags/HtmlParagraph → raw html output via HtmlTextRenderer.
+	// TextRenderType 0=Default (plain text): HTML-escape and convert line breaks to <p> tags.
+	var innerText string
+	if obj.TextRenderType == 1 || obj.TextRenderType == 2 {
+		innerText = text
+	} else {
+		innerText = formatTextContent(text, fontPx)
+	}
 
 	// ── Compute border width adjustments (C# Layer method) ──
 	var bLeft, bTop, bRight, bBottom float32

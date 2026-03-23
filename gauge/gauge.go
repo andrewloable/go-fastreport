@@ -288,6 +288,29 @@ func (g *GaugeObject) Deserialize(r report.Reader) error {
 	return nil
 }
 
+// GetExpressions returns the list of expressions used by this GaugeObject:
+// the base component expressions plus Expression when non-empty.
+// Mirrors C# GaugeObject.GetExpressions (GaugeObject.cs:208-217).
+func (g *GaugeObject) GetExpressions() []string {
+	exprs := g.ReportComponentBase.GetExpressions()
+	if g.Expression != "" {
+		exprs = append(exprs, g.Expression)
+	}
+	return exprs
+}
+
+// Clone returns a deep copy of this GaugeObject.
+// Mirrors C# GaugeObject.Clone() via Base.Clone() which calls Assign().
+func (g *GaugeObject) Clone() *GaugeObject {
+	dst := &GaugeObject{
+		ReportComponentBase: *report.NewReportComponentBase(),
+		Scale:               NewScale(),
+		Pointer:             NewPointer(),
+	}
+	dst.Assign(g)
+	return dst
+}
+
 // Assign copies all GaugeObject fields from src into this GaugeObject.
 // Mirrors C# GaugeObject.Assign(Base source) (GaugeObject.cs:251-262).
 func (g *GaugeObject) Assign(src *GaugeObject) {

@@ -4,6 +4,7 @@ import (
 	"github.com/andrewloable/go-fastreport/band"
 	"github.com/andrewloable/go-fastreport/data"
 	"github.com/andrewloable/go-fastreport/preview"
+	"github.com/andrewloable/go-fastreport/utils"
 )
 
 // dataBandColumnState tracks the current column position while rendering a
@@ -67,13 +68,19 @@ func (e *ReportEngine) showBandInColumn(db *band.DataBand, cs *dataBandColumnSta
 	}
 
 	// Compute X offset for this column.
-	xOffset := float32(cs.colIdx) * cs.colWidth
+	// C# ref: ReportEngine.DataBands.cs line 263 — when Config.RightToLeft, reverse the column index.
+	colPos := cs.colIdx
+	if utils.DefaultConfig.GetRightToLeft() {
+		colPos = cs.colCount - cs.colIdx - 1
+	}
+	xOffset := float32(colPos) * cs.colWidth
 
 	if e.preparedPages != nil {
 		pb := &preview.PreparedBand{
-			Name:   bb.Name(),
-			Top:    cs.rowY,
-			Height: height,
+			Name:          bb.Name(),
+			Top:           cs.rowY,
+			Height:        height,
+			NotExportable: !bb.Exportable(),
 		}
 		// Populate objects, then shift each object's Left by the column X offset.
 		e.populateBandObjects(bb, pb)
@@ -113,6 +120,28 @@ func (e *ReportEngine) flushColumnRow(cs *dataBandColumnState) {
 
 // rowPositioner is a local interface for data sources that support direct row positioning.
 type rowPositioner interface{ SetCurrentRowNo(int) }
+
+// colPosition returns the X offset for column colIdx out of colCount total columns,
+// using the pre-computed positions slice. When Config.RightToLeft is enabled the
+// column order is reversed (mirrors C# ReportEngine.DataBands.cs lines 263/342/375/422).
+func colPosition(colIdx, colCount int, positions []float32) float32 {
+	idx := colIdx
+	if utils.DefaultConfig.GetRightToLeft() {
+		idx = colCount - colIdx - 1
+	}
+	if idx < len(positions) {
+		return positions[idx]
+	}
+	// Fallback: equal-width columns (positions slice shorter than expected).
+	if len(positions) > 0 {
+		w := positions[0]
+		if len(positions) > 1 {
+			w = positions[1] - positions[0]
+		}
+		return float32(idx) * w
+	}
+	return 0
+}
 
 // renderDownThenAcross renders a multi-column DataBand with DownThenAcross layout.
 // Each column is filled top-to-bottom before moving to the next column.
@@ -187,12 +216,9 @@ func (e *ReportEngine) renderDownThenAcross(db *band.DataBand, rowCount int) {
 				e.report.SetCalcContext(fullDS)
 			}
 
-			// Set column X position.
-			if colIdx < len(positions) {
-				e.curX = positions[colIdx] + saveCurX
-			} else {
-				e.curX = float32(colIdx)*db.Width() + saveCurX
-			}
+			// Set column X position (reversed when Config.RightToLeft).
+			// C# ref: ReportEngine.DataBands.cs line 342/375.
+			e.curX = colPosition(colIdx, colCount, positions) + saveCurX
 
 			// Check if this row fits in the remaining space.
 			if heights[i] > e.freeSpace && i != 0 {
@@ -238,12 +264,9 @@ func (e *ReportEngine) renderDownThenAcross(db *band.DataBand, rowCount int) {
 				e.report.SetCalcContext(fullDS)
 			}
 
-			// Set column X position.
-			if colIdx < len(positions) {
-				e.curX = positions[colIdx] + saveCurX
-			} else {
-				e.curX = float32(colIdx)*db.Width() + saveCurX
-			}
+			// Set column X position (reversed when Config.RightToLeft).
+			// C# ref: ReportEngine.DataBands.cs line 422.
+			e.curX = colPosition(colIdx, colCount, positions) + saveCurX
 
 			e.ShowFullBand(&db.BandBase)
 			e.OutlineUp()

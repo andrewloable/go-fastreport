@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"strings"
+	"unicode"
 )
 
 // NumToWordsIn converts an integer to Indian English words using the
@@ -33,6 +34,81 @@ func NumToWordsInFloat(v float64) string {
 		result += fmt.Sprintf(" and %d/100", cents)
 	}
 	return result
+}
+
+// inCurrencies maps ISO currency codes to their Indian English word forms.
+// Mirrors NumToWordsIn.cs static constructor currencyList.
+var inCurrencies = map[string]struct {
+	s1, sm string
+	j1, jm string
+}{
+	"USD": {"dollar", "dollars", "cent", "cents"},
+	"EUR": {"euro", "euros", "cent", "cents"},
+	"INR": {"rupee", "rupees", "paise", "paise"},
+}
+
+// inSimpleCase returns one if n==1, otherwise many.
+func inSimpleCase(n int64, one, many string) string {
+	if n == 1 {
+		return one
+	}
+	return many
+}
+
+// ConvertCurrencyIn converts a float64 monetary value to Indian English words for the given ISO currency code.
+// If decimalPartToWord is true, the cents/paise are also expressed in words; otherwise as a numeric "NN " prefix.
+// Mirrors NumToWordsIn.cs / NumToWordsBase.cs ConvertCurrency logic.
+func ConvertCurrencyIn(value float64, currencyName string, decimalPartToWord bool) (string, error) {
+	cur, ok := inCurrencies[strings.ToUpper(currencyName)]
+	if !ok {
+		return "", fmt.Errorf("unknown currency: %s", currencyName)
+	}
+	n := int64(math.Abs(value))
+	cents := int(math.Round((math.Abs(value) - float64(n)) * 100))
+	if cents >= 100 {
+		n++
+		cents = 0
+	}
+	negative := value < 0
+
+	var wholeWords string
+	if n == 0 {
+		wholeWords = "zero"
+	} else {
+		wholeWords = strings.TrimSpace(inPositive(n))
+	}
+	seniorWord := inSimpleCase(n, cur.s1, cur.sm)
+	result := wholeWords + " " + seniorWord
+
+	if negative {
+		result = "minus " + result
+	}
+
+	if cur.j1 != "" {
+		var juniorPart string
+		if decimalPartToWord {
+			var centsWords string
+			if cents == 0 {
+				centsWords = "zero"
+			} else {
+				centsWords = strings.TrimSpace(inPositive(int64(cents)))
+			}
+			juniorWord := inSimpleCase(int64(cents), cur.j1, cur.jm)
+			juniorPart = centsWords + " " + juniorWord
+		} else {
+			juniorWord := inSimpleCase(int64(cents), cur.j1, cur.jm)
+			juniorPart = fmt.Sprintf("%02d ", cents) + juniorWord
+		}
+		// C# appends GetDecimalSeparator() + decimalPart → "and " + juniorPart
+		result = result + " and " + juniorPart
+	}
+
+	r := []rune(result)
+	if len(r) > 0 {
+		r[0] = unicode.ToUpper(r[0])
+		result = string(r)
+	}
+	return result, nil
 }
 
 // inPositive converts n > 0 to Indian English.

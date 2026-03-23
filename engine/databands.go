@@ -54,6 +54,16 @@ func (e *ReportEngine) RunDataBandRowsKeep(db *band.DataBand, rows int, keepFirs
 			}
 		}
 
+		// IsDetailEmpty check: skip this row if all child DataBands are empty
+		// (honours PrintIfDetailEmpty flag). Mirrors C# DataBand.IsDetailEmpty()
+		// called from RunDataBand (ReportEngine.DataBands.cs:93).
+		if e.isDetailEmpty(db) {
+			if ds != nil {
+				_ = ds.Next()
+			}
+			continue
+		}
+
 		db.SetRowNo(db.RowNo() + 1)
 		db.SetAbsRowNo(e.absRowNo)
 		e.absRowNo++
@@ -582,6 +592,15 @@ func (e *ReportEngine) showDataBandBody(db *band.DataBand, rowCount int, cs *dat
 	if db.ResetPageNumber() && (db.FirstRowStartsNewPage() || db.RowNo() > 1) {
 		e.ResetLogicalPageNumber()
 	}
+	// KeepWithData footer: if the footer must stay with this data row and both
+	// won't fit on the current page, force a page break before showing the row.
+	// Mirrors C# ShowDataBand lines 203-207 (ReportEngine.DataBands.cs).
+	// (Full C# uses AddLastToFooter to move objects; Go uses a simpler page-break approach.)
+	if ftr := db.Footer(); ftr != nil && db.CanBreak() && ftr.KeepWithData() {
+		if ftr.Height()+db.Height() > e.FreeSpace() {
+			e.startNewPageForCurrent()
+		}
+	}
 	if cs != nil {
 		e.showBandInColumn(db, cs)
 	} else {
@@ -647,6 +666,14 @@ func (e *ReportEngine) runDataBandHierarchical(db *band.DataBand, ds band.DataSo
 
 	var renderRows func(indices []int, level int, prefix string) error
 	renderRows = func(indices []int, level int, prefix string) error {
+		// Set hierarchy indent for this level: each level indents by db.Indent() pixels.
+		// Mirrors C# ShowHierarchy: hierarchyIndent = dataBand.Indent * (level - 1)
+		// where C# starts at level=1; Go starts at level=0, so formula is level*Indent.
+		// C# ref: ReportEngine.DataBands.cs lines 536-539.
+		saveIndent := e.hierarchyIndent
+		e.hierarchyIndent = db.Indent() * float32(level)
+		defer func() { e.hierarchyIndent = saveIndent }()
+
 		for nth, idx := range indices {
 			row := rows[idx]
 
@@ -824,4 +851,42 @@ func isSubBand(obj report.Base) bool {
 		return true
 	}
 	return false
+}
+
+// isDetailEmpty checks if all child DataBands of db are empty for the current
+// parent row. Returns true (skip this row) only when PrintIfDetailEmpty is false
+// and every child DataBand's filtered data source has no rows.
+// Mirrors C# DataBand.IsDetailEmpty() (DataBand.cs:575-585).
+func (e *ReportEngine) isDetailEmpty(db *band.DataBand) bool {
+	if db.PrintIfDetailEmpty() {
+		return false
+	}
+	subBands := dataBandSubBands(db)
+	// Only examine direct child DataBands (GroupHeaderBands wrap their own DS).
+	var childDBs []*band.DataBand
+	for _, sb := range subBands {
+		if cdb, ok := sb.(*band.DataBand); ok {
+			childDBs = append(childDBs, cdb)
+		}
+	}
+	if len(childDBs) == 0 {
+		return false // no child DataBands → cannot be detail-empty
+	}
+
+	// Apply relation filters so child DSes are filtered to the current parent row.
+	restore := e.applyRelationFilters(db, subBands)
+	defer restore()
+
+	for _, cdb := range childDBs {
+		cds := cdb.DataSourceRef()
+		if cds == nil {
+			continue
+		}
+		// Check if filtered child DS has any rows.
+		_ = cds.First()
+		if !cds.EOF() {
+			return false // at least one child DataBand has rows → not empty
+		}
+	}
+	return true // all child DataBands are empty
 }

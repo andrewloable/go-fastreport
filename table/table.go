@@ -112,6 +112,38 @@ func (t *TableBase) NewRow() *TableRow {
 	return r
 }
 
+// InsertRow inserts r at index idx (0-based), shifting subsequent rows down.
+// It corrects cell spans for all cells whose row span crosses idx.
+// Mirrors C# TableRowCollection.OnInsert → CorrectSpansOnRowChange(index, +1).
+func (t *TableBase) InsertRow(idx int, r *TableRow) {
+	if idx < 0 {
+		idx = 0
+	}
+	if idx > len(t.rows) {
+		idx = len(t.rows)
+	}
+	// Ensure the row has one cell per existing column.
+	for len(r.cells) < len(t.columns) {
+		r.cells = append(r.cells, NewTableCell())
+	}
+	t.rows = append(t.rows, nil)
+	copy(t.rows[idx+1:], t.rows[idx:])
+	t.rows[idx] = r
+	// Correct spans that extend across the inserted row index.
+	t.CorrectSpansOnRowChange(idx, +1)
+}
+
+// RemoveRow removes the row at index idx and corrects cell spans.
+// Mirrors C# TableRowCollection.OnRemove → CorrectSpansOnRowChange(index, -1).
+func (t *TableBase) RemoveRow(idx int) {
+	if idx < 0 || idx >= len(t.rows) {
+		return
+	}
+	t.rows = append(t.rows[:idx], t.rows[idx+1:]...)
+	// Correct spans that extended across the removed row index.
+	t.CorrectSpansOnRowChange(idx, -1)
+}
+
 // --- Columns ---
 
 // Columns returns the table columns.
@@ -143,6 +175,47 @@ func (t *TableBase) NewColumn() *TableColumn {
 	c := NewTableColumn()
 	t.AddColumn(c)
 	return c
+}
+
+// InsertColumn inserts c at index idx (0-based), shifting subsequent columns right.
+// It corrects cell spans for all cells whose column span crosses idx, and inserts
+// a new empty cell at position idx in every existing row.
+// Mirrors C# TableColumnCollection.OnInsert → CorrectSpansOnColumnChange(index, +1).
+func (t *TableBase) InsertColumn(idx int, c *TableColumn) {
+	if idx < 0 {
+		idx = 0
+	}
+	if idx > len(t.columns) {
+		idx = len(t.columns)
+	}
+	t.columns = append(t.columns, nil)
+	copy(t.columns[idx+1:], t.columns[idx:])
+	t.columns[idx] = c
+	// Insert a new empty cell at idx in every row.
+	for _, r := range t.rows {
+		r.cells = append(r.cells, nil)
+		copy(r.cells[idx+1:], r.cells[idx:])
+		r.cells[idx] = NewTableCell()
+	}
+	// Correct spans that extend across the inserted column index.
+	t.CorrectSpansOnColumnChange(idx, +1)
+}
+
+// RemoveColumn removes the column at index idx, removes the corresponding cell
+// from every row, and corrects cell spans.
+// Mirrors C# TableColumnCollection.OnRemove → CorrectSpansOnColumnChange(index, -1).
+func (t *TableBase) RemoveColumn(idx int) {
+	if idx < 0 || idx >= len(t.columns) {
+		return
+	}
+	t.columns = append(t.columns[:idx], t.columns[idx+1:]...)
+	for _, r := range t.rows {
+		if idx < len(r.cells) {
+			r.cells = append(r.cells[:idx], r.cells[idx+1:]...)
+		}
+	}
+	// Correct spans that extended across the removed column index.
+	t.CorrectSpansOnColumnChange(idx, -1)
 }
 
 // --- Cell access ---
@@ -260,6 +333,106 @@ func (t *TableBase) IsInsideSpan(col, row int) bool {
 		}
 	}
 	return false
+}
+
+// ProcessDuplicates applies the CellDuplicates deduplication logic to all
+// eligible cells in the table.
+//
+// For each cell where CellDuplicates != CellDuplicatesShow the method finds
+// adjacent cells (right and down) that share the same Name() and Text(), then:
+//   - CellDuplicatesClear: blanks the text of all duplicate cells except the origin
+//   - CellDuplicatesMerge: expands the origin cell's ColSpan/RowSpan
+//   - CellDuplicatesMergeNonEmpty: same as Merge but only when text is non-empty
+//
+// Mirrors C# TableResult.ProcessDuplicates() lines 165-245
+// (FastReport.Base/Table/TableResult.cs).
+func (t *TableBase) ProcessDuplicates() {
+	type span struct{ x, y, w, h int }
+	var processed []span
+
+	// isInProcessed reports whether (col, row) falls inside any already-processed span.
+	// Mirrors C# local IsInsideSpan(cell, list) using cell.Address.
+	isInProcessed := func(col, row int) bool {
+		for _, s := range processed {
+			if col >= s.x && col < s.x+s.w && row >= s.y && row < s.y+s.h {
+				return true
+			}
+		}
+		return false
+	}
+
+	rowCount := t.RowCount()
+	colCount := t.ColumnCount()
+
+	// Outer loops: col first, row second — mirrors C# for(x) { for(y) }.
+	for col := 0; col < colCount; col++ {
+		for row := 0; row < rowCount; row++ {
+			cell := t.Cell(row, col)
+			if cell == nil || cell.Duplicates() == CellDuplicatesShow {
+				continue
+			}
+			if isInProcessed(col, row) {
+				continue
+			}
+
+			cellAlias := cell.Name()
+			cellText := cell.Text()
+			cellDups := cell.Duplicates()
+			designColSpan := cell.ColSpan() // design-time ColSpan — mirrors cellData.ColSpan
+
+			// countInRow counts consecutive cells starting at (col, targetRow) that
+			// share the same name and text, stopping at already-processed spans.
+			// Mirrors C# Func<int,int> func = (row) => { ... }
+			countInRow := func(targetRow int) int {
+				count := 0
+				for xi := col; xi < colCount; xi++ {
+					if isInProcessed(xi, targetRow) {
+						break
+					}
+					c := t.Cell(targetRow, xi)
+					if c == nil || c.Name() != cellAlias || c.Text() != cellText {
+						break
+					}
+					count++
+				}
+				return count
+			}
+
+			colSpan := countInRow(row)
+			rowSpan := 1
+			for yi := row + 1; yi < rowCount; yi++ {
+				if countInRow(yi) < designColSpan {
+					break
+				}
+				rowSpan++
+			}
+
+			switch cellDups {
+			case CellDuplicatesClear:
+				// Blank all duplicate cells except the origin (0,0).
+				for dx := 0; dx < colSpan; dx++ {
+					for dy := 0; dy < rowSpan; dy++ {
+						if dx == 0 && dy == 0 {
+							continue
+						}
+						if c := t.Cell(row+dy, col+dx); c != nil {
+							c.SetText("")
+						}
+					}
+				}
+			case CellDuplicatesMerge:
+				cell.SetColSpan(colSpan)
+				cell.SetRowSpan(rowSpan)
+			case CellDuplicatesMergeNonEmpty:
+				if cellText != "" {
+					cell.SetColSpan(colSpan)
+					cell.SetRowSpan(rowSpan)
+				}
+			}
+
+			processed = append(processed, span{col, row, colSpan, rowSpan})
+		}
+	}
 }
 
 // CorrectSpansOnRowChange adjusts ColSpan/RowSpan values when a row is

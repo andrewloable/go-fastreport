@@ -76,6 +76,11 @@ type ReportEngine struct {
 	// hierarchyRowNo is a dot-separated string like "1.2.3" for hierarchical reports.
 	hierarchyRowNo string
 
+	// hierarchyIndent is the horizontal indent (in pixels) applied to each band
+	// when rendering a hierarchical DataBand. It equals DataBand.Indent * level.
+	// Mirrors C# ReportEngine.Bands.cs lines 469-476.
+	hierarchyIndent float32
+
 	// pagesLimit is the maximum number of prepared pages (0 = unlimited).
 	pagesLimit int
 
@@ -429,9 +434,12 @@ func (e *ReportEngine) runPhase2(appendMode bool) error {
 		e.knownTotalPages = e.totalPages
 		e.totalPages = 0
 		e.resetPageNumber()
-		// Clear first-pass output before re-rendering.
+		// Roll back first-pass output, saving bookmarks/outline as fallback.
+		// Mirrors C# PrepareToSecondPass → PreparedPages.ClearFirstPass()
+		// (ReportEngine.cs:371-372), which rolls back to the PrepareToFirstPass
+		// checkpoint while preserving first-pass bookmark items for GetPageNo fallback.
 		if e.preparedPages != nil {
-			e.preparedPages.Clear()
+			e.preparedPages.ClearFirstPass()
 		}
 		if err := e.prepareToSecondPass(); err != nil {
 			return err
@@ -522,6 +530,11 @@ var prepareToFirstPassHook = func(e *ReportEngine, appendMode bool) error {
 	e.initReprint()
 	e.initPageNumbers()
 	e.deferredObjects = nil
+	// Save first-pass checkpoint so ClearFirstPass can restore it during second pass.
+	// Mirrors C# PrepareToFirstPass → PreparedPages.PrepareToFirstPass() (ReportEngine.cs:361).
+	if e.preparedPages != nil {
+		e.preparedPages.PrepareToFirstPass()
+	}
 	return nil
 }
 

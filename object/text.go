@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/andrewloable/go-fastreport/expr"
 	"github.com/andrewloable/go-fastreport/format"
 	"github.com/andrewloable/go-fastreport/report"
 	"github.com/andrewloable/go-fastreport/style"
@@ -581,6 +582,34 @@ func parseStringTrimming(s string) StringTrimming {
 	}
 }
 
+// parseLineSpacingType converts an FRX string to LineSpacingType.
+func parseLineSpacingType(s string) LineSpacingType {
+	switch s {
+	case "AtLeast", "1":
+		return LineSpacingAtLeast
+	case "Exactly", "2":
+		return LineSpacingExactly
+	case "Multiple", "3":
+		return LineSpacingMultiple
+	default:
+		return LineSpacingSingle
+	}
+}
+
+// formatLineSpacingType converts a LineSpacingType to its FRX string.
+func formatLineSpacingType(t LineSpacingType) string {
+	switch t {
+	case LineSpacingAtLeast:
+		return "AtLeast"
+	case LineSpacingExactly:
+		return "Exactly"
+	case LineSpacingMultiple:
+		return "Multiple"
+	default:
+		return "Single"
+	}
+}
+
 // -----------------------------------------------------------------------
 // TextObject
 // -----------------------------------------------------------------------
@@ -844,6 +873,35 @@ func (t *TextObject) AddHighlight(c style.HighlightCondition) {
 	t.highlights = append(t.highlights, c)
 }
 
+// GetExpressions returns the list of expression strings used by this TextObject.
+// Mirrors C# TextObject.GetExpressions (TextObject.cs:1574-1591):
+//  1. Base expressions from ReportComponentBase (VisibleExpression, PrintableExpression, etc.)
+//  2. All bracket expressions found in Text when AllowExpressions=true
+//  3. All highlight condition expressions
+func (t *TextObject) GetExpressions() []string {
+	exprs := t.TextObjectBase.BreakableComponent.GetExpressions()
+
+	if t.allowExpressions && t.brackets != "" {
+		parts := strings.SplitN(t.brackets, ",", 2)
+		if len(parts) == 2 {
+			open, close := parts[0], parts[1]
+			for _, tok := range expr.ParseWithBrackets(t.text, open, close) {
+				if tok.IsExpr {
+					exprs = append(exprs, tok.Value)
+				}
+			}
+		}
+	}
+
+	for _, h := range t.highlights {
+		if h.Expression != "" {
+			exprs = append(exprs, h.Expression)
+		}
+	}
+
+	return exprs
+}
+
 // DeserializeChild handles <Highlight> and <Formats> child elements from FRX.
 // It satisfies report.ChildDeserializer so that reportpkg.deserializeChildren
 // can delegate unknown child elements to the TextObject itself.
@@ -994,6 +1052,19 @@ func (t *TextObject) Serialize(w report.Writer) error {
 	if t.paragraphOffset != 0 {
 		w.WriteFloat("ParagraphOffset", t.paragraphOffset)
 	}
+	// ParagraphFormat — mirrors C# TextObject.Serialize (TextObject.cs lines 1454-1461).
+	if t.paragraphFormat.FirstLineIndent != 0 {
+		w.WriteFloat("ParagraphFormat.FirstLineIndent", t.paragraphFormat.FirstLineIndent)
+	}
+	if t.paragraphFormat.LineSpacing > 0 {
+		w.WriteFloat("ParagraphFormat.LineSpacing", t.paragraphFormat.LineSpacing)
+	}
+	if t.paragraphFormat.LineSpacingType != LineSpacingSingle {
+		w.WriteStr("ParagraphFormat.LineSpacingType", formatLineSpacingType(t.paragraphFormat.LineSpacingType))
+	}
+	if t.paragraphFormat.SkipFirstLineIndent {
+		w.WriteBool("ParagraphFormat.SkipFirstLineIndent", true)
+	}
 	if t.mergeMode != MergeModeNone {
 		w.WriteStr("MergeMode", formatMergeMode(t.mergeMode))
 	}
@@ -1060,6 +1131,11 @@ func (t *TextObject) Deserialize(r report.Reader) error {
 	t.autoShrink = parseAutoShrinkMode(r.ReadStr("AutoShrink", "None"))
 	t.autoShrinkMinSize = r.ReadFloat("AutoShrinkMinSize", 0)
 	t.paragraphOffset = r.ReadFloat("ParagraphOffset", 0)
+	// ParagraphFormat — mirrors C# TextObject.Deserialize (TextObject.cs lines 1813-1823).
+	t.paragraphFormat.FirstLineIndent = r.ReadFloat("ParagraphFormat.FirstLineIndent", 0)
+	t.paragraphFormat.LineSpacing = r.ReadFloat("ParagraphFormat.LineSpacing", 0)
+	t.paragraphFormat.LineSpacingType = parseLineSpacingType(r.ReadStr("ParagraphFormat.LineSpacingType", "Single"))
+	t.paragraphFormat.SkipFirstLineIndent = r.ReadBool("ParagraphFormat.SkipFirstLineIndent", false)
 	t.mergeMode = parseMergeMode(r.ReadStr("MergeMode", "None"))
 	t.autoWidth = r.ReadBool("AutoWidth", false)
 	// TextFill.Color — foreground text color (FastReport uses TextFill as a SolidFill).

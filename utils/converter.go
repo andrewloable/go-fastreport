@@ -70,3 +70,22 @@ func RGBAFromString(s string) color.RGBA {
 func RGBAToString(c color.RGBA) string {
 	return FormatColor(c)
 }
+
+// WingdingsToUnicode converts a string encoded in the Wingdings or Webdings
+// symbol font to its Unicode Private Use Area equivalents.
+// Each character in the range U+0020–U+00FF is shifted to U+F020–U+F0FF.
+// Mirrors C# WingdingsToUnicodeConverter.Convert (HtmlTextRenderer.cs line 3210).
+func WingdingsToUnicode(s string) string {
+	runes := []rune(s)
+	changed := false
+	for i, r := range runes {
+		if r >= 0x20 && r <= 0xFF {
+			runes[i] = r + 0xF000
+			changed = true
+		}
+	}
+	if !changed {
+		return s
+	}
+	return string(runes)
+}

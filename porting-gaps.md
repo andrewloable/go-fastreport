@@ -1785,7 +1785,7 @@ methods, properties, and features that are not yet implemented in the Go port.
 - **File**: `FastReport.Base/Functions/NumToWordsDe.cs`
 - **Status**: MOSTLY PORTED
 - **Reviewed**: 2026-03-22 (issue go-fastreport-37oqs)
-- **Gaps fixed**: German feminine noun grammar: Million, Milliarde and Billion are feminine in German. C# uses WordInfo(male=false,...) for these, so GetFixedWords(false, 1) = "eine". Fixed in functions/numtowords_de.go: dePositive() now passes female=true when computing the multiplier for thousand/million/milliard/billion groups, producing "eine Million", "eine Milliarde", "eine Billion", "einetausend", "eineundzwanzigtausend". Str1000 override porting verified: no separator between components (counter==2 for thousands), compound tens (frac10+"und"+ten). ConvertCurrencyDe implemented (issue go-fastreport-2nwnm): deCurrencies map covers USD/CAD/EUR/GBP with senior/junior CurrencyInfo; uses dePositive() with "null"/"minus" for zero/negative. Remaining gap: Nl, In, Persian locales still missing ConvertCurrency.
+- **Gaps fixed**: German feminine noun grammar: Million, Milliarde and Billion are feminine in German. C# uses WordInfo(male=false,...) for these, so GetFixedWords(false, 1) = "eine". Fixed in functions/numtowords_de.go: dePositive() now passes female=true when computing the multiplier for thousand/million/milliard/billion groups, producing "eine Million", "eine Milliarde", "eine Billion", "einetausend", "eineundzwanzigtausend". Str1000 override porting verified: no separator between components (counter==2 for thousands), compound tens (frac10+"und"+ten). ConvertCurrencyDe implemented (issue go-fastreport-2nwnm): deCurrencies map covers USD/CAD/EUR/GBP with senior/junior CurrencyInfo; uses dePositive() with "null"/"minus" for zero/negative. **Stale note resolved (2026-03-23)**: Nl, In, Persian ConvertCurrency have all been implemented in their respective files.
 
 #### `NumToWordsEn.cs`
 - **File**: `FastReport.Base/Functions/NumToWordsEn.cs`
@@ -1849,7 +1849,8 @@ methods, properties, and features that are not yet implemented in the Go port.
 - **File**: `FastReport.Base/Functions/StdFunctions.cs`
 - **Status**: MOSTLY PORTED
 - **Fixed 2026-03-22**: IsNull(v any) bool added to functions/standard.go and registered as "IsNull". In Go, expression evaluator resolves column/parameter values before function call, so IsNull(value) checks for nil directly (C# version takes report+name string and resolves by name — not needed in Go's expression model). IsNumeric and IsDateTime do not exist in C# StdFunctions.cs (they were incorrectly listed as gaps). ToBoolean(v any) and IfNull already existed.
-- **Remaining gaps**: Various ToWords overloads (currency/unit naming for RU, UK, PL, etc.), localized ToLetters variants.
+- **Fixed 2026-03-23**: All C# ToWords overload groups implemented via variadic dispatchers in functions/numtowords_variadic.go. Each locale (`ToWords`, `ToWordsEnGb`, `ToWordsDe`, `ToWordsEs`, `ToWordsFr`, `ToWordsNl`, `ToWordsSp`, `ToWordsPl`, `ToWordsIn`, `ToWordsPersian`, `ToWordsRu`, `ToWordsUkr`) now supports: (value), (value,bool), (value,string), (value,string,bool), (value,one,many[,bool]) for western locales, and (value,bool,one,two,many[,bool]) for Ru/Ukr. Dispatchers registered in standard.go replacing integer-only variants. Also `ConvertCurrencyXxx` now reachable via single variadic entry.
+- **Remaining gaps**: Localized ToLetters variants (ToLettersDe, ToLettersFr, etc. not in C# StdFunctions.cs — likely out of scope).
 
 ### Gauge
 
@@ -1940,7 +1941,7 @@ methods, properties, and features that are not yet implemented in the Go port.
 #### `SimpleProgressPointer.cs`
 - **File**: `FastReport.Base/Gauge/Simple/Progress/SimpleProgressPointer.cs`
 - **Status**: MOSTLY PORTED
-- **Gaps**: SimpleProgressPointerType enum (Full/Small) and SmallPointerWidthRatio property are now ported as fields on SimpleProgressGauge. DrawHorz/DrawVert rendering for both Full and Small types is implemented in RenderSimpleProgress() in render.go. No separate SimpleProgressPointer class — Go uses a flat approach. DrawVert (vertical orientation) is not yet implemented in RenderSimpleProgress (only horizontal is handled).
+- **Gaps**: SimpleProgressPointerType enum (Full/Small) and SmallPointerWidthRatio property are now ported as fields on SimpleProgressGauge. DrawHorz/DrawVert rendering for both Full and Small types is implemented in RenderSimpleProgress() in render.go. No separate SimpleProgressPointer class — Go uses a flat approach. **Fixed (2026-03-23)**: DrawVert implemented in `RenderSimpleProgress` — when `g.Vertical()` is true (Height > Width), the bar fills from the bottom up (mirrors C# SimpleProgressPointer.DrawVert lines 97-100: Height proportional to value, Top = bottom - fillH).
 
 ### Gauge/Simple
 
@@ -2881,11 +2882,12 @@ methods, properties, and features that are not yet implemented in the Go port.
 - **File**: `FastReport.OpenSource/LineObject.OpenSource.cs`
 - **Status**: MOSTLY PORTED
 - **Fixed (go-fastreport-llo2l, 2026-03-23)**: Cap settings are now propagated from `LineObject.StartCap`/`EndCap` to `PreparedObject.LineStartCap`/`LineEndCap` in `engine/objects.go`. Added `LineCap` struct and `LineCapStyle` enum to `preview/prepared_pages.go`. SVG exporter now pre-scans page bands in `ExportPageBegin` and emits SVG `<defs>` marker blocks for Arrow/Circle/Square/Diamond caps; `renderLine` references them via `marker-start`/`marker-end` attributes. Tests in `export/svg/svg_test.go`. HTML, PDF, and image exporters do not yet render caps.
+- **Fixed (2026-03-23)**: HTML exporter now renders line caps via inline SVG markers (htmlLineCapDefs/htmlCapMarkerDef/htmlCapMarkerID). Diagonal lines and horizontal/vertical lines with caps all use inline SVG with proper border color and width from PreparedObject.Border.Lines[0]. Color uses `rgb(R,G,B)` format instead of hardcoded `#000`.
 - **Remaining gaps**:
-  - `GetConvertedObjects()`: C# converts LineObjects with caps into bitmaps via GDI+. Go uses SVG markers instead for SVG output; HTML/PDF/image exporters do not yet render caps.
+  - `GetConvertedObjects()`: C# converts LineObjects with caps into bitmaps via GDI+. Go uses SVG markers instead for SVG/HTML output; PDF/image exporters do not yet render caps.
   - `IsHaveToConvert()` and `CreatePath()`: GDI+-only, no Go equivalent needed.
-  - HTML/PDF cap rendering: line cap data is in PreparedObject but HTML/PDF exporters do not yet use it.
-  - **What IS ported**: All data fields (`Diagonal`, `StartCap`, `EndCap`, `DashPattern`) serialize/deserialize correctly. Cap data is propagated through engine to PreparedObject. SVG exporter renders caps as markers.
+  - PDF/image cap rendering: line cap data is in PreparedObject but PDF/image exporters do not yet use it.
+  - **What IS ported**: All data fields (`Diagonal`, `StartCap`, `EndCap`, `DashPattern`) serialize/deserialize correctly. Cap data is propagated through engine to PreparedObject. SVG and HTML exporters render caps as markers.
 
 #### `PictureObject.Core.cs`
 - **File**: `FastReport.OpenSource/PictureObject.Core.cs`

@@ -490,24 +490,67 @@ func (e *Exporter) renderObject(obj preview.PreparedObject, scale float32) {
 		e.sb.WriteString(fmt.Sprintf(`<div %s></div>`, styleAttr("")))
 
 	case preview.ObjectTypeLine:
-		if obj.LineDiagonal {
-			// Render diagonal line as an inline SVG.
+		// Extract line color and width from Border.Lines[0], mirroring SVG exporter renderLine.
+		lineColor := color.RGBA{A: 255}
+		lineWidth := float32(1)
+		if obj.Border.Lines[0] != nil {
+			if obj.Border.Lines[0].Color.A > 0 {
+				lineColor = obj.Border.Lines[0].Color
+			}
+			if obj.Border.Lines[0].Width > 0 {
+				lineWidth = obj.Border.Lines[0].Width * scale
+			}
+		}
+		strokeCSS := rgbColor(lineColor)
+		hasCaps := obj.LineStartCap.Style != preview.LineCapStyleNone || obj.LineEndCap.Style != preview.LineCapStyleNone
+
+		if obj.LineDiagonal || hasCaps {
+			// Render as inline SVG for diagonal lines or when caps are needed.
+			// Include a <defs> block with markers when caps are present.
 			e.sb.WriteString(fmt.Sprintf(
-				`<div %s><svg width="%.2f" height="%.2f" style="position:absolute;top:0;left:0;">`,
+				`<div %s><svg width="%.2f" height="%.2f" style="position:absolute;top:0;left:0;overflow:visible;">`,
 				styleAttr(""), w, h,
 			))
-			e.sb.WriteString(fmt.Sprintf(
-				`<line x1="0" y1="0" x2="%.2f" y2="%.2f" stroke="#000" stroke-width="1"/>`,
-				w, h,
-			))
+			if hasCaps {
+				e.sb.WriteString(htmlLineCapDefs(obj))
+			}
+			var markerAttrs string
+			if obj.LineStartCap.Style != preview.LineCapStyleNone {
+				markerAttrs += fmt.Sprintf(` marker-start="url(#%s)"`, htmlCapMarkerID(obj.LineStartCap.Style))
+			}
+			if obj.LineEndCap.Style != preview.LineCapStyleNone {
+				markerAttrs += fmt.Sprintf(` marker-end="url(#%s)"`, htmlCapMarkerID(obj.LineEndCap.Style))
+			}
+			if obj.LineDiagonal {
+				e.sb.WriteString(fmt.Sprintf(
+					`<line x1="0" y1="0" x2="%.2f" y2="%.2f" stroke="%s" stroke-width="%.2f"%s/>`,
+					w, h, strokeCSS, lineWidth, markerAttrs,
+				))
+			} else if h <= w {
+				// Horizontal line.
+				midY := h / 2
+				e.sb.WriteString(fmt.Sprintf(
+					`<line x1="0" y1="%.2f" x2="%.2f" y2="%.2f" stroke="%s" stroke-width="%.2f"%s/>`,
+					midY, w, midY, strokeCSS, lineWidth, markerAttrs,
+				))
+			} else {
+				// Vertical line.
+				midX := w / 2
+				e.sb.WriteString(fmt.Sprintf(
+					`<line x1="%.2f" y1="0" x2="%.2f" y2="%.2f" stroke="%s" stroke-width="%.2f"%s/>`,
+					midX, midX, h, strokeCSS, lineWidth, markerAttrs,
+				))
+			}
 			e.sb.WriteString(`</svg></div>`)
 		} else {
-			// Horizontal or vertical: use border-bottom or border-left.
+			// Horizontal or vertical without caps: use CSS border (fast path).
+			colorStr := rgbColor(lineColor)
+			widthStr := fmt.Sprintf("%.2fpx", lineWidth)
 			var lineExtra string
 			if h <= w {
-				lineExtra = "border-bottom:1px solid #000;height:1px;"
+				lineExtra = fmt.Sprintf("border-bottom:%s solid %s;height:1px;", widthStr, colorStr)
 			} else {
-				lineExtra = "border-left:1px solid #000;width:1px;"
+				lineExtra = fmt.Sprintf("border-left:%s solid %s;width:1px;", widthStr, colorStr)
 			}
 			e.sb.WriteString(fmt.Sprintf(`<div %s></div>`, styleAttr(lineExtra)))
 		}
@@ -1516,3 +1559,73 @@ func imageMIME(data []byte) string {
 
 // Ensure math is used (for future use in vertical alignment calculations).
 var _ = math.Round
+
+// htmlCapMarkerID returns a stable SVG marker element ID for the given cap style.
+// IDs are unique per style (Arrow/Circle/Square/Diamond) scoped to the inline SVG.
+func htmlCapMarkerID(s preview.LineCapStyle) string {
+	switch s {
+	case preview.LineCapStyleArrow:
+		return "hcap_arrow"
+	case preview.LineCapStyleCircle:
+		return "hcap_circle"
+	case preview.LineCapStyleSquare:
+		return "hcap_square"
+	case preview.LineCapStyleDiamond:
+		return "hcap_diamond"
+	default:
+		return "hcap_none"
+	}
+}
+
+// htmlLineCapDefs returns the SVG <defs> XML block containing marker definitions
+// for all cap styles used on the given line object.
+// Each marker uses markerUnits="strokeWidth" for stroke-relative sizing,
+// matching the approach used by the SVG exporter (export/svg/svg.go).
+func htmlLineCapDefs(obj preview.PreparedObject) string {
+	needed := make(map[preview.LineCapStyle]bool)
+	if obj.LineStartCap.Style != preview.LineCapStyleNone {
+		needed[obj.LineStartCap.Style] = true
+	}
+	if obj.LineEndCap.Style != preview.LineCapStyleNone {
+		needed[obj.LineEndCap.Style] = true
+	}
+	if len(needed) == 0 {
+		return ""
+	}
+	var sb strings.Builder
+	sb.WriteString("<defs>")
+	for s := range needed {
+		sb.WriteString(htmlCapMarkerDef(s))
+	}
+	sb.WriteString("</defs>")
+	return sb.String()
+}
+
+// htmlCapMarkerDef returns one SVG <marker> definition for the given cap style.
+func htmlCapMarkerDef(s preview.LineCapStyle) string {
+	id := htmlCapMarkerID(s)
+	switch s {
+	case preview.LineCapStyleArrow:
+		return fmt.Sprintf(
+			`<marker id="%s" markerWidth="6" markerHeight="6" refX="6" refY="3" orient="auto" markerUnits="strokeWidth">`+
+				`<path d="M0,0 L6,3 L0,6 Z" fill="context-stroke"/>`+
+				`</marker>`, id)
+	case preview.LineCapStyleCircle:
+		return fmt.Sprintf(
+			`<marker id="%s" markerWidth="4" markerHeight="4" refX="2" refY="2" orient="auto" markerUnits="strokeWidth">`+
+				`<circle cx="2" cy="2" r="2" fill="context-stroke"/>`+
+				`</marker>`, id)
+	case preview.LineCapStyleSquare:
+		return fmt.Sprintf(
+			`<marker id="%s" markerWidth="4" markerHeight="4" refX="2" refY="2" orient="auto" markerUnits="strokeWidth">`+
+				`<rect x="0" y="0" width="4" height="4" fill="context-stroke"/>`+
+				`</marker>`, id)
+	case preview.LineCapStyleDiamond:
+		return fmt.Sprintf(
+			`<marker id="%s" markerWidth="4" markerHeight="4" refX="2" refY="2" orient="auto" markerUnits="strokeWidth">`+
+				`<polygon points="2,0 4,2 2,4 0,2" fill="context-stroke"/>`+
+				`</marker>`, id)
+	default:
+		return ""
+	}
+}

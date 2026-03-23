@@ -3,6 +3,7 @@ package reportpkg
 import (
 	"github.com/andrewloable/go-fastreport/band"
 	barcodeobj "github.com/andrewloable/go-fastreport/barcode"
+	"github.com/andrewloable/go-fastreport/crossview"
 	"github.com/andrewloable/go-fastreport/gauge"
 	"github.com/andrewloable/go-fastreport/matrix"
 	"github.com/andrewloable/go-fastreport/object"
@@ -81,6 +82,9 @@ func init() {
 		{"TableColumn", func() report.Base { return table.NewTableColumn() }},
 		{"TableRow", func() report.Base { return table.NewTableRow() }},
 		{"TableCell", func() report.Base { return table.NewTableCell() }},
+
+		// CrossView object
+		{"CrossViewObject", func() report.Base { return crossview.NewCrossViewReportObject() }},
 
 		// Matrix object
 		{"MatrixObject", func() report.Base { return matrix.New() }},

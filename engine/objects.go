@@ -12,6 +12,7 @@ import (
 
 	"github.com/andrewloable/go-fastreport/band"
 	"github.com/andrewloable/go-fastreport/barcode"
+	"github.com/andrewloable/go-fastreport/crossview"
 	"github.com/andrewloable/go-fastreport/format"
 	"github.com/andrewloable/go-fastreport/gauge"
 	"github.com/andrewloable/go-fastreport/maprender"
@@ -79,6 +80,12 @@ func (e *ReportEngine) populateBandObjects2(parentBand *band.BandBase, objs *rep
 			// Render AdvMatrixObject physical cells as individual PreparedObjects.
 			if adv, ok := obj.(*object.AdvMatrixObject); ok {
 				e.populateAdvMatrixCells(adv, pb)
+			}
+			// Render CrossViewReportObject cells as a grid of PreparedObjects.
+			// Mirrors C# CrossViewObject.GetData + engine rendering in CrossViewObject.cs.
+			if cv, ok := obj.(*crossview.CrossViewReportObject); ok {
+				cv.GetData()
+				e.populateCrossViewGrid(cv, pb)
 			}
 			// Render CellularTextObject as a character-grid of PreparedObjects.
 			if cellular, ok := obj.(*object.CellularTextObject); ok {
@@ -360,6 +367,61 @@ func (e *ReportEngine) autoManualBuild(tbl *table.TableObject) *table.TableBase 
 	}
 
 	return h.Result()
+}
+
+// populateCrossViewGrid renders a CrossViewReportObject's result grid as
+// individual PreparedObjects (one per grid cell). The cell positions are
+// computed by dividing the object's Width/Height evenly across the grid
+// columns/rows. When no CubeSource is bound the object has already been
+// rendered as a bounding-box shape and this function is a no-op.
+//
+// Mirrors the C# CrossViewObject print pipeline which writes result cells into
+// a TableResult and then calls GeneratePages (CrossViewObject.cs lines 444-463
+// and TableBase.cs GeneratePages).
+func (e *ReportEngine) populateCrossViewGrid(cv *crossview.CrossViewReportObject, pb *preview.PreparedBand) {
+	if cv.CrossView.Source == nil {
+		return
+	}
+	grid, err := cv.CrossView.Build()
+	if err != nil || grid == nil || grid.RowCount == 0 || grid.ColCount == 0 {
+		return
+	}
+	originX := cv.Left()
+	originY := cv.Top()
+	totalW := cv.Width()
+	totalH := cv.Height()
+	cellW := totalW / float32(grid.ColCount)
+	cellH := totalH / float32(grid.RowCount)
+	black := color.RGBA{A: 255}
+
+	for r := 0; r < grid.RowCount; r++ {
+		for c := 0; c < grid.ColCount; c++ {
+			cell := grid.Cell(r, c)
+			cs := cell.ColSpan
+			if cs < 1 {
+				cs = 1
+			}
+			rs := cell.RowSpan
+			if rs < 1 {
+				rs = 1
+			}
+			po := preview.PreparedObject{
+				Name:      cv.Name(),
+				Kind:      preview.ObjectTypeText,
+				Left:      originX + float32(c)*cellW,
+				Top:       originY + float32(r)*cellH,
+				Width:     cellW * float32(cs),
+				Height:    cellH * float32(rs),
+				Text:      cell.Text,
+				BlobIdx:   -1,
+				Font:      style.DefaultFont(),
+				TextColor: black,
+				FillColor: color.RGBA{},
+				Border:    cv.Border(),
+			}
+			pb.Objects = append(pb.Objects, po)
+		}
+	}
 }
 
 // tableExtractDSAlias extracts the data source alias from the first
@@ -1035,19 +1097,21 @@ func (e *ReportEngine) buildPreparedObject(obj report.Base) *preview.PreparedObj
 		po.Kind = preview.ObjectTypeCheckBox
 		// Evaluate expression or data column binding to determine checked state.
 		// If no expression/binding, fall back to the statically deserialized value.
+		// Mirrors C# Variant bool coercion: bool→bool, numeric non-zero→true, string→parse.
 		if expr := v.Expression(); expr != "" {
 			result, err := e.report.Calc(expr)
 			if err == nil {
-				switch bv := result.(type) {
-				case bool:
-					v.SetChecked(bv)
-				case string:
-					v.SetChecked(bv == "true" || bv == "True" || bv == "1")
-				}
+				v.SetChecked(anyToBool(result))
 			}
 		} else if col := v.DataColumn(); col != "" {
-			result := e.evalText("[" + col + "]")
-			v.SetChecked(result == "true" || result == "True" || result == "1")
+			result, err := e.report.Calc("[" + col + "]")
+			if err == nil {
+				v.SetChecked(anyToBool(result))
+			} else {
+				// Fallback: evalText returns string representation.
+				s := e.evalText("[" + col + "]")
+				v.SetChecked(s == "true" || s == "True" || s == "1")
+			}
 		}
 		po.Checked = v.Checked()
 		po.CheckedSymbol = int(v.CheckedSymbol())
@@ -1215,6 +1279,17 @@ func (e *ReportEngine) buildPreparedObject(obj report.Base) *preview.PreparedObj
 			po.BlobIdx = e.renderGaugeBlob(v.Name(), img)
 		}
 
+	case *crossview.CrossViewReportObject:
+		// The bounding box is rendered as a shape; individual cells are added
+		// by populateCrossViewGrid called from populateBandObjects2.
+		// Mirrors C# CrossViewObject which inherits TableBase (a breakable table).
+		po.Kind = preview.ObjectTypeShape
+		po.ShapeKind = 0 // Rectangle
+		po.Border = v.Border()
+		if f, ok := v.Fill().(*style.SolidFill); ok {
+			po.FillColor = f.Color
+		}
+
 	case *table.TableObject:
 		// The bounding box is rendered as a shape; individual cells are added
 		// by populateTableObjects called from populateBandObjects2.
@@ -1380,6 +1455,66 @@ func decodeSvgData(s string) []byte {
 		return b
 	}
 	return nil
+}
+
+// anyToBool converts any value to bool following C# Variant.CBln() coercion rules:
+//   - nil / "": false
+//   - bool: direct
+//   - numeric (int*, uint*, float*): non-zero → true
+//   - string: normalised to lowercase, then compared against known truthy/falsy sets;
+//     unknown non-empty strings default to true (matches C# final "return true")
+//   - other non-nil: true (matches C# CBln final "return true")
+//
+// Mirrors FastReport.Utils.Variant.ToBoolean() / CBln() (Variant.cs lines 338-1784).
+func anyToBool(v any) bool {
+	if v == nil {
+		return false
+	}
+	switch val := v.(type) {
+	case bool:
+		return val
+	case int:
+		return val != 0
+	case int8:
+		return val != 0
+	case int16:
+		return val != 0
+	case int32:
+		return val != 0
+	case int64:
+		return val != 0
+	case uint:
+		return val != 0
+	case uint8:
+		return val != 0
+	case uint16:
+		return val != 0
+	case uint32:
+		return val != 0
+	case uint64:
+		return val != 0
+	case float32:
+		return val != 0
+	case float64:
+		return val != 0
+	case string:
+		s := strings.ToLower(strings.TrimSpace(val))
+		if s == "" || s == "false" || s == "f" || s == "0" || s == "0.0" ||
+			s == "no" || s == "n" || s == "off" || s == "negative" || s == "neg" ||
+			s == "disabled" || s == "incorrect" || s == "wrong" || s == "left" {
+			return false
+		}
+		// Explicitly truthy values.
+		if s == "true" || s == "t" || s == "1" || s == "-1" ||
+			s == "yes" || s == "y" || s == "on" || s == "positive" || s == "pos" ||
+			s == "enabled" || s == "correct" || s == "right" {
+			return true
+		}
+		// Unknown non-empty string → true (mirrors C# CBln's default return true).
+		return true
+	}
+	// Unknown non-nil type → true (mirrors C# CBln final "return true").
+	return true
 }
 
 // extractBarcodeModules converts a barcode image to a boolean module matrix.

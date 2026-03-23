@@ -446,8 +446,8 @@ func TestRenderObject_Line_Horizontal(t *testing.T) {
 		},
 	})
 	out := exportHTML(t, pp)
-	if !strings.Contains(out, "border-bottom:1px solid #000;") {
-		t.Errorf("horizontal line: expected border-bottom:1px solid #000;, got %q", out)
+	if !strings.Contains(out, "border-bottom:1.00px solid rgb(0, 0, 0);") {
+		t.Errorf("horizontal line: expected border-bottom:1.00px solid rgb(0, 0, 0);, got %q", out)
 	}
 }
 
@@ -460,8 +460,8 @@ func TestRenderObject_Line_Vertical(t *testing.T) {
 		},
 	})
 	out := exportHTML(t, pp)
-	if !strings.Contains(out, "border-left:1px solid #000;") {
-		t.Errorf("vertical line: expected border-left:1px solid #000;, got %q", out)
+	if !strings.Contains(out, "border-left:1.00px solid rgb(0, 0, 0);") {
+		t.Errorf("vertical line: expected border-left:1.00px solid rgb(0, 0, 0);, got %q", out)
 	}
 }
 

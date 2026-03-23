@@ -475,7 +475,9 @@ func RenderSimple(g *SimpleGauge, w, h int) image.Image {
 
 // ── SimpleProgressGauge ───────────────────────────────────────────────────────
 
-// RenderSimpleProgress renders a SimpleProgressGauge as a horizontal progress bar.
+// RenderSimpleProgress renders a SimpleProgressGauge as a horizontal or vertical
+// progress bar. When g.Vertical() is true (Height > Width) the bar fills from
+// the bottom up, matching C# SimpleProgressPointer.DrawVert behaviour.
 func RenderSimpleProgress(g *SimpleProgressGauge, w, h int) image.Image {
 	img := image.NewRGBA(image.Rect(0, 0, w, h))
 	fillRect(img, 0, 0, w, h, colorLightGray)
@@ -491,9 +493,19 @@ func RenderSimpleProgress(g *SimpleProgressGauge, w, h int) image.Image {
 	if barW <= 0 || barH <= 0 {
 		return img
 	}
-	fillW := int(math.Round(float64(barW) * pct))
-	if fillW > 0 {
-		fillRect(img, barX, barY, fillW, barH, pointerColor)
+
+	if g.Vertical() {
+		// DrawVert: fill from the bottom upward (C# SimpleProgressPointer.DrawVert).
+		fillH := int(math.Round(float64(barH) * pct))
+		if fillH > 0 {
+			fillRect(img, barX, barY+barH-fillH, barW, fillH, pointerColor)
+		}
+	} else {
+		// DrawHorz: fill from the left (default horizontal layout).
+		fillW := int(math.Round(float64(barW) * pct))
+		if fillW > 0 {
+			fillRect(img, barX, barY, fillW, barH, pointerColor)
+		}
 	}
 	drawRectBorder(img, barX, barY, barW, barH, colorDarkGray)
 	return img

@@ -55,6 +55,10 @@ type TableHelper struct {
 	// CellTextEval, when non-nil, is applied to each cell's text during copyCells.
 	// Set before PrintColumn/PrintRow and clear it after PrintRows/PrintColumns.
 	CellTextEval func(text string) string
+
+	// pageBreak is set by PageBreak() and consumed by the next PrintRow/PrintColumn.
+	// Mirrors TableHelper.pageBreak (TableHelper.cs line 22).
+	pageBreak bool
 }
 
 type nowPrinting int
@@ -83,6 +87,11 @@ func NewTableHelper(src *TableObject) *TableHelper {
 // Result returns the accumulated result table produced by PrintRow/PrintColumn calls.
 func (h *TableHelper) Result() *TableBase { return h.result }
 
+// PageBreak marks that the next PrintRow or PrintColumn should set a page-break
+// flag on the resulting row or column.
+// Mirrors TableHelper.PageBreak() (TableHelper.cs line 180).
+func (h *TableHelper) PageBreak() { h.pageBreak = true }
+
 // PrintRow selects template row at index and appends it to the result.
 // Call PrintColumn after PrintRow to populate the cells for that row.
 // Calling PrintRows() is a shortcut for PrintRow + PrintColumns on all rows.
@@ -109,6 +118,7 @@ func (h *TableHelper) PrintRow(index int) {
 		}
 
 		row := cloneRow(srcRow)
+		row.SetPageBreak(h.pageBreak)
 		h.result.rows = append(h.result.rows, row)
 		h.nowPrinting = npRow
 	} else {
@@ -126,10 +136,14 @@ func (h *TableHelper) PrintRow(index int) {
 			h.result.rows = append(h.result.rows, cloneRow(srcRow))
 		}
 
+		// Apply page-break flag to the target row (new or existing).
+		h.result.rows[h.printRowIdx].SetPageBreak(h.pageBreak)
+
 		// Copy cells for all result columns at this row.
 		h.copyCells(h.origColIdx, h.origRowIdx, h.printColIdx, h.printRowIdx)
 		h.nowPrinting = npRow
 	}
+	h.pageBreak = false
 }
 
 // PrintRows calls PrintRow for every template row. In row-first mode (when
@@ -176,6 +190,9 @@ func (h *TableHelper) PrintColumn(index int) {
 			h.result.columns = append(h.result.columns, cloneColumn(srcCol))
 		}
 
+		// Apply page-break flag to the target column (new or existing).
+		h.result.columns[h.printColIdx].SetPageBreak(h.pageBreak)
+
 		// Copy cells into the last result row.
 		rowIdx := len(h.result.rows) - 1
 		if rowIdx >= 0 {
@@ -191,9 +208,12 @@ func (h *TableHelper) PrintColumn(index int) {
 			h.printColIdx++
 		}
 
-		h.result.columns = append(h.result.columns, cloneColumn(srcCol))
+		col := cloneColumn(srcCol)
+		col.SetPageBreak(h.pageBreak)
+		h.result.columns = append(h.result.columns, col)
 		h.nowPrinting = npColumn
 	}
+	h.pageBreak = false
 }
 
 // PrintColumns calls PrintColumn for every template column.

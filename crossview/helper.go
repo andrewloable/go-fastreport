@@ -142,6 +142,15 @@ func (h *CrossViewHelper) FinishPrint() {
 	h.UpdateDescriptors()
 }
 
+// AddData adds data from the bound cube source to the result.
+// In the C# implementation this copies cube cell values into the TableResult;
+// in Go, result building is deferred to Build() / buildGrid(). This stub
+// satisfies the engine lifecycle contract.
+// Mirrors CrossViewHelper.AddData() (CrossViewHelper.cs lines 638-644).
+func (h *CrossViewHelper) AddData() {
+	// No-op in the Go port: the result grid is built on demand via CrossViewObject.Build().
+}
+
 // CreateOtherDescriptor (re)initialises the internal "no source" placeholder
 // descriptors. In the full C# implementation these are CrossViewDescriptor
 // objects used in the template table; in Go we only reset the geometry state.

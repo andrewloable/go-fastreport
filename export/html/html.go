@@ -452,10 +452,16 @@ func (e *Exporter) renderObject(obj preview.PreparedObject, scale float32) {
 				// picClass and imgClass are assigned below depending on InlineStyles mode.
 
 				// Resize image to display dimensions for correct rendering in HTML.
+				// For rotated objects (Angle != 0), apply rotation to the image
+				// to match C# GetLayerPicture behaviour.
 				var imgData []byte
 				targetW := int(math.Round(float64(w)))
 				targetH := int(math.Round(float64(h)))
-				imgData = resizeImagePNG(data, targetW, targetH)
+				if obj.Angle != 0 {
+					imgData = imgexp.RotateImagePNG(data, obj.Angle, targetW, targetH)
+				} else {
+					imgData = resizeImagePNG(data, targetW, targetH)
+				}
 				mime := imageMIMEForCSS(imgData)
 				encoded := base64.StdEncoding.EncodeToString(imgData)
 				imgCSS := fmt.Sprintf(
@@ -891,14 +897,6 @@ func (e *Exporter) renderTextObject(obj preview.PreparedObject, scale float32) {
 	// Width and height (C# GetStyle appends width/height).
 	outerCSS.WriteString(fmt.Sprintf("width:%spx;height:%spx;", pxVal(w), pxVal(h)))
 
-	// CSS rotation for TextObject.Angle != 0.
-	// C# renders rotated text as a bitmap image (LayerPicture); in Go we use CSS transform.
-	// Mirrors C# IsMemo() check: Angle != 0 → not a memo → rendered as picture.
-	// C# ref: HTMLExportLayers.cs IsMemo() line 719, LayerBack/LayerPicture lines 937-955.
-	if obj.Angle != 0 {
-		outerCSS.WriteString(fmt.Sprintf("transform:rotate(%ddeg);transform-origin:50%% 50%%;", obj.Angle))
-	}
-
 	// ── Build inner CSS class FIRST (matches C# flow: GetSpanText is called
 	// before LayerBack→GetStyle, so inner class is registered first) ──
 	var innerCSS strings.Builder
@@ -969,24 +967,6 @@ func (e *Exporter) renderTextObject(obj preview.PreparedObject, scale float32) {
 		}
 	}
 
-	// In class mode, register CSS classes (C# flow: inner registered first via
-	// GetSpanText, then outer via LayerBack→GetStyle).
-	// In InlineStyles mode, classes are empty strings; CSS is emitted inline.
-	innerClass := e.cssClass(innerCSS.String())
-	outerClass := e.cssClass(outerCSS.String())
-
-	// ── Format text content ──
-	// TextRenderType 1=HtmlTags and 2=HtmlParagraph: the text already contains HTML markup
-	// (evaluated from FRX with inline <b>/<i>/<font> tags). Pass through without escaping.
-	// Mirrors C# HTMLExport: HtmlTags/HtmlParagraph → raw html output via HtmlTextRenderer.
-	// TextRenderType 0=Default (plain text): HTML-escape and convert line breaks to <p> tags.
-	var innerText string
-	if obj.TextRenderType == 1 || obj.TextRenderType == 2 {
-		innerText = text
-	} else {
-		innerText = formatTextContent(text, fontPx)
-	}
-
 	// ── Compute border width adjustments (C# Layer method) ──
 	var bLeft, bTop, bRight, bBottom float32
 	htmlBorderWidthValues(&obj.Border, scale, &bLeft, &bTop, &bRight, &bBottom)
@@ -1001,6 +981,7 @@ func (e *Exporter) renderTextObject(obj preview.PreparedObject, scale float32) {
 		pxVal(adjLeft), pxVal(adjTop), pxVal(adjW), pxVal(adjH))
 
 	// For rotated text objects (Angle != 0), emit LayerBack + LayerPicture and return.
+	// Skip registering outerCSS/innerCSS classes — they would never be used.
 	// C# IsMemo() returns false when Angle != 0, so the object is rendered as:
 	//   LayerBack:    background/border div (border:none in inline style)
 	//   LayerPicture: div with base64-PNG background-image of the rendered rotated text
@@ -1036,6 +1017,19 @@ func (e *Exporter) renderTextObject(obj preview.PreparedObject, scale float32) {
 			e.sb.WriteString(fmt.Sprintf("<div class=\"%s\" style=\"%s%s\">&nbsp;</div>\n", bgClass, posStyle, picCSS))
 		}
 		return
+	}
+
+	// Register CSS classes only for non-rotated text objects (rotated ones returned above).
+	// C# flow: inner registered first via GetSpanText, then outer via LayerBack→GetStyle.
+	innerClass := e.cssClass(innerCSS.String())
+	outerClass := e.cssClass(outerCSS.String())
+
+	// ── Format text content ──
+	var innerText string
+	if obj.TextRenderType == 1 || obj.TextRenderType == 2 {
+		innerText = text
+	} else {
+		innerText = formatTextContent(text, fontPx)
 	}
 
 	// Hyperlink wrapping (C# GetHref + Layer pattern).
@@ -1124,7 +1118,15 @@ func (e *Exporter) ExportPageEnd(pg *preview.PreparedPage) error {
 		// C# ref: HTMLExportLayers.cs Layer() landscape rotation, HTMLExportStyles.cs.
 		landscapeCSS := ""
 		if pg.Landscape {
-			landscapeCSS = fmt.Sprintf("width:%.2fpx !important;transform: rotate(90deg); -webkit-transform: rotate(90deg)", pg.Height)
+			// C# uses the actual content height (max bottom of all bands) for
+			// the rotated page width, not the page dimension minus margins.
+			var contentH float32
+			for _, b := range pg.Bands {
+				if bottom := b.Top + b.Height; bottom > contentH {
+					contentH = bottom
+				}
+			}
+			landscapeCSS = fmt.Sprintf("width:%.2fpx !important;transform: rotate(90deg); -webkit-transform: rotate(90deg)", contentH)
 		}
 		e.sb.WriteString(fmt.Sprintf("<style type=\"text/css\" media=\"print\"><!--\ndiv.frpage%d { break-after: always; page-break-inside: avoid; %s}\n @page { size: portrait; margin: 0; }--></style>\n", pageNum, landscapeCSS))
 		// New content CSS classes for this page.

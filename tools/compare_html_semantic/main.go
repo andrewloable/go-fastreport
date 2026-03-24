@@ -88,6 +88,7 @@ type Element struct {
 	Border    string
 	TextAlign string
 	VertAlign string
+	HasSVG    bool // true if this element contains an <svg> child
 }
 
 func newElement(tag, cls, styleStr string) *Element {
@@ -165,6 +166,7 @@ type Page struct {
 	BgColor  string
 	Elements []*Element
 	Texts    []string
+	SVGCount int // number of <svg> elements on this page
 }
 
 func newPage(idx int, cls, styleStr string) *Page {
@@ -220,6 +222,14 @@ func extractPages(r io.Reader) []*Page {
 			}
 			if skip > 0 {
 				continue
+			}
+
+			// Track SVG elements inside pages.
+			if tag == "svg" && curPage != nil {
+				curPage.SVGCount++
+				if curElem != nil {
+					curElem.HasSVG = true
+				}
 			}
 
 			cls := ""
@@ -368,10 +378,12 @@ type Delta struct {
 	ExtraTexts       []textEntry // (page, text) present in Go but not C#
 	PositionDiffs    []string
 	ElementCountDiffs []string
-	TextContentDiffs []string
-	StyleDiffs       []string
-	TextOrderDiffs   []string
-	CSSClassDiffs    []string
+	TextContentDiffs  []string
+	StyleDiffs        []string
+	TextOrderDiffs    []string
+	CSSClassDiffs     []string
+	SVGDiffs          []string // SVG count mismatches per page
+	ElemClassDiffs    []string // CSS class mismatches on matched elements
 }
 
 type textEntry struct {
@@ -381,13 +393,17 @@ type textEntry struct {
 
 func (d *Delta) isPass() bool {
 	return d.PageCountExp == d.PageCountAct &&
+		len(d.PageDimDiffs) == 0 &&
 		len(d.MissingTexts) == 0 &&
 		len(d.ExtraTexts) == 0 &&
 		len(d.PositionDiffs) == 0 &&
 		len(d.TextContentDiffs) == 0 &&
 		len(d.StyleDiffs) == 0 &&
 		len(d.ElementCountDiffs) == 0 &&
-		len(d.TextOrderDiffs) == 0
+		len(d.TextOrderDiffs) == 0 &&
+		len(d.CSSClassDiffs) == 0 &&
+		len(d.SVGDiffs) == 0 &&
+		len(d.ElemClassDiffs) == 0
 }
 
 func (d *Delta) severity() string {
@@ -400,10 +416,13 @@ func (d *Delta) severity() string {
 	if len(d.TextContentDiffs) > 0 {
 		return "TEXT_VALUES"
 	}
+	if len(d.SVGDiffs) > 0 {
+		return "SVG_STRUCTURE"
+	}
 	if len(d.PositionDiffs) > 0 {
 		return "POSITIONING"
 	}
-	if len(d.StyleDiffs) > 0 {
+	if len(d.StyleDiffs) > 0 || len(d.ElemClassDiffs) > 0 {
 		return "STYLING"
 	}
 	if len(d.ElementCountDiffs) > 0 {
@@ -680,6 +699,25 @@ func comparePages(name string, expPages, actPages []*Page, expCSS, actCSS map[st
 				}
 			}
 
+			// SVG structure comparison.
+			for j := 0; j < minLen; j++ {
+				ee := expElems[j]
+				ae := actElems[j]
+				if ee.HasSVG != ae.HasSVG {
+					who := "Go has SVG, C# does not"
+					if ee.HasSVG {
+						who = "C# has SVG, Go does not"
+					}
+					d.SVGDiffs = append(d.SVGDiffs,
+						fmt.Sprintf("Page %d @%s [%s]: %s", i, pos, ae.sig(), who))
+				}
+				// CSS class differences on matched elements.
+				if ee.Cls != ae.Cls && len(d.ElemClassDiffs) < 50 {
+					d.ElemClassDiffs = append(d.ElemClassDiffs,
+						fmt.Sprintf("Page %d @%s [%s]: resolved styles differ (C# classes=%q Go classes=%q)", i, pos, ee.sig(), ee.Cls, ae.Cls))
+				}
+			}
+
 			// Elements at a position in C# but not in Go.
 			if len(expElems) > len(actElems) && len(d.PositionDiffs) < 50 {
 				for j := len(actElems); j < len(expElems); j++ {
@@ -694,6 +732,12 @@ func comparePages(name string, expPages, actPages []*Page, expCSS, actCSS map[st
 				}
 			}
 		}
+
+		// SVG count per page.
+		if ep.SVGCount != ap.SVGCount {
+			d.SVGDiffs = append(d.SVGDiffs,
+				fmt.Sprintf("Page %d: SVG count C#=%d Go=%d", i, ep.SVGCount, ap.SVGCount))
+		}
 	}
 
 	// Truncate large diffs.
@@ -704,6 +748,8 @@ func comparePages(name string, expPages, actPages []*Page, expCSS, actCSS map[st
 	truncateStrSlice(&d.ElementCountDiffs, 50)
 	truncateTextEntries(&d.MissingTexts, 50)
 	truncateTextEntries(&d.ExtraTexts, 50)
+	truncateStrSlice(&d.SVGDiffs, 50)
+	truncateStrSlice(&d.ElemClassDiffs, 50)
 
 	return d
 }
@@ -839,6 +885,22 @@ func renderMD(d *Delta) string {
 			lines = append(lines, s)
 		}
 		lines = append(lines, "```", "")
+	}
+
+	if len(d.SVGDiffs) > 0 {
+		lines = append(lines, "## SVG Structure Differences", "")
+		for _, s := range d.SVGDiffs {
+			lines = append(lines, fmt.Sprintf("- %s", s))
+		}
+		lines = append(lines, "")
+	}
+
+	if len(d.ElemClassDiffs) > 0 {
+		lines = append(lines, "## Element CSS Class Differences", "")
+		for _, s := range d.ElemClassDiffs {
+			lines = append(lines, fmt.Sprintf("- %s", s))
+		}
+		lines = append(lines, "")
 	}
 
 	if d.isPass() {

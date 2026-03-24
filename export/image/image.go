@@ -1173,6 +1173,90 @@ func (e *Exporter) stitchPages(pages []*image.RGBA) *image.RGBA {
 	return combined
 }
 
+// RenderGenericPNG renders any PreparedObject to a PNG byte slice using the
+// image exporter's renderObject. The object is rendered on a transparent canvas
+// at its own dimensions. Used by the HTML exporter to render PolygonObjects
+// and ShapeObjects as base64 images (matching C# LayerBack + LayerPicture).
+func RenderGenericPNG(obj preview.PreparedObject) ([]byte, error) {
+	w := int(math.Round(float64(obj.Width)))
+	h := int(math.Round(float64(obj.Height)))
+	if w < 1 {
+		w = 1
+	}
+	if h < 1 {
+		h = 1
+	}
+	canvas := image.NewRGBA(image.Rect(0, 0, w, h))
+	// Transparent background.
+	draw.Draw(canvas, canvas.Bounds(), &image.Uniform{color.RGBA{0, 0, 0, 0}}, image.Point{}, draw.Src)
+
+	exp := &Exporter{
+		ResolutionX: DefaultDPI,
+		ResolutionY: DefaultDPI,
+		Scale:       1.0,
+		curPage:     canvas,
+	}
+	renderObj := obj
+	renderObj.Left = 0
+	renderObj.Top = 0
+	exp.renderObject(renderObj, 0)
+
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, canvas); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+// RotateImagePNG decodes a PNG image, rotates it by the given angle (90, 180,
+// or 270 degrees), resizes to targetW×targetH, and re-encodes as PNG.
+// Used by the HTML exporter for rotated picture objects (barcodes, etc.).
+func RotateImagePNG(data []byte, angle, targetW, targetH int) []byte {
+	src, err := png.Decode(bytes.NewReader(data))
+	if err != nil {
+		return data // fallback: return original
+	}
+	rgba, ok := src.(*image.RGBA)
+	if !ok {
+		// Convert to RGBA.
+		b := src.Bounds()
+		rgba = image.NewRGBA(b)
+		draw.Draw(rgba, b, src, b.Min, draw.Src)
+	}
+
+	var rotated *image.RGBA
+	switch angle {
+	case 90:
+		rotated = rotateRGBA90CW(rgba)
+	case 180:
+		rotated = rotateRGBA180(rgba)
+	case 270:
+		rotated = rotateRGBA90CCW(rgba)
+	default:
+		rotated = rgba
+	}
+
+	// Resize to target dimensions using nearest-neighbour (sufficient for barcodes).
+	if rotated.Bounds().Dx() != targetW || rotated.Bounds().Dy() != targetH {
+		dst := image.NewRGBA(image.Rect(0, 0, targetW, targetH))
+		srcB := rotated.Bounds()
+		for y := 0; y < targetH; y++ {
+			sy := srcB.Min.Y + y*srcB.Dy()/targetH
+			for x := 0; x < targetW; x++ {
+				sx := srcB.Min.X + x*srcB.Dx()/targetW
+				dst.SetRGBA(x, y, rotated.RGBAAt(sx, sy))
+			}
+		}
+		rotated = dst
+	}
+
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, rotated); err != nil {
+		return data
+	}
+	return buf.Bytes()
+}
+
 // RenderObjectPNG renders a single PreparedObject (text/RTF) to a PNG byte
 // slice, applying the object's Angle rotation. Used by the HTML exporter to
 // generate LayerPicture background images for rotated text objects, matching

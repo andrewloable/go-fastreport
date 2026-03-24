@@ -1189,6 +1189,7 @@ func (e *ReportEngine) buildPreparedObject(obj report.Base) *preview.PreparedObj
 
 	case *barcode.BarcodeObject:
 		po.Kind = preview.ObjectTypePicture
+		po.Angle = v.Angle()
 		// Evaluate the barcode text: DataColumn → Expression → Text.
 		// C# BarcodeObject.GetDataShared() (BarcodeObject.cs:601-604):
 		//   if DataColumn != "" → Report.GetColumnValue(DataColumn)

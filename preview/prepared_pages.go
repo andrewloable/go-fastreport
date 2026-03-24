@@ -420,6 +420,10 @@ type PreparedObject struct {
 	Kind ObjectType
 	// Left, Top, Width, Height are position and size in pixels.
 	Left, Top, Width, Height float32
+	// Angle is the rotation angle in degrees (0, 90, 180, 270) for text objects.
+	// Non-zero means the text is rotated; exporters apply CSS transform or image
+	// rendering. Mirrors TextObject.Angle (TextObject.cs).
+	Angle int
 	// Text is the rendered text content (for text objects).
 	Text string
 	// BlobIdx is the blob store index for image objects (-1 = no blob).
@@ -614,6 +618,10 @@ type PreparedPage struct {
 	PageNo int
 	// Width / Height are the page dimensions in pixels.
 	Width, Height float32
+	// Landscape indicates the original report page is landscape orientation.
+	// When true the HTML exporter applies a 90° rotation to the page div.
+	// Mirrors ReportPage.Landscape (ReportPage.cs).
+	Landscape bool
 	// Bands holds the rendered bands in print order.
 	Bands []*PreparedBand
 	// Watermark holds the optional page watermark, or nil if none.

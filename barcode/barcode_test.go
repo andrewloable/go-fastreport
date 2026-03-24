@@ -1251,11 +1251,11 @@ func TestPharmacodeBarcode_Render_ZeroDimensions(t *testing.T) {
 	}
 }
 
-func TestPharmacodeBarcode_Encode_Error_TooSmall(t *testing.T) {
+func TestPharmacodeBarcode_Encode_SmallValue(t *testing.T) {
 	b := barcode.NewPharmacodeBarcode()
-	// Value 2 is below the valid range of 3-131070.
-	if err := b.Encode("2"); err == nil {
-		t.Error("expected error for Pharmacode value 2, got nil")
+	// C# BarcodePharmacode accepts any non-negative integer; value 2 is valid.
+	if err := b.Encode("2"); err != nil {
+		t.Errorf("unexpected error for Pharmacode value 2: %v", err)
 	}
 }
 

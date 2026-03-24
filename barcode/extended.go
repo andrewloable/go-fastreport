@@ -302,12 +302,17 @@ func (b *PharmacodeBarcode) Assign(src *PharmacodeBarcode) {
 // DefaultValue returns the C# BarcodeBase.GetDefaultValue() default: "12345678".
 func (b *PharmacodeBarcode) DefaultValue() string { return "12345678" }
 
-// Encode validates and stores the Pharmacode value (integer 3–131070).
+// Encode validates and stores the Pharmacode value (non-negative integer).
+// C# BarcodePharmacode does not validate a specific range; it accepts any
+// non-negative integer and encodes it via binary representation. We mirror
+// that behaviour so that the default value "12345678" (from BarcodeBase.GetDefaultValue)
+// encodes successfully even though it exceeds the standard Pharmacode spec
+// maximum of 131070. C# ref: BarcodePharmacode.cs GetPattern().
 func (b *PharmacodeBarcode) Encode(text string) error {
-	var n int
+	var n uint64
 	_, err := fmt.Sscanf(text, "%d", &n)
-	if err != nil || n < 3 || n > 131070 {
-		return fmt.Errorf("pharmacode: value must be integer 3–131070, got %q", text)
+	if err != nil {
+		return fmt.Errorf("pharmacode: value must be a non-negative integer, got %q", text)
 	}
 	b.encodedText = text
 	return nil
@@ -372,15 +377,17 @@ func (b *PlesseyBarcode) Encode(text string) error {
 }
 
 // Render draws the Plessey barcode as a 1-D bar image with CRC.
+// Mirrors C# BarcodePlessey / LinearBarcodeBase.DrawBarcode: uses GetPattern()
+// then DrawLinearBarcode which handles showText automatically.
 func (b *PlesseyBarcode) Render(width, height int) (image.Image, error) {
 	if b.encodedText == "" {
 		return nil, fmt.Errorf("plessey: not encoded")
 	}
-	bits, err := plesseyEncode(b.encodedText)
+	pattern, err := b.GetPattern()
 	if err != nil {
 		return nil, err
 	}
-	return renderBitPattern(bits, width, height, color.Black, color.White), nil
+	return DrawLinearBarcode(pattern, b.encodedText, width, height, b.showText, b.GetWideBarRatio()), nil
 }
 
 // plesseyEncode generates the Plessey bar/space bit array including CRC.

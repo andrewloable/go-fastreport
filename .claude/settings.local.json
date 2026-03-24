@@ -119,7 +119,10 @@
       "Bash(sed -n '325,345p' /Volumes/mandark-1Tb/projects/loabletech/go-fastreport/original-dotnet/FastReport.Base/ZipCodeObject.cs)",
       "Bash(echo 'no aztec dir' ls /Volumes/mandark-1Tb/projects/loabletech/go-fastreport/barcode/*.go)",
       "Bash(git stash:*)",
-      "Bash(git -C /Volumes/mandark-1Tb/projects/loabletech/go-fastreport diff --stat HEAD)"
+      "Bash(git -C /Volumes/mandark-1Tb/projects/loabletech/go-fastreport diff --stat HEAD)",
+      "Bash(sort -k3,3)",
+      "Bash(head -20 grep -rn \"ITF14\\\\|Supplement2\\\\|Supplement5\\\\|DefaultValue\" barcode/*.go)",
+      "Bash(while IFS= read -r b64)"
     ]
   }
 }

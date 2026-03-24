@@ -1173,6 +1173,117 @@ func (e *Exporter) stitchPages(pages []*image.RGBA) *image.RGBA {
 	return combined
 }
 
+// RenderObjectPNG renders a single PreparedObject (text/RTF) to a PNG byte
+// slice, applying the object's Angle rotation. Used by the HTML exporter to
+// generate LayerPicture background images for rotated text objects, matching
+// C# HTMLExportLayers.cs GetLayerPicture behaviour.
+//
+// The returned image has the same pixel dimensions as the object's Width×Height.
+// For 90°/270° angles the text is first rendered at the transposed dimensions
+// (H×W) and then rotated, so the result fits the original bounding box.
+func RenderObjectPNG(obj preview.PreparedObject) ([]byte, error) {
+	w := int(math.Round(float64(obj.Width)))
+	h := int(math.Round(float64(obj.Height)))
+	if w < 1 {
+		w = 1
+	}
+	if h < 1 {
+		h = 1
+	}
+
+	// For 90°/270°: render in the transposed (H×W) space so text wraps correctly,
+	// then rotate the canvas to produce the final W×H image.
+	renderW, renderH := w, h
+	if obj.Angle == 90 || obj.Angle == 270 {
+		renderW, renderH = h, w
+	}
+
+	canvas := image.NewRGBA(image.Rect(0, 0, renderW, renderH))
+
+	// Fill background.
+	bg := color.RGBA{R: 255, G: 255, B: 255, A: 255}
+	if obj.FillColor.A > 0 {
+		bg = obj.FillColor
+	}
+	draw.Draw(canvas, canvas.Bounds(), &image.Uniform{bg}, image.Point{}, draw.Src)
+
+	// Use a temporary Exporter to render the text onto the canvas.
+	exp := &Exporter{
+		ResolutionX: DefaultDPI,
+		ResolutionY: DefaultDPI,
+		Scale:       1.0,
+		curPage:     canvas,
+	}
+	// Render without rotation at origin; we'll rotate the canvas after.
+	renderObj := obj
+	renderObj.Angle = 0
+	renderObj.Left = 0
+	renderObj.Top = 0
+	renderObj.Width = float32(renderW)
+	renderObj.Height = float32(renderH)
+	exp.renderObject(renderObj, 0)
+
+	// Rotate the canvas to match the object's Angle.
+	var result *image.RGBA
+	switch obj.Angle {
+	case 90:
+		result = rotateRGBA90CW(canvas)
+	case 180:
+		result = rotateRGBA180(canvas)
+	case 270:
+		result = rotateRGBA90CCW(canvas)
+	default:
+		result = canvas
+	}
+
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, result); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+// rotateRGBA90CW rotates an RGBA image 90° clockwise.
+// Source (x,y) → dest (srcH-1-y, x). Output dimensions: H×W → W×H swapped.
+func rotateRGBA90CW(src *image.RGBA) *image.RGBA {
+	b := src.Bounds()
+	sw, sh := b.Dx(), b.Dy()
+	dst := image.NewRGBA(image.Rect(0, 0, sh, sw))
+	for y := 0; y < sh; y++ {
+		for x := 0; x < sw; x++ {
+			dst.SetRGBA(sh-1-y, x, src.RGBAAt(x, y))
+		}
+	}
+	return dst
+}
+
+// rotateRGBA180 rotates an RGBA image 180°.
+func rotateRGBA180(src *image.RGBA) *image.RGBA {
+	b := src.Bounds()
+	sw, sh := b.Dx(), b.Dy()
+	dst := image.NewRGBA(image.Rect(0, 0, sw, sh))
+	for y := 0; y < sh; y++ {
+		for x := 0; x < sw; x++ {
+			dst.SetRGBA(sw-1-x, sh-1-y, src.RGBAAt(x, y))
+		}
+	}
+	return dst
+}
+
+// rotateRGBA90CCW rotates an RGBA image 90° counter-clockwise (= 270° CW).
+// Source (x,y) → dest (y, srcW-1-x). Output dimensions: H×W → W×H swapped.
+func rotateRGBA90CCW(src *image.RGBA) *image.RGBA {
+	b := src.Bounds()
+	sw, sh := b.Dx(), b.Dy()
+	dst := image.NewRGBA(image.Rect(0, 0, sh, sw))
+	for y := 0; y < sh; y++ {
+		for x := 0; x < sw; x++ {
+			dst.SetRGBA(y, sw-1-x, src.RGBAAt(x, y))
+		}
+	}
+	return dst
+}
+
 // convertToPaletted converts an RGBA image to an 8-bit paletted image
 // using a web-safe 216-colour palette suitable for GIF output.
 func convertToPaletted(src *image.RGBA) *image.Paletted {

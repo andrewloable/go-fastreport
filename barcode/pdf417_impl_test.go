@@ -228,18 +228,18 @@ func TestPdf417ECCount(t *testing.T) {
 // ── pdf417ComputeEC tests ───────────────────────────────────────────────────
 
 func TestPdf417ComputeEC_Length(t *testing.T) {
+	// Security level 2 → 8 EC codewords (2^3).
 	data := []int{5, 900, 100, 200}
-	ecCount := 8 // security level 2
-	ec := pdf417ComputeEC(data, ecCount)
-	if len(ec) != ecCount {
-		t.Errorf("len(ec) = %d, want %d", len(ec), ecCount)
+	ec := pdf417ComputeEC(data, 2)
+	if len(ec) != 8 {
+		t.Errorf("len(ec) = %d, want 8 (level 2)", len(ec))
 	}
 }
 
 func TestPdf417ComputeEC_ValidRange(t *testing.T) {
+	// All EC codewords must be in [0, 929).
 	data := []int{10, 900, 100, 200, 300}
-	ecCount := 4 // security level 1
-	ec := pdf417ComputeEC(data, ecCount)
+	ec := pdf417ComputeEC(data, 1) // level 1 → 4 EC codewords
 	for i, v := range ec {
 		if v < 0 || v >= 929 {
 			t.Errorf("ec[%d] = %d, out of range [0, 929)", i, v)
@@ -248,8 +248,8 @@ func TestPdf417ComputeEC_ValidRange(t *testing.T) {
 }
 
 func TestPdf417ComputeEC_DifferentInputsDifferentOutput(t *testing.T) {
-	ec1 := pdf417ComputeEC([]int{5, 900, 100}, 4)
-	ec2 := pdf417ComputeEC([]int{5, 900, 200}, 4)
+	ec1 := pdf417ComputeEC([]int{5, 900, 100}, 1) // level 1 → 4 codewords
+	ec2 := pdf417ComputeEC([]int{5, 900, 200}, 1)
 	same := true
 	for i := range ec1 {
 		if ec1[i] != ec2[i] {
@@ -264,8 +264,8 @@ func TestPdf417ComputeEC_DifferentInputsDifferentOutput(t *testing.T) {
 
 func TestPdf417ComputeEC_Deterministic(t *testing.T) {
 	data := []int{7, 900, 50, 75}
-	ec1 := pdf417ComputeEC(data, 8)
-	ec2 := pdf417ComputeEC(data, 8)
+	ec1 := pdf417ComputeEC(data, 2) // level 2 → 8 codewords
+	ec2 := pdf417ComputeEC(data, 2)
 	for i := range ec1 {
 		if ec1[i] != ec2[i] {
 			t.Errorf("non-deterministic: ec[%d] = %d vs %d", i, ec1[i], ec2[i])
@@ -274,12 +274,11 @@ func TestPdf417ComputeEC_Deterministic(t *testing.T) {
 }
 
 func TestPdf417ComputeEC_LargeECCount(t *testing.T) {
-	// Security level 5 → 64 EC codewords
+	// Security level 5 → 64 EC codewords (2^6).
 	data := []int{20, 900, 100, 200, 300, 400}
-	ecCount := 64
-	ec := pdf417ComputeEC(data, ecCount)
-	if len(ec) != ecCount {
-		t.Errorf("len(ec) = %d, want %d", len(ec), ecCount)
+	ec := pdf417ComputeEC(data, 5)
+	if len(ec) != 64 {
+		t.Errorf("len(ec) = %d, want 64 (level 5)", len(ec))
 	}
 	for i, v := range ec {
 		if v < 0 || v >= 929 {
@@ -553,93 +552,115 @@ func TestPdf417RowIndicator_Mod929(t *testing.T) {
 }
 
 func TestPdf417RowIndicator_SideParameter(t *testing.T) {
-	// Current implementation ignores side, both should return same value
+	// Left and right indicators differ — row=0, cluster=0:
+	// left  = (0/3)*30 + (6-1)/3  = 0 + 1 = 1
+	// right = (0/3)*30 + (3-1)    = 0 + 2 = 2
 	left := pdf417RowIndicator(0, 6, 3, 2, 0)
 	right := pdf417RowIndicator(0, 6, 3, 2, 1)
-	if left != right {
-		t.Errorf("left=%d != right=%d (side should be ignored)", left, right)
+	if left == right {
+		t.Errorf("left (%d) should differ from right (%d) for cluster 0", left, right)
+	}
+	// For cluster 0: left = base+(rows-1)/3, right = base+(cols-1)
+	wantLeft := (0/3)*30 + (6-1)/3
+	wantRight := (0/3)*30 + (3 - 1)
+	if left != wantLeft {
+		t.Errorf("left: got %d, want %d", left, wantLeft)
+	}
+	if right != wantRight {
+		t.Errorf("right: got %d, want %d", right, wantRight)
 	}
 }
 
-// ── pdf417GetCWPattern tests ────────────────────────────────────────────────
+// ── pdf417Clusters table tests ───────────────────────────────────────────────
 
-func TestPdf417GetCWPattern_SumsTo17(t *testing.T) {
-	// Every pattern must sum to 17
+func TestPdf417Clusters_TableSize(t *testing.T) {
+	// Each cluster must have exactly 929 entries.
+	for c := 0; c < 3; c++ {
+		if len(pdf417Clusters[c]) != 929 {
+			t.Errorf("cluster %d: expected 929 entries, got %d", c, len(pdf417Clusters[c]))
+		}
+	}
+}
+
+func TestPdf417Clusters_PatternBits(t *testing.T) {
+	// Every entry must fit in 17 bits (≤ 0x1ffff).
+	for c := 0; c < 3; c++ {
+		for cw := 0; cw < 929; cw++ {
+			p := pdf417Clusters[c][cw]
+			if p < 0 || p > 0x1ffff {
+				t.Fatalf("cluster=%d, cw=%d: pattern 0x%x out of 17-bit range", c, cw, p)
+			}
+		}
+	}
+}
+
+func TestPdf417DrawCodeword_Writes17Modules(t *testing.T) {
+	// pdf417DrawCodeword must write exactly 17 modules per call.
+	row := make([]bool, 200)
 	for _, cw := range []int{0, 1, 100, 500, 928} {
-		for _, cluster := range []int{0, 1, 2} {
-			pattern := pdf417GetCWPattern(cw, cluster)
-			sum := 0
-			for _, w := range pattern {
-				sum += w
-			}
-			if sum != 17 {
-				t.Errorf("cw=%d, cluster=%d: pattern sum = %d, want 17", cw, cluster, sum)
+		for cluster := 0; cluster < 3; cluster++ {
+			pos := 0
+			newPos := pdf417DrawCodeword(row, pos, cw, cluster)
+			if newPos-pos != 17 {
+				t.Errorf("cw=%d, cluster=%d: wrote %d modules, want 17", cw, cluster, newPos-pos)
 			}
 		}
 	}
 }
 
-func TestPdf417GetCWPattern_WidthBounds(t *testing.T) {
-	// Each width should be 1-6
-	for _, cw := range []int{0, 50, 200, 450, 700, 928} {
-		for _, cluster := range []int{0, 1, 2} {
-			pattern := pdf417GetCWPattern(cw, cluster)
-			for i, w := range pattern {
-				if w < 1 || w > 6 {
-					t.Errorf("cw=%d, cluster=%d: pattern[%d] = %d, want 1-6", cw, cluster, i, w)
-				}
-			}
+func TestPdf417DrawCodeword_OutOfRangeCW(t *testing.T) {
+	// cw < 0 or cw >= 929 should be handled (clamped to 0).
+	row1 := make([]bool, 20)
+	row2 := make([]bool, 20)
+	pdf417DrawCodeword(row1, 0, -5, 0)
+	pdf417DrawCodeword(row2, 0, 0, 0)
+	for i := range row1 {
+		if row1[i] != row2[i] {
+			t.Errorf("negative cw: module[%d] differs from cw=0", i)
 		}
 	}
 }
 
-func TestPdf417GetCWPattern_NegativeCW(t *testing.T) {
-	// Negative codeword should be handled (clamped to 0)
-	pattern := pdf417GetCWPattern(-5, 0)
-	sum := 0
-	for _, w := range pattern {
-		sum += w
-	}
-	if sum != 17 {
-		t.Errorf("negative cw: pattern sum = %d, want 17", sum)
-	}
-}
-
-func TestPdf417GetCWPattern_ModWrap(t *testing.T) {
-	// cw >= 929 should wrap mod 929
-	p1 := pdf417GetCWPattern(0, 0)
-	p2 := pdf417GetCWPattern(929, 0)
-	for i := range p1 {
-		if p1[i] != p2[i] {
-			t.Errorf("pattern mismatch at [%d]: cw=0 got %d, cw=929 got %d", i, p1[i], p2[i])
+func TestPdf417DrawCodeword_ClutersKnownPattern(t *testing.T) {
+	// Verify cluster 0, cw=0 pattern against the known table value 0x1d5c0.
+	// 0x1d5c0 = 0001 1101 0101 1100 0000 (bits 16..0):
+	//   1,1,1,0,1,0,1,0,1,1,1,0,0,0,0,0,0 — wait let me recompute
+	// 0x1d5c0 = 0x1*65536+0xd*4096+0x5*256+0xc*16+0x0 = 120256
+	// binary (17 bits): 1 1101 0101 1100 0000 — 17 bits from bit 16 to bit 0
+	// bit16=1,15=1,14=1,13=0,12=1,11=0,10=1,9=0,8=1,7=1,6=1,5=0,4=0,3=0,2=0,1=0,0=0
+	row := make([]bool, 20)
+	pdf417DrawCodeword(row, 0, 0, 0)
+	expected := pdf417Clusters[0][0]
+	for bit := 16; bit >= 0; bit-- {
+		want := (expected>>bit)&1 != 0
+		got := row[16-bit]
+		if got != want {
+			t.Errorf("cw=0,cluster=0,bit=%d: got %v, want %v", bit, got, want)
 		}
 	}
 }
 
-func TestPdf417GetCWPattern_Deterministic(t *testing.T) {
-	p1 := pdf417GetCWPattern(42, 1)
-	p2 := pdf417GetCWPattern(42, 1)
-	for i := range p1 {
-		if p1[i] != p2[i] {
-			t.Errorf("non-deterministic: pattern[%d] = %d vs %d", i, p1[i], p2[i])
-		}
-	}
-}
-
-func TestPdf417GetCWPattern_AllCodewords(t *testing.T) {
-	// Verify all 929 codewords across all 3 clusters produce valid patterns
+func TestPdf417GetCWPattern_OverflowRedistribution(t *testing.T) {
+	// The old synthetic generator has been replaced by the ISO/IEC 15438 CLUSTERS
+	// lookup table. Verify that all cluster entries produce a 17-bit pattern.
 	for cw := 0; cw < 929; cw++ {
 		for cluster := 0; cluster < 3; cluster++ {
-			pattern := pdf417GetCWPattern(cw, cluster)
-			sum := 0
-			for _, w := range pattern {
-				if w < 1 || w > 6 {
-					t.Fatalf("cw=%d, cluster=%d: invalid width %d", cw, cluster, w)
-				}
-				sum += w
+			p := pdf417Clusters[cluster][cw]
+			if p < 0 || p > 0x1ffff {
+				t.Fatalf("cluster=%d, cw=%d: pattern 0x%x out of 17-bit range", cluster, cw, p)
 			}
-			if sum != 17 {
-				t.Fatalf("cw=%d, cluster=%d: sum=%d, want 17", cw, cluster, sum)
+		}
+	}
+}
+
+func TestPdf417GetCWPattern_FullSlotFallback(t *testing.T) {
+	// Verify that pdf417DrawCodeword writes exactly 17 modules for every codeword.
+	row := make([]bool, 200)
+	for cw := 0; cw < 929; cw += 31 {
+		for cluster := 0; cluster < 3; cluster++ {
+			pos := pdf417DrawCodeword(row, 0, cw, cluster)
+			if pos != 17 {
+				t.Errorf("cw=%d, cluster=%d: wrote %d modules, want 17", cw, cluster, pos)
 			}
 		}
 	}
@@ -855,89 +876,6 @@ func TestPdf417EncodeSymbol_RowConsistency(t *testing.T) {
 	}
 }
 
-func TestPdf417GetCWPattern_OverflowRedistribution(t *testing.T) {
-	// We need to find cw+cluster combinations where pattern[idx] reaches 6
-	// and triggers the overflow redistribution (else branch at line 357).
-	// The loop distributes 9 units across 8 slots via idx = (seed + i*7) % 8.
-	// When seed causes the same slot to be hit multiple times, it will overflow.
-	//
-	// Brute-force: iterate and check if the else branch is exercised by verifying
-	// the pattern is still valid.
-	overflowHit := false
-	for cw := 0; cw < 929; cw++ {
-		for cluster := 0; cluster < 3; cluster++ {
-			seed := cw*3 + cluster + 1
-			// Simulate to check if overflow happens
-			var sim [8]int
-			for i := 0; i < 8; i++ {
-				sim[i] = 1
-			}
-			for i := 0; i < 9; i++ {
-				idx := (seed + i*7) % 8
-				if sim[idx] >= 6 {
-					overflowHit = true
-					// Run the actual function to exercise the branch
-					pattern := pdf417GetCWPattern(cw, cluster)
-					sum := 0
-					for _, w := range pattern {
-						if w < 1 || w > 6 {
-							t.Fatalf("cw=%d, cluster=%d: invalid width %d", cw, cluster, w)
-						}
-						sum += w
-					}
-					if sum != 17 {
-						t.Fatalf("cw=%d, cluster=%d: sum=%d, want 17", cw, cluster, sum)
-					}
-					break
-				}
-				sim[idx]++
-			}
-			if overflowHit {
-				break
-			}
-		}
-		if overflowHit {
-			break
-		}
-	}
-	if !overflowHit {
-		t.Log("overflow branch never hit in brute force — testing specific high-collision seeds")
-		// Try seeds that collide on the same index repeatedly
-		// idx = (seed + i*7) % 8; when seed % 8 == 0 and 7*i % 8 cycles back
-		// 7*0%8=0, 7*1%8=7, 7*2%8=6, 7*3%8=5, 7*4%8=4, 7*5%8=3, 7*6%8=2, 7*7%8=1, 7*8%8=0
-		// So with seed=0: indices are 0,7,6,5,4,3,2,1,0 — hits 0 twice (9 items, 8 unique + 1 repeat)
-		// That means the second hit on index 0 would be when pattern[0]=2, still < 6.
-		// Need more collisions. This won't happen with 9 iterations over 8 slots unless step creates collisions.
-		// Since 7 and 8 are coprime, the sequence seed+0*7, seed+1*7, ... mod 8 cycles through all 8 values
-		// before repeating. So in 9 iterations, exactly one index is hit twice.
-		// The overflow requires pattern[idx] >= 6, which needs 6 hits on the same index.
-		// With this algorithm, max hits per slot = 2. So the overflow branch cannot be hit.
-		// Let's verify: the else branch is dead code for the current algorithm.
-		t.Log("overflow branch is unreachable with current seed distribution (GCD(7,8)=1)")
-	}
-}
-
-func TestPdf417GetCWPattern_FullSlotFallback(t *testing.T) {
-	// Since GCD(7, 8) = 1, each slot gets hit at most twice in 9 iterations.
-	// Max value per slot = 1 (initial) + 2 (increments) = 3, never reaching 6.
-	// The else branch is unreachable, but the function must still produce valid patterns.
-	// Test a broad sample to confirm all patterns are valid.
-	for cw := 0; cw < 929; cw += 31 { // sample every 31st codeword
-		for cluster := 0; cluster < 3; cluster++ {
-			pattern := pdf417GetCWPattern(cw, cluster)
-			sum := 0
-			for _, w := range pattern {
-				sum += w
-				if w < 1 || w > 6 {
-					t.Errorf("cw=%d, cluster=%d: width %d out of bounds", cw, cluster, w)
-				}
-			}
-			if sum != 17 {
-				t.Errorf("cw=%d, cluster=%d: sum=%d, want 17", cw, cluster, sum)
-			}
-		}
-	}
-}
 
 func TestPDF417Barcode_GetMatrix_ErrorFallback(t *testing.T) {
 	// To hit the error fallback in GetMatrix, we need pdf417EncodeSymbol to fail.

@@ -1005,7 +1005,7 @@ func TestGS1_128Barcode_Render_GetPatternError(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// JapanPost4StateBarcode.Render — delegates to Code128 pattern. Validate success.
+// JapanPost4StateBarcode.Render — 4-state rendering. Validate success.
 // ---------------------------------------------------------------------------
 
 func TestJapanPost4StateBarcode_Render_NumericOnly(t *testing.T) {

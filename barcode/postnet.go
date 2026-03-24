@@ -64,7 +64,7 @@ var japanTable = [19]string{
 }
 
 var japanValidFirstRe = regexp.MustCompile(`^[0-9\-]+$`)
-var japanValidRestRe = regexp.MustCompile(`^[A-Z0-9\-]+$`)
+var japanValidRestRe = regexp.MustCompile(`^[A-Z0-9\-]*$`)
 
 func (b *JapanPost4StateBarcode) GetPattern() (string, error) {
 	src := b.encodedText

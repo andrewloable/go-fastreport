@@ -1469,35 +1469,16 @@ func isSwissQRPayload(text string) bool {
 	return strings.HasPrefix(normalized, "SPC")
 }
 
+// normalizeSwissQRPayload normalises line endings in a Swiss QR payload to \n
+// as required by the Swiss Payment Standards (SPS). The payload structure is
+// preserved unchanged — only \r\n → \n and standalone \r → \n are converted.
+// Mirrors C# behaviour: the QR encoder receives the text verbatim; Go additionally
+// strips \r so the encoded byte count matches the SPS-mandated \n-separated format.
 func normalizeSwissQRPayload(text string) string {
 	if !isSwissQRPayload(text) {
 		return text
 	}
-
-	lines := strings.Split(strings.ReplaceAll(strings.ReplaceAll(text, "\r\n", "\n"), "\r", "\n"), "\n")
-	for len(lines) < 25 {
-		lines = append(lines, "")
-	}
-	if len(lines) < 23 {
-		return text
-	}
-
-	swiss := NewSwissQRBarcode()
-	swiss.Params = SwissQRParameters{
-		IBAN:                  lines[3],
-		CreditorName:          lines[5],
-		CreditorStreet:        lines[6],
-		CreditorCity:          lines[7],
-		CreditorPostalCode:    lines[8],
-		CreditorCountry:       lines[10],
-		Amount:                lines[17],
-		Currency:              lines[18],
-		ReferenceType:         lines[19],
-		Reference:             lines[20],
-		UnstructuredMessage:   lines[21],
-		TrailerEPD:            lines[22],
-		AlternativeProcedure1: lines[23],
-		AlternativeProcedure2: lines[24],
-	}
-	return swiss.FormatPayload()
+	text = strings.ReplaceAll(text, "\r\n", "\n")
+	text = strings.ReplaceAll(text, "\r", "\n")
+	return text
 }

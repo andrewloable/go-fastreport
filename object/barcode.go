@@ -30,9 +30,12 @@ type BarcodeObject struct {
 }
 
 // NewBarcodeObject creates a BarcodeObject with defaults (ShowText=true, AutoSize=true).
+// Default Text is "12345678" (mirrors C# BarcodeObject constructor which calls
+// Barcode.GetDefaultValue() on the default Barcode39 instance).
 func NewBarcodeObject() *BarcodeObject {
 	return &BarcodeObject{
 		ReportComponentBase: *report.NewReportComponentBase(),
+		text:                "12345678",
 		showText:            true,
 		autoSize:            true,
 	}
@@ -114,7 +117,7 @@ func (b *BarcodeObject) Deserialize(r report.Reader) error {
 	if err := b.ReportComponentBase.Deserialize(r); err != nil {
 		return err
 	}
-	b.text = r.ReadStr("Text", "")
+	b.text = r.ReadStr("Text", b.text)
 	b.barcodeType = r.ReadStr("Barcode", "")
 	b.showText = r.ReadBool("ShowText", true)
 	b.autoSize = r.ReadBool("AutoSize", true)

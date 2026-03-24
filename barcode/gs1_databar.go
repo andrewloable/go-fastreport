@@ -375,7 +375,18 @@ func (b *GS1DataBarOmniBarcode) Render(width, height int) (image.Image, error) {
 	totalWidth := gs1OmniWidth(b.encodedData[0], b.wideBarRatio)
 	zoom := float32(width) / (totalWidth * 1.25)
 
-	drawGS1Bars(b.encodedData[0], img, 0, height, zoom, b.wideBarRatio, false, false)
+	barH := height
+	if b.showText && b.encodedText != "" {
+		textH := int(math.Round(float64(14 * zoom)))
+		if textH < 1 {
+			textH = 1
+		}
+		if textH < height {
+			barH = height - textH
+			drawLinearText(img, b.encodedText, 0, barH, width, textH)
+		}
+	}
+	drawGS1Bars(b.encodedData[0], img, 0, barH, zoom, b.wideBarRatio, false, false)
 	return img, nil
 }
 
@@ -497,14 +508,26 @@ func (b *GS1DataBarStackedBarcode) Render(width, height int) (image.Image, error
 	totalWidth := gs1OmniWidth(b.encodedData[0], b.wideBarRatio)
 	zoom := float32(width) / (totalWidth * 1.25)
 
+	barH := height
+	if b.showText && b.encodedText != "" {
+		textH := int(math.Round(float64(14 * zoom)))
+		if textH < 1 {
+			textH = 1
+		}
+		if textH < height {
+			barH = height - textH
+			drawLinearText(img, b.encodedText, 0, barH, width, textH)
+		}
+	}
+
 	// C# heights: row0 = 0..5/13, sep = 5/13..6/13, row2 = 6/13..13/13
-	h := float32(height)
+	h := float32(barH)
 	y0top := 0
 	y0bot := int(math.Round(float64(h * 5 / 13)))
 	y1top := y0bot
 	y1bot := int(math.Round(float64(h * 6 / 13)))
 	y2top := y1bot
-	y2bot := height
+	y2bot := barH
 
 	drawGS1Bars(b.encodedData[0], img, y0top, y0bot, zoom, b.wideBarRatio, false, false)
 	drawGS1Bars(b.encodedData[1], img, y1top, y1bot, zoom, b.wideBarRatio, false, true)
@@ -640,20 +663,32 @@ func (b *GS1DataBarStackedOmniBarcode) Render(width, height int) (image.Image, e
 	totalWidth := gs1OmniWidth(b.encodedData[0], b.wideBarRatio)
 	zoom := float32(width) / (totalWidth * 1.25)
 
+	barH := height
+	if b.showText && b.encodedText != "" {
+		textH := int(math.Round(float64(14 * zoom)))
+		if textH < 1 {
+			textH = 1
+		}
+		if textH < height {
+			barH = height - textH
+			drawLinearText(img, b.encodedText, 0, barH, width, textH)
+		}
+	}
+
 	// C# heights (fractions of barArea.Height):
 	// row0:  0       .. 33/69
 	// sep1:  33/69   .. 34/69
 	// sep2:  34/69   .. 35/69
 	// sep3:  35/69   .. 36/69
 	// row4:  36/69   .. 69/69
-	h := float32(height)
+	h := float32(barH)
 	y := [6]int{
 		0,
 		int(math.Round(float64(h * 33 / 69))),
 		int(math.Round(float64(h * 34 / 69))),
 		int(math.Round(float64(h * 35 / 69))),
 		int(math.Round(float64(h * 36 / 69))),
-		height,
+		barH,
 	}
 
 	drawGS1Bars(b.encodedData[0], img, y[0], y[1], zoom, b.wideBarRatio, false, false)
@@ -968,7 +1003,18 @@ func (b *GS1DataBarLimitedBarcode) Render(width, height int) (image.Image, error
 	totalWidth := gs1OmniWidth(b.encodedData[0], b.wideBarRatio)
 	zoom := float32(width) / (totalWidth * 1.25)
 
-	drawGS1Bars(b.encodedData[0], img, 0, height, zoom, b.wideBarRatio, false, false)
+	barH := height
+	if b.showText && b.encodedText != "" {
+		textH := int(math.Round(float64(14 * zoom)))
+		if textH < 1 {
+			textH = 1
+		}
+		if textH < height {
+			barH = height - textH
+			drawLinearText(img, b.encodedText, 0, barH, width, textH)
+		}
+	}
+	drawGS1Bars(b.encodedData[0], img, 0, barH, zoom, b.wideBarRatio, false, false)
 	return img, nil
 }
 

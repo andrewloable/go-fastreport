@@ -203,10 +203,63 @@ func TestDmGenerate_TooLarge(t *testing.T) {
 	for i := range data {
 		data[i] = byte('A' + i%26)
 	}
-	_, _, _, err := dmGenerate(data)
+	_, _, _, err := dmGenerate(data, 0, 0)
 	// This may succeed with a large symbol or fail with "too large".
 	if err != nil {
 		t.Logf("dmGenerate too large: %v (acceptable)", err)
+	}
+}
+
+// ── dmParseSymbolSize ─────────────────────────────────────────────────────────
+
+func TestDmParseSymbolSize(t *testing.T) {
+	cases := []struct {
+		input string
+		wantH int
+		wantW int
+	}{
+		{"", 0, 0},
+		{"Auto", 0, 0},
+		{"Size24x24", 24, 24},
+		{"Size32x32", 32, 32},
+		{"Size8x18", 8, 18},
+		{"24x24", 24, 24},
+		{"32x32", 32, 32},
+		{"bogus", 0, 0},
+	}
+	for _, tc := range cases {
+		h, w := dmParseSymbolSize(tc.input)
+		if h != tc.wantH || w != tc.wantW {
+			t.Errorf("dmParseSymbolSize(%q) = (%d,%d), want (%d,%d)", tc.input, h, w, tc.wantH, tc.wantW)
+		}
+	}
+}
+
+// TestDataMatrixBarcode_GetMatrix_ForcedSize24x24 verifies that the 24×24
+// symbol is generated when SymbolSize="Size24x24" is set.
+func TestDataMatrixBarcode_GetMatrix_ForcedSize24x24(t *testing.T) {
+	b := NewDataMatrixBarcode()
+	b.SymbolSize = "Size24x24"
+	if err := b.Encode("DataMatrix"); err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	_, rows, cols := b.GetMatrix()
+	if rows != 24 || cols != 24 {
+		t.Errorf("GetMatrix size = %dx%d, want 24x24", rows, cols)
+	}
+}
+
+// TestDataMatrixBarcode_GetMatrix_AutoSize verifies that SymbolSize="Auto"
+// selects the smallest symbol that fits the data.
+func TestDataMatrixBarcode_GetMatrix_AutoSize(t *testing.T) {
+	b := NewDataMatrixBarcode()
+	b.SymbolSize = "Auto"
+	if err := b.Encode("Hi"); err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	_, rows, cols := b.GetMatrix()
+	if rows == 0 || cols == 0 {
+		t.Error("GetMatrix returned empty matrix for auto size")
 	}
 }
 

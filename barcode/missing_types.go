@@ -855,18 +855,16 @@ func (j *JapanPost4StateBarcode) Encode(text string) error {
 	return nil
 }
 
-// Render renders the Japan Post 4-state barcode using Code128 pattern as a visual approximation.
+// Render renders the Japan Post 4-state barcode using the correct 4-state bar heights.
+// Mirrors C# BarcodeJapanPost4StateCode / LinearBarcodeBase.DoLines with
+// BlackTracker (E), BlackAscender (F), BlackDescender (G), Black (6) bar types.
 func (j *JapanPost4StateBarcode) Render(width, height int) (image.Image, error) {
 	if j.encodedText == "" {
 		return nil, fmt.Errorf("japanpost4state: Encode must be called before Render")
 	}
-	// Strip hyphens for encoding.
-	cleaned := strings.ReplaceAll(j.encodedText, "-", "")
-	helper := NewCode128Barcode()
-	helper.encodedText = cleaned
-	pattern, err := helper.GetPattern()
+	pattern, err := j.GetPattern()
 	if err != nil {
 		return nil, err
 	}
-	return DrawLinearBarcode(pattern, j.encodedText, width, height, false, helper.GetWideBarRatio()), nil
+	return DrawLinearBarcode(pattern, j.encodedText, width, height, j.showText, j.GetWideBarRatio()), nil
 }

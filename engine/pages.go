@@ -49,6 +49,9 @@ func (e *ReportEngine) startPage(pg *reportpkg.ReportPage, isFirst bool) {
 	e.pageNo++
 	if e.preparedPages != nil {
 		e.preparedPages.AddPage(e.pageWidth, e.pageHeight, e.pageNo)
+		if cp := e.preparedPages.CurrentPage(); cp != nil {
+			cp.Landscape = pg.Landscape
+		}
 	}
 	e.curPage++
 	e.IncLogicalPageNumber()

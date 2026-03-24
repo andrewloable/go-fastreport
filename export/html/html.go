@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	"github.com/andrewloable/go-fastreport/export"
+	imgexp "github.com/andrewloable/go-fastreport/export/image"
 	"github.com/andrewloable/go-fastreport/preview"
 	"github.com/andrewloable/go-fastreport/style"
 	"github.com/andrewloable/go-fastreport/utils"
@@ -508,7 +509,7 @@ func (e *Exporter) renderObject(obj preview.PreparedObject, scale float32) {
 			// Render as inline SVG for diagonal lines or when caps are needed.
 			// Include a <defs> block with markers when caps are present.
 			e.sb.WriteString(fmt.Sprintf(
-				`<div %s><svg width="%.2f" height="%.2f" style="position:absolute;top:0;left:0;overflow:visible;">`,
+				`<div %s><svg width="%.2f" height="%.2f" style="overflow:visible;">`,
 				styleAttr(""), w, h,
 			))
 			if hasCaps {
@@ -565,7 +566,7 @@ func (e *Exporter) renderObject(obj preview.PreparedObject, scale float32) {
 		case 3: // Triangle — use inline SVG
 			e.sb.WriteString(fmt.Sprintf(`<div %s>`, styleAttr("")))
 			e.sb.WriteString(fmt.Sprintf(
-				`<svg width="%.2f" height="%.2f" style="position:absolute;top:0;left:0;">`,
+				`<svg width="%.2f" height="%.2f">`,
 				w, h,
 			))
 			e.sb.WriteString(fmt.Sprintf(
@@ -576,7 +577,7 @@ func (e *Exporter) renderObject(obj preview.PreparedObject, scale float32) {
 		case 4: // Diamond — use inline SVG
 			e.sb.WriteString(fmt.Sprintf(`<div %s>`, styleAttr("")))
 			e.sb.WriteString(fmt.Sprintf(
-				`<svg width="%.2f" height="%.2f" style="position:absolute;top:0;left:0;">`,
+				`<svg width="%.2f" height="%.2f">`,
 				w, h,
 			))
 			e.sb.WriteString(fmt.Sprintf(
@@ -890,6 +891,14 @@ func (e *Exporter) renderTextObject(obj preview.PreparedObject, scale float32) {
 	// Width and height (C# GetStyle appends width/height).
 	outerCSS.WriteString(fmt.Sprintf("width:%spx;height:%spx;", pxVal(w), pxVal(h)))
 
+	// CSS rotation for TextObject.Angle != 0.
+	// C# renders rotated text as a bitmap image (LayerPicture); in Go we use CSS transform.
+	// Mirrors C# IsMemo() check: Angle != 0 → not a memo → rendered as picture.
+	// C# ref: HTMLExportLayers.cs IsMemo() line 719, LayerBack/LayerPicture lines 937-955.
+	if obj.Angle != 0 {
+		outerCSS.WriteString(fmt.Sprintf("transform:rotate(%ddeg);transform-origin:50%% 50%%;", obj.Angle))
+	}
+
 	// ── Build inner CSS class FIRST (matches C# flow: GetSpanText is called
 	// before LayerBack→GetStyle, so inner class is registered first) ──
 	var innerCSS strings.Builder
@@ -920,22 +929,29 @@ func (e *Exporter) renderTextObject(obj preview.PreparedObject, scale float32) {
 	}
 
 	// Vertical alignment: C# uses margin-top for non-top alignment.
-	// For vert-center/bottom, C# computes top offset via text height measurement.
-	// Use the MeasureString-calibrated ratio (from textmeasure.go), NOT the CSS
-	// line-height ratio, because C# computes margin from rendered text height.
+	// C# LayerText (HTMLExportLayers.cs:259-320) uses AdvancedTextRenderer.CalcHeight() for
+	// the actual multi-line text height. We approximate using utils.MeasureLines which counts
+	// word-wrap line breaks as the C# renderer does.
+	// C# formula (GetSpanText line 201): margin-top = (top - paddingTop) * Zoom
+	//   where top = (Height - textHeight - paddingBottom + paddingTop) / 2 for center.
+	// Substituting: margin-top = (Height - textHeight - paddingBottom - paddingTop) / 2.
 	lhRatio := fontMeasureRatioFloat(font.Name)
 	switch obj.VertAlign {
 	case 1: // center
 		lineH := float64(fontPx) * lhRatio
-		textH := lineH // single line estimate
-		marginTop := (float64(h) - textH - float64(obj.PaddingBottom*scale) + float64(obj.PaddingTop*scale)) / 2
+		availW := float32(w) - obj.PaddingLeft*scale - obj.PaddingRight*scale
+		lineCount := utils.MeasureLines(text, font, availW)
+		textH := float64(lineCount) * lineH
+		marginTop := (float64(h) - textH - float64(obj.PaddingBottom*scale) - float64(obj.PaddingTop*scale)) / 2
 		if marginTop > 0 {
 			innerCSS.WriteString(fmt.Sprintf("margin-top:%spx;", pxVal(float32(marginTop))))
 		}
 	case 2: // bottom
 		lineH := float64(fontPx) * lhRatio
-		textH := lineH
-		marginTop := float64(h) - textH - float64(obj.PaddingBottom*scale)
+		availW := float32(w) - obj.PaddingLeft*scale - obj.PaddingRight*scale
+		lineCount := utils.MeasureLines(text, font, availW)
+		textH := float64(lineCount) * lineH
+		marginTop := float64(h) - textH - float64(obj.PaddingBottom*scale) - float64(obj.PaddingTop*scale)
 		if marginTop > 0 {
 			innerCSS.WriteString(fmt.Sprintf("margin-top:%spx;", pxVal(float32(marginTop))))
 		}
@@ -983,6 +999,44 @@ func (e *Exporter) renderTextObject(obj preview.PreparedObject, scale float32) {
 
 	outerStyle := fmt.Sprintf("left:%spx;top:%spx;width:%spx;height:%spx;",
 		pxVal(adjLeft), pxVal(adjTop), pxVal(adjW), pxVal(adjH))
+
+	// For rotated text objects (Angle != 0), emit LayerBack + LayerPicture and return.
+	// C# IsMemo() returns false when Angle != 0, so the object is rendered as:
+	//   LayerBack:    background/border div (border:none in inline style)
+	//   LayerPicture: div with base64-PNG background-image of the rendered rotated text
+	// C# ref: HTMLExportLayers.cs IsMemo() line 719, LayerBack/LayerPicture lines 937-955.
+	if obj.Angle != 0 {
+		var bgCSS strings.Builder
+		bgCSS.WriteString("text-align:center;position:absolute;color:rgb(255, 255, 255);")
+		if obj.FillColor.A > 0 {
+			bgCSS.WriteString(fmt.Sprintf("background-color:%s;", rgbColor(obj.FillColor)))
+		} else {
+			bgCSS.WriteString("background-color:transparent;")
+		}
+		bgCSS.WriteString(fmt.Sprintf("border:none;width:%spx;height:%spx;", pxVal(w), pxVal(h)))
+		posStyle := fmt.Sprintf("left:%spx;top:%spx;width:%spx;height:%spx;", pxVal(left), pxVal(top), pxVal(w), pxVal(h))
+
+		// Render the text object as a PNG and embed as base64 data URL (LayerPicture).
+		picCSS := ""
+		if pngBytes, err := imgexp.RenderObjectPNG(obj); err == nil {
+			b64 := base64.StdEncoding.EncodeToString(pngBytes)
+			picCSS = fmt.Sprintf("background:url('data:image/Png;base64,%s') no-repeat !important;-webkit-print-color-adjust:exact;", b64)
+		}
+
+		if e.InlineStyles {
+			// LayerBack
+			e.sb.WriteString(fmt.Sprintf("<div style=\"%s%sborder:none;\">&nbsp;</div>\n", bgCSS.String(), posStyle))
+			// LayerPicture with embedded image
+			e.sb.WriteString(fmt.Sprintf("<div style=\"%s%s\">&nbsp;</div>\n", posStyle, picCSS))
+		} else {
+			bgClass := e.cssClass(bgCSS.String())
+			// LayerBack
+			e.sb.WriteString(fmt.Sprintf("<div class=\"%s\" style=\"%sborder:none;\">&nbsp;</div>\n", bgClass, posStyle))
+			// LayerPicture: inline style carries the background-image (varies per object)
+			e.sb.WriteString(fmt.Sprintf("<div class=\"%s\" style=\"%s%s\">&nbsp;</div>\n", bgClass, posStyle, picCSS))
+		}
+		return
+	}
 
 	// Hyperlink wrapping (C# GetHref + Layer pattern).
 	// Go HyperlinkKind: 0=None, 1=URL, 2=PageNumber, 3=Bookmark.
@@ -1065,7 +1119,14 @@ func (e *Exporter) ExportPageEnd(pg *preview.PreparedPage) error {
 	// C# reference: HTMLExportStyles.cs InlineStyles branch skips cssStyles emission.
 	if e.EmbedCSS && e.css != nil && !e.InlineStyles {
 		// Print CSS (one block per page).
-		e.sb.WriteString(fmt.Sprintf("<style type=\"text/css\" media=\"print\"><!--\ndiv.frpage%d { break-after: always; page-break-inside: avoid; }\n @page { size: portrait; margin: 0; }--></style>\n", pageNum))
+		// For landscape pages, C# adds width + 90° rotation to the frpage div so the
+		// landscape content displays correctly in portrait HTML layout.
+		// C# ref: HTMLExportLayers.cs Layer() landscape rotation, HTMLExportStyles.cs.
+		landscapeCSS := ""
+		if pg.Landscape {
+			landscapeCSS = fmt.Sprintf("width:%.2fpx !important;transform: rotate(90deg); -webkit-transform: rotate(90deg)", pg.Height)
+		}
+		e.sb.WriteString(fmt.Sprintf("<style type=\"text/css\" media=\"print\"><!--\ndiv.frpage%d { break-after: always; page-break-inside: avoid; %s}\n @page { size: portrait; margin: 0; }--></style>\n", pageNum, landscapeCSS))
 		// New content CSS classes for this page.
 		if block := e.css.StyleBlockSince(e.cssCountBeforePage); block != "" {
 			e.sb.WriteString(block)

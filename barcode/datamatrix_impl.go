@@ -7,7 +7,10 @@ package barcode
 //
 // Implements GetMatrix() for DataMatrixBarcode and GS1DatamatrixBarcode.
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // -----------------------------------------------------------------------
 // DataMatrix constants
@@ -93,9 +96,10 @@ type dmEncoder struct {
 }
 
 // dmGenerate encodes text into a DataMatrix and returns the bit image.
+// height and width specify the forced symbol size; pass (0, 0) to auto-select.
 // Returns (image, height, width, error).
-func dmGenerate(text []byte) ([]byte, int, int, error) {
-	e := &dmEncoder{}
+func dmGenerate(text []byte, height, width int) ([]byte, int, int, error) {
+	e := &dmEncoder{height: height, width: width}
 	data := make([]byte, 2500)
 	textOffset := 0
 	textSize := len(text)
@@ -1091,7 +1095,8 @@ func (d *DataMatrixBarcode) GetMatrix() ([][]bool, int, int) {
 	if text == "" {
 		return nil, 0, 0
 	}
-	return dmGetMatrix([]byte(text))
+	h, w := dmParseSymbolSize(d.SymbolSize)
+	return dmGetMatrixSized([]byte(text), h, w)
 }
 
 // GetMatrix encodes the GS1 DataMatrix barcode (with FNC1 prefix) and returns
@@ -1109,22 +1114,43 @@ func (g *GS1DatamatrixBarcode) GetMatrix() ([][]bool, int, int) {
 	return dmGetMatrix(data)
 }
 
-// dmGetMatrix is the shared implementation for both DataMatrix types.
-func dmGetMatrix(data []byte) ([][]bool, int, int) {
-	imgBytes, height, width, err := dmGenerate(data)
+// dmParseSymbolSize parses a DataMatrix symbol size string and returns
+// (height, width). Returns (0, 0) for "Auto" or empty string (auto-select).
+// Accepts "SizeHxW" (C# enum style, e.g. "Size24x24") and "HxW" (e.g. "24x24").
+func dmParseSymbolSize(s string) (int, int) {
+	if s == "" || s == "Auto" {
+		return 0, 0
+	}
+	s = strings.TrimPrefix(s, "Size")
+	var h, w int
+	if _, err := fmt.Sscanf(s, "%dx%d", &h, &w); err != nil {
+		return 0, 0
+	}
+	return h, w
+}
+
+// dmGetMatrixSized encodes data into a DataMatrix with an optional forced symbol
+// size (height, width). Pass (0, 0) to auto-select the smallest fitting symbol.
+func dmGetMatrixSized(data []byte, height, width int) ([][]bool, int, int) {
+	imgBytes, h, w, err := dmGenerate(data, height, width)
 	if err != nil {
 		return nil, 0, 0
 	}
-	xByte := (width + 7) / 8
-	matrix := make([][]bool, height)
-	for y := 0; y < height; y++ {
-		row := make([]bool, width)
-		for x := 0; x < width; x++ {
+	xByte := (w + 7) / 8
+	matrix := make([][]bool, h)
+	for y := 0; y < h; y++ {
+		row := make([]bool, w)
+		for x := 0; x < w; x++ {
 			b := int(imgBytes[y*xByte+x/8]) & 0xff
 			b <<= uint(x % 8)
 			row[x] = (b & 0x80) != 0
 		}
 		matrix[y] = row
 	}
-	return matrix, height, width
+	return matrix, h, w
+}
+
+// dmGetMatrix is the shared implementation for both DataMatrix types (auto size).
+func dmGetMatrix(data []byte) ([][]bool, int, int) {
+	return dmGetMatrixSized(data, 0, 0)
 }

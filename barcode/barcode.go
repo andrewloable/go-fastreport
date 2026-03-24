@@ -812,8 +812,10 @@ func (b *BarcodeObject) Deserialize(r report.Reader) error {
 	// the FRX display-name attribute.
 	if t := r.ReadStr("Barcode.Type", ""); t != "" {
 		b.Barcode = NewBarcodeByType(BarcodeType(t))
+		b.text = b.Barcode.DefaultValue() // reset text default to new type's default
 	} else if name := r.ReadStr("Barcode", ""); name != "" {
 		b.Barcode = NewBarcodeByName(name)
+		b.text = b.Barcode.DefaultValue() // reset text default to new type's default
 	}
 	// Read barcode-specific properties (prefixed with "Barcode.").
 	if b.Barcode != nil {
@@ -932,7 +934,7 @@ func (b *BarcodeObject) Deserialize(r report.Reader) error {
 	b.autoSize = r.ReadBool("AutoSize", true)
 	b.dataColumn = r.ReadStr("DataColumn", "")
 	b.expression = r.ReadStr("Expression", "")
-	b.text = r.ReadStr("Text", "")
+	b.text = r.ReadStr("Text", b.text) // default: Barcode.GetDefaultValue() set in constructor
 	b.showText = r.ReadBool("ShowText", true)
 	b.zoom = r.ReadFloat("Zoom", 1.0)
 	b.hideIfNoData = r.ReadBool("HideIfNoData", true) // C# BarcodeObject default true

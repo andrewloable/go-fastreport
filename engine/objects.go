@@ -912,6 +912,7 @@ func (e *ReportEngine) buildPreparedObject(obj report.Base) *preview.PreparedObj
 
 	case *object.TextObject:
 		po.Kind = preview.ObjectTypeText
+		po.Angle = v.Angle()
 		po.Font = v.Font()
 		po.TextColor = v.TextColor() // style-applied or default black
 		po.HorzAlign = int(v.HorzAlign())

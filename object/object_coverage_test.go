@@ -52,8 +52,8 @@ func TestNewBarcodeObject_Defaults(t *testing.T) {
 	if !b.AutoSize() {
 		t.Error("AutoSize default should be true")
 	}
-	if b.Text() != "" {
-		t.Errorf("Text default = %q, want empty", b.Text())
+	if b.Text() != "12345678" {
+		t.Errorf("Text default = %q, want 12345678", b.Text())
 	}
 	if b.BarcodeType() != "" {
 		t.Errorf("BarcodeType default = %q, want empty", b.BarcodeType())

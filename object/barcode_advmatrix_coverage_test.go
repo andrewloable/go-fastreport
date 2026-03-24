@@ -56,8 +56,10 @@ func TestBarcodeObject_Deserialize_DefaultReader(t *testing.T) {
 	if err := b.Deserialize(r); err != nil {
 		t.Fatalf("BarcodeObject.Deserialize unexpected error: %v", err)
 	}
-	if b.text != "" {
-		t.Errorf("text: got %q, want empty", b.text)
+	// defaultReader returns the fallback — which is the C# default "12345678"
+	// (mirrors C# BarcodeObject constructor: Text = Barcode.GetDefaultValue()).
+	if b.text != "12345678" {
+		t.Errorf("text: got %q, want 12345678", b.text)
 	}
 	if b.barcodeType != "" {
 		t.Errorf("barcodeType: got %q, want empty", b.barcodeType)

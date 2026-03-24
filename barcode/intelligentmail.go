@@ -8,7 +8,6 @@ package barcode
 import (
 	"fmt"
 	"image"
-	"image/color"
 	"strconv"
 	"strings"
 )
@@ -399,21 +398,25 @@ func imb_encode(text string) ([]byte, error) {
 	return bars, nil
 }
 
-// ── Render override ───────────────────────────────────────────────────────────
+// ── GetPattern / GetWideBarRatio / Render ────────────────────────────────────
 
-// Render renders the IMb as a 4-state bar image.
-// Each of the 65 bars is drawn with a different height:
+// GetWideBarRatio returns the wide-bar ratio for IMb (default 2, matching C#).
+// C# LinearBarcodeBase default WideBarRatio = 2f. IMb bars use modules[1]=2 and
+// spaces use modules[2]=3, giving a 2:3 bar-to-space ratio.
+func (b *IntelligentMailBarcode) GetWideBarRatio() float32 { return 2 }
+
+// GetPattern returns the DrawLinearBarcode pattern string for the IMb barcode.
+// Mirrors C# BarcodeIntelligentMail.Bars(): each bar character ('E'/'F'/'G'/'6')
+// is followed by a space character '2', with the trailing space removed.
+// QuietZone prepends/appends an extra '2'.
 //
-//	Tracker   (0): middle third only
-//	Ascender  (1): top two-thirds
-//	Descender (2): bottom two-thirds
-//	Full      (3): full height
-func (b *IntelligentMailBarcode) Render(width, height int) (image.Image, error) {
-	if b.encodedText == "" {
-		return nil, fmt.Errorf("intelligentmail: not encoded")
-	}
-
-	// Strip any formatting characters stored in encodedText before encoding.
+// Pattern characters (from C# LinearBarcodeBase.OneBarProps):
+//   - 'E' = tracker   (modules[1] wide, middle-third height)
+//   - 'F' = ascender  (modules[1] wide, top two-thirds height)
+//   - 'G' = descender (modules[1] wide, bottom two-thirds height)
+//   - '6' = full      (modules[1] wide, full height)
+//   - '2' = space     (modules[2] wide, no bar drawn)
+func (b *IntelligentMailBarcode) GetPattern() (string, error) {
 	digits := strings.Map(func(r rune) rune {
 		if r >= '0' && r <= '9' {
 			return r
@@ -423,76 +426,49 @@ func (b *IntelligentMailBarcode) Render(width, height int) (image.Image, error) 
 
 	bars, err := imb_encode(digits)
 	if err != nil {
-		// Fall back to placeholder on encoding failure.
-		return placeholderImage(width, height), nil
+		return "", err
 	}
 
+	// Build pattern: barChar + '2' for each bar, strip trailing '2'.
+	var buf strings.Builder
+	for i, barType := range bars {
+		switch barType {
+		case imbTracker:
+			buf.WriteByte('E')
+		case imbAscender:
+			buf.WriteByte('F')
+		case imbDescender:
+			buf.WriteByte('G')
+		default: // imbFull
+			buf.WriteByte('6')
+		}
+		if i < len(bars)-1 {
+			buf.WriteByte('2') // inter-bar space (modules[2] wide)
+		}
+	}
+
+	s := buf.String()
+	if b.QuietZone {
+		s = "2" + s + "2"
+	}
+	return s, nil
+}
+
+// Render renders the IMb as a 4-state bar image using DrawLinearBarcode.
+// Mirrors C# BarcodeIntelligentMail which inherits LinearBarcodeBase.DrawBarcode.
+func (b *IntelligentMailBarcode) Render(width, height int) (image.Image, error) {
+	if b.encodedText == "" {
+		return nil, fmt.Errorf("intelligentmail: not encoded")
+	}
 	if width <= 0 {
 		width = 130 // 65 bars × 2px each
 	}
 	if height <= 0 {
 		height = 60
 	}
-
-	img := image.NewNRGBA(image.Rect(0, 0, width, height))
-
-	// Fill background white.
-	white := color.NRGBA{R: 255, G: 255, B: 255, A: 255}
-	black := color.NRGBA{R: 0, G: 0, B: 0, A: 255}
-	for y := 0; y < height; y++ {
-		for x := 0; x < width; x++ {
-			img.Set(x, y, white)
-		}
+	pattern, err := b.GetPattern()
+	if err != nil {
+		return placeholderImage(width, height), nil
 	}
-
-	// When QuietZone is true, reserve one bar-width of whitespace at each end.
-	// C# BarcodeIntelligentMail.GetPattern(): bars = space + bars + space
-	// where space = "2" (a blank/space element in the pattern).
-	nBars := len(bars) // 65
-	nSlots := nBars
-	quietSlots := 0
-	if b.QuietZone {
-		quietSlots = 1
-		nSlots = nBars + 2 // one extra slot on each side
-	}
-	barW := float64(width) / float64(nSlots)
-
-	// Compute vertical thirds.
-	third := height / 3
-
-	for i, barType := range bars {
-		slot := i + quietSlots
-		x0 := int(float64(slot) * barW)
-		x1 := int(float64(slot+1) * barW)
-		if x1 > width {
-			x1 = width
-		}
-
-		var y0, y1 int
-		switch barType {
-		case imbTracker: // middle third
-			y0 = third
-			y1 = 2 * third
-		case imbAscender: // top two-thirds (y=0 to 2/3)
-			y0 = 0
-			y1 = 2 * third
-		case imbDescender: // bottom two-thirds (y=1/3 to bottom)
-			y0 = third
-			y1 = height
-		case imbFull: // full height
-			y0 = 0
-			y1 = height
-		default:
-			y0 = 0
-			y1 = height
-		}
-
-		for y := y0; y < y1; y++ {
-			for x := x0; x < x1; x++ {
-				img.Set(x, y, black)
-			}
-		}
-	}
-
-	return img, nil
+	return DrawLinearBarcode(pattern, b.encodedText, width, height, b.showText, b.GetWideBarRatio()), nil
 }

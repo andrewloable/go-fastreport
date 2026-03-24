@@ -68,15 +68,20 @@ func TestIntelligentMailBarcode_Render_ZeroSize(t *testing.T) {
 // ── PharmacodeBarcode — boundary values ───────────────────────────────────────
 
 func TestPharmacodeBarcode_Encode_Boundary(t *testing.T) {
+	// C# BarcodePharmacode accepts any non-negative integer; only non-numeric
+	// input is an error. The standard spec range 3–131070 is not enforced,
+	// matching C# behaviour where the default value "12345678" must encode.
 	cases := []struct {
 		input   string
 		wantErr bool
 	}{
-		{"3", false},      // minimum valid
-		{"131070", false}, // maximum valid
-		{"2", true},       // below minimum
-		{"131071", true},  // above maximum
-		{"abc", true},     // non-numeric
+		{"0", false},        // zero allowed
+		{"2", false},        // below old minimum but valid
+		{"3", false},        // standard minimum
+		{"131070", false},   // standard maximum
+		{"131071", false},   // above old maximum but valid
+		{"12345678", false}, // C# default value
+		{"abc", true},       // non-numeric
 	}
 	for _, c := range cases {
 		b := barcode.NewPharmacodeBarcode()

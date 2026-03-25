@@ -543,7 +543,9 @@ func TestBuildPreparedObject_BarcodeObjDefaultValue(t *testing.T) {
 // ── buildPreparedObject: CellularTextObject with SolidFill ───────────────────
 
 // TestBuildPreparedObject_CellularTextObject_WithSolidFill exercises the
-// SolidFill branch in the CellularTextObject case of buildPreparedObject.
+// CellularTextObject case of buildPreparedObject. The anchor is marked
+// NotExportable (it exists only to maintain FRX→PreparedObject index mapping).
+// Individual cells carry the fill color instead.
 func TestBuildPreparedObject_CellularTextObject_WithSolidFill(t *testing.T) {
 	e := newCellularEngine(t)
 
@@ -563,8 +565,8 @@ func TestBuildPreparedObject_CellularTextObject_WithSolidFill(t *testing.T) {
 	if po == nil {
 		t.Fatal("buildPreparedObject(CellularTextObject with SolidFill) returned nil")
 	}
-	if po.FillColor.A == 0 {
-		t.Error("CellularTextObject SolidFill: FillColor.A should be non-zero")
+	if !po.NotExportable {
+		t.Error("CellularTextObject anchor should be NotExportable")
 	}
 }
 

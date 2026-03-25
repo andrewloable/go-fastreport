@@ -493,8 +493,11 @@ func TestRenderObject_Shape_Rectangle(t *testing.T) {
 		},
 	})
 	out := exportHTML(t, pp)
-	if !strings.Contains(out, "border:1px solid #000;") {
-		t.Errorf("rect shape: expected border:1px solid #000;, got %q", out)
+	if !strings.Contains(out, "data:image/Png;base64,") {
+		t.Errorf("rect shape: expected data:image/Png;base64, got %q", out)
+	}
+	if !strings.Contains(out, "position:absolute;") {
+		t.Errorf("rect shape: expected position:absolute in inline style, got %q", out)
 	}
 }
 
@@ -508,8 +511,11 @@ func TestRenderObject_Shape_RoundRect(t *testing.T) {
 		},
 	})
 	out := exportHTML(t, pp)
-	if !strings.Contains(out, "border-radius:") {
-		t.Errorf("roundrect shape: expected border-radius:, got %q", out)
+	if !strings.Contains(out, "data:image/Png;base64,") {
+		t.Errorf("roundrect shape: expected data:image/Png;base64, got %q", out)
+	}
+	if !strings.Contains(out, "position:absolute;") {
+		t.Errorf("roundrect shape: expected position:absolute in inline style, got %q", out)
 	}
 }
 
@@ -522,8 +528,11 @@ func TestRenderObject_Shape_Ellipse(t *testing.T) {
 		},
 	})
 	out := exportHTML(t, pp)
-	if !strings.Contains(out, "border-radius:50%;") {
-		t.Errorf("ellipse shape: expected border-radius:50%%;, got %q", out)
+	if !strings.Contains(out, "data:image/Png;base64,") {
+		t.Errorf("ellipse shape: expected data:image/Png;base64, got %q", out)
+	}
+	if !strings.Contains(out, "position:absolute;") {
+		t.Errorf("ellipse shape: expected position:absolute in inline style, got %q", out)
 	}
 }
 
@@ -536,11 +545,11 @@ func TestRenderObject_Shape_Triangle(t *testing.T) {
 		},
 	})
 	out := exportHTML(t, pp)
-	if !strings.Contains(out, "<svg") {
-		t.Errorf("triangle shape: expected SVG element, got %q", out)
+	if !strings.Contains(out, "data:image/Png;base64,") {
+		t.Errorf("triangle shape: expected data:image/Png;base64, got %q", out)
 	}
-	if !strings.Contains(out, "<polygon") {
-		t.Errorf("triangle shape: expected polygon element, got %q", out)
+	if !strings.Contains(out, "position:absolute;") {
+		t.Errorf("triangle shape: expected position:absolute in inline style, got %q", out)
 	}
 }
 
@@ -553,11 +562,11 @@ func TestRenderObject_Shape_Diamond(t *testing.T) {
 		},
 	})
 	out := exportHTML(t, pp)
-	if !strings.Contains(out, "<svg") {
-		t.Errorf("diamond shape: expected SVG element, got %q", out)
+	if !strings.Contains(out, "data:image/Png;base64,") {
+		t.Errorf("diamond shape: expected data:image/Png;base64, got %q", out)
 	}
-	if !strings.Contains(out, "<polygon") {
-		t.Errorf("diamond shape: expected polygon element, got %q", out)
+	if !strings.Contains(out, "position:absolute;") {
+		t.Errorf("diamond shape: expected position:absolute in inline style, got %q", out)
 	}
 }
 
@@ -660,8 +669,8 @@ func TestRenderObject_PolyLine_WithPoints(t *testing.T) {
 		},
 	})
 	out := exportHTML(t, pp)
-	if !strings.Contains(out, "<polyline") {
-		t.Errorf("polyline: expected <polyline> element, got %q", out)
+	if !strings.Contains(out, "data:image/Png;base64,") {
+		t.Errorf("polyline: expected base64 PNG image, got %q", out)
 	}
 }
 
@@ -681,9 +690,9 @@ func TestRenderObject_PolyLine_BorderLineColor(t *testing.T) {
 		},
 	})
 	out := exportHTML(t, pp)
-	// Red stroke color should appear in SVG.
-	if !strings.Contains(out, "rgba(255,0,0,1.00)") {
-		t.Errorf("polyline border color: expected rgba(255,0,0,1.00), got %q", out)
+	// Border line color is now baked into the base64 PNG image.
+	if !strings.Contains(out, "data:image/Png;base64,") {
+		t.Errorf("polyline border color: expected base64 PNG image, got %q", out)
 	}
 }
 
@@ -712,8 +721,8 @@ func TestRenderObject_Polygon_WithPoints(t *testing.T) {
 		},
 	})
 	out := exportHTML(t, pp)
-	if !strings.Contains(out, "<polygon") {
-		t.Errorf("polygon: expected <polygon> element, got %q", out)
+	if !strings.Contains(out, "data:image/Png;base64,") {
+		t.Errorf("polygon: expected base64 PNG image, got %q", out)
 	}
 }
 
@@ -727,9 +736,12 @@ func TestRenderObject_Polygon_WithFillColor(t *testing.T) {
 		},
 	})
 	out := exportHTML(t, pp)
-	// Fill color for polygon SVG fill attribute.
-	if !strings.Contains(out, "rgba(0,128,255,1.00)") {
-		t.Errorf("polygon fill color: expected rgba(0,128,255,1.00), got %q", out)
+	// Fill color appears as background-color in CSS class.
+	if !strings.Contains(out, "background-color:rgb(0, 128, 255)") {
+		t.Errorf("polygon fill color: expected background-color:rgb(0, 128, 255), got %q", out)
+	}
+	if !strings.Contains(out, "data:image/Png;base64,") {
+		t.Errorf("polygon fill color: expected base64 PNG image, got %q", out)
 	}
 }
 

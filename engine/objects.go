@@ -13,6 +13,7 @@ import (
 	"github.com/andrewloable/go-fastreport/band"
 	"github.com/andrewloable/go-fastreport/barcode"
 	"github.com/andrewloable/go-fastreport/crossview"
+	"github.com/andrewloable/go-fastreport/expr"
 	"github.com/andrewloable/go-fastreport/format"
 	"github.com/andrewloable/go-fastreport/gauge"
 	"github.com/andrewloable/go-fastreport/maprender"
@@ -677,6 +678,9 @@ func (e *ReportEngine) populateCellularTextCells(v *object.CellularTextObject, t
 		fillColor = f.Color
 	}
 
+	// Default border for spacing cells: no visible lines (matches C# default TableCell).
+	spacerBorder := *style.NewBorder()
+
 	for ri := 0; ri < rowCount; ri++ {
 		cellTop := originY + float32(ri)*(cellH+vertSpacing)
 		for ci := 0; ci < colCount; ci++ {
@@ -699,6 +703,56 @@ func (e *ReportEngine) populateCellularTextCells(v *object.CellularTextObject, t
 				Border:    border,
 			}
 			pb.Objects = append(pb.Objects, po)
+
+			// Emit horizontal spacing cell to the right of this character cell.
+			// C# inserts spacing columns at odd indices after setting cell properties.
+			if horzSpacing > 0 && ci < colCount-1 {
+				spacer := preview.PreparedObject{
+					Name:    fmt.Sprintf("%s_r%dhs%d", v.Name(), ri, ci),
+					Kind:    preview.ObjectTypeText,
+					Left:    cellLeft + cellW,
+					Top:     cellTop,
+					Width:   horzSpacing,
+					Height:  cellH,
+					BlobIdx: -1,
+					Border:  spacerBorder,
+				}
+				pb.Objects = append(pb.Objects, spacer)
+			}
+		}
+
+		// Emit vertical spacing row below this character row.
+		if vertSpacing > 0 && ri < rowCount-1 {
+			spacerTop := cellTop + cellH
+			for ci := 0; ci < colCount; ci++ {
+				cellLeft := originX + float32(ci)*(cellW+horzSpacing)
+				spacer := preview.PreparedObject{
+					Name:    fmt.Sprintf("%s_vs%dc%d", v.Name(), ri, ci),
+					Kind:    preview.ObjectTypeText,
+					Left:    cellLeft,
+					Top:     spacerTop,
+					Width:   cellW,
+					Height:  vertSpacing,
+					BlobIdx: -1,
+					Border:  spacerBorder,
+				}
+				pb.Objects = append(pb.Objects, spacer)
+
+				// Intersection spacer (bottom-right corner between cells).
+				if horzSpacing > 0 && ci < colCount-1 {
+					spacer := preview.PreparedObject{
+						Name:    fmt.Sprintf("%s_vs%dhs%d", v.Name(), ri, ci),
+						Kind:    preview.ObjectTypeText,
+						Left:    cellLeft + cellW,
+						Top:     spacerTop,
+						Width:   horzSpacing,
+						Height:  vertSpacing,
+						BlobIdx: -1,
+						Border:  spacerBorder,
+					}
+					pb.Objects = append(pb.Objects, spacer)
+				}
+			}
 		}
 	}
 }
@@ -1039,6 +1093,10 @@ func (e *ReportEngine) buildPreparedObject(obj report.Base) *preview.PreparedObj
 
 	case *object.PictureObject:
 		po.Kind = preview.ObjectTypePicture
+		po.Border = v.Border()
+		if f, ok := v.Fill().(*style.SolidFill); ok && f.Color.A > 0 {
+			po.FillColor = f.Color
+		}
 		if data := v.ImageData(); len(data) > 0 {
 			// Apply grayscale and/or transparency transforms before storing in BlobStore.
 			// C# ref: PictureObjectBase.Draw() calls ImageHelper.GetGrayscaleBitmap /
@@ -1062,16 +1120,15 @@ func (e *ReportEngine) buildPreparedObject(obj report.Base) *preview.PreparedObj
 		}
 
 	case *object.CellularTextObject:
-		// CellularTextObject is rendered as a grid of individual character cells.
-		// The anchor PreparedObject is a transparent shape (bounding box) that
-		// carries the border and fill; individual character cells are emitted by
-		// populateCellularTextCells, called from populateBandObjects2 below.
-		po.Kind = preview.ObjectTypeShape
-		po.ShapeKind = 0 // Rectangle
-		po.Border = v.Border()
-		if f, ok := v.Fill().(*style.SolidFill); ok {
-			po.FillColor = f.Color
-		}
+		// CellularTextObject is rendered as a grid of individual character cells
+		// by populateCellularTextCells (called from populateBandObjects2).
+		// In C#, GetTable() creates a TableObject whose cells are the only rendered
+		// elements — no separate container/anchor is visible.
+		// We must still create the anchor PreparedObject to maintain the 1:1 mapping
+		// between FRX objects and pb.Objects (used by band layout height adjustment
+		// in calcBandLayout). Mark it NotExportable so HTML export skips it.
+		po.Kind = preview.ObjectTypeText
+		po.NotExportable = true
 
 	case *object.ZipCodeObject:
 		// Evaluate DataColumn / Expression to update the Text value before
@@ -1190,6 +1247,10 @@ func (e *ReportEngine) buildPreparedObject(obj report.Base) *preview.PreparedObj
 	case *barcode.BarcodeObject:
 		po.Kind = preview.ObjectTypePicture
 		po.Angle = v.Angle()
+		po.Border = v.Border()
+		if f, ok := v.Fill().(*style.SolidFill); ok && f.Color.A > 0 {
+			po.FillColor = f.Color
+		}
 		// Evaluate the barcode text: DataColumn → Expression → Text.
 		// C# BarcodeObject.GetDataShared() (BarcodeObject.cs:601-604):
 		//   if DataColumn != "" → Report.GetColumnValue(DataColumn)
@@ -1235,7 +1296,10 @@ func (e *ReportEngine) buildPreparedObject(obj report.Base) *preview.PreparedObj
 				if err == nil && img != nil && e.preparedPages != nil {
 					var buf bytes.Buffer
 					if encErr := png.Encode(&buf, img); encErr == nil {
-						po.BlobIdx = e.preparedPages.BlobStore.Add(v.Name(), buf.Bytes())
+						// Use empty source to prevent deduplication by name.
+					// Barcodes are dynamically rendered per data row; reusing the
+					// same blob for all rows would show every badge with the same QR code.
+					po.BlobIdx = e.preparedPages.BlobStore.Add("", buf.Bytes())
 					}
 					// Also capture the module bit-matrix for vector rendering.
 					po.IsBarcode = true
@@ -1377,28 +1441,62 @@ func (e *ReportEngine) evalText(text string) string {
 	return e.evalTextWithFormat(text, nil)
 }
 
-// evalTextWithFormat evaluates a text template and, if f is non-nil and the
-// text is a single bracket expression, applies the format to the raw value.
+// evalTextWithFormat evaluates a text template, applying the format to each
+// bracket expression's typed value. Mirrors C# TextObject.GetData() which calls
+// CalcAndFormatExpression(expression, expressionIndex) for each [bracket] in text.
+// Each expression is evaluated via Report.Calc() to get a typed value (e.g.
+// time.Time for dates), then Format.FormatValue() is applied to that value.
 func (e *ReportEngine) evalTextWithFormat(text string, f format.Format) string {
 	if e.report == nil || text == "" {
 		return text
 	}
-	// When a format is set and the text is exactly one bracket expression
-	// (including compound forms like [[Field1] * [Field2]]), evaluate the
-	// raw value and apply the format before converting to string.
-	if f != nil {
-		trimmed := strings.TrimSpace(text)
-		if isSingleBracketExpr(trimmed) {
-			if val, err := e.report.Calc(trimmed); err == nil {
-				return f.FormatValue(val)
-			}
+
+	// If no format, fall back to plain CalcText (string substitution only).
+	if f == nil {
+		result, err := e.report.CalcText(text)
+		if err != nil {
+			return text
+		}
+		return result
+	}
+
+	// Fast path: when the text is a single bracket expression (including
+	// compound forms like [[Field1] * [Field2]]), evaluate the raw value
+	// and apply the format directly. This handles double-bracket compound
+	// expressions that expr.Parse would split (since [[ is an escape sequence).
+	trimmed := strings.TrimSpace(text)
+	if isSingleBracketExpr(trimmed) {
+		if val, err := e.report.Calc(trimmed); err == nil {
+			return f.FormatValue(val)
 		}
 	}
-	result, err := e.report.CalcText(text)
-	if err != nil {
+
+	// Per-expression formatting: parse text into literal and expression tokens,
+	// evaluate each expression with Report.Calc() to get a typed value, and
+	// apply the format. Mirrors C# TextObject.GetData() loop (TextObject.cs:1650-1669).
+	tokens := expr.Parse(text)
+	if tokens == nil {
 		return text
 	}
-	return result
+
+	var sb strings.Builder
+	for _, tok := range tokens {
+		if !tok.IsExpr {
+			sb.WriteString(tok.Value)
+			continue
+		}
+		// Evaluate expression to get a typed value (e.g. time.Time, float64).
+		val, err := e.report.Calc("[" + tok.Value + "]")
+		if err != nil {
+			sb.WriteString("[")
+			sb.WriteString(tok.Value)
+			sb.WriteString("]")
+			continue
+		}
+		// Apply the format to the typed value.
+		sb.WriteString(f.FormatValue(val))
+	}
+	return sb.String()
 }
 
 // isSingleBracketExpr reports whether s is enclosed in a single balanced
@@ -1419,7 +1517,6 @@ func isSingleBracketExpr(s string) bool {
 		} else if ch == ']' {
 			depth--
 			if depth == 0 && i < len(s)-1 {
-				// Closing bracket before the end → multiple expressions.
 				return false
 			}
 		}

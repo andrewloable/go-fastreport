@@ -298,9 +298,9 @@ func TestImageMIMEForCSS_TooShort(t *testing.T) {
 // ── renderObjectLayered: z-index injection via style= fallback ────────────────
 
 func TestRenderObjectLayered_NonTextObject_ZIndexInStyle(t *testing.T) {
-	// Non-text objects rendered via renderObject don't include "position:absolute;"
-	// in the inline style. renderObjectLayered should inject z-index via the style=
-	// fallback path (the else branch at line 322-324).
+	// Shape objects now render with position:absolute in the inline style
+	// (base64 PNG background image). renderObjectLayered should inject z-index
+	// into the style attribute.
 	e := NewExporter()
 	e.css = newCSSRegistry()
 	e.pp = nil
@@ -321,9 +321,9 @@ func TestRenderObjectLayered_NonTextObject_ZIndexInStyle(t *testing.T) {
 	if !strings.Contains(rendered, "z-index:1;") {
 		t.Errorf("expected z-index:1; in rendered output, got %q", rendered)
 	}
-	// Verify the z-index was injected into the style= attribute (not after position:absolute).
-	// The rendered div should look like: <div style="z-index:1;left:...;...
-	if strings.Contains(rendered, "position:absolute;z-index:") {
-		t.Errorf("z-index should NOT follow position:absolute; for non-text objects, got %q", rendered)
+	// Shape objects now include position:absolute in their inline style,
+	// so z-index follows it. Verify both are present.
+	if !strings.Contains(rendered, "position:absolute;") {
+		t.Errorf("expected position:absolute; in rendered output, got %q", rendered)
 	}
 }

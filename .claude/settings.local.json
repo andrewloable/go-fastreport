@@ -123,7 +123,9 @@
       "Bash(sort -k3,3)",
       "Bash(head -20 grep -rn \"ITF14\\\\|Supplement2\\\\|Supplement5\\\\|DefaultValue\" barcode/*.go)",
       "Bash(while IFS= read -r b64)",
-      "Bash(git checkout:*)"
+      "Bash(git checkout:*)",
+      "Bash(for r:*)",
+      "Read(//Volumes/mandark-1Tb/projects/loabletech/go-fastreport/html-delta/**)"
     ]
   }
 }

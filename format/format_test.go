@@ -865,8 +865,12 @@ func TestTimeFormat_Duration(t *testing.T) {
 
 func TestTimeFormat_StringRFC3339(t *testing.T) {
 	f := NewTimeFormat()
-	if got := f.FormatValue("2024-06-15T13:30:00Z"); got != "13:30" {
-		t.Fatalf("got %q, want %q", got, "13:30")
+	// toTime converts to local timezone (matching C# DateTime.Parse behaviour).
+	// Compute expected result using the same conversion.
+	parsed, _ := time.Parse(time.RFC3339, "2024-06-15T13:30:00Z")
+	want := parsed.Local().Format("15:04")
+	if got := f.FormatValue("2024-06-15T13:30:00Z"); got != want {
+		t.Fatalf("got %q, want %q", got, want)
 	}
 }
 

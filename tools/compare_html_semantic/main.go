@@ -711,10 +711,16 @@ func comparePages(name string, expPages, actPages []*Page, expCSS, actCSS map[st
 					d.SVGDiffs = append(d.SVGDiffs,
 						fmt.Sprintf("Page %d @%s [%s]: %s", i, pos, ae.sig(), who))
 				}
-				// CSS class differences on matched elements.
+				// CSS class differences: compare resolved CSS values, not names.
+				// Class names are arbitrary — what matters is whether the CSS
+				// content behind them is equivalent.
 				if ee.Cls != ae.Cls && len(d.ElemClassDiffs) < 50 {
-					d.ElemClassDiffs = append(d.ElemClassDiffs,
-						fmt.Sprintf("Page %d @%s [%s]: resolved styles differ (C# classes=%q Go classes=%q)", i, pos, ee.sig(), ee.Cls, ae.Cls))
+					eeResolved := resolveClasses(ee.Cls, expCSS)
+					aeResolved := resolveClasses(ae.Cls, actCSS)
+					if eeResolved != aeResolved {
+						d.ElemClassDiffs = append(d.ElemClassDiffs,
+							fmt.Sprintf("Page %d @%s [%s]: resolved styles differ (C# classes=%q Go classes=%q)", i, pos, ee.sig(), ee.Cls, ae.Cls))
+					}
 				}
 			}
 
@@ -752,6 +758,77 @@ func comparePages(name string, expPages, actPages []*Page, expCSS, actCSS map[st
 	truncateStrSlice(&d.ElemClassDiffs, 50)
 
 	return d
+}
+
+// resolveClasses merges the CSS properties from all class names in cls
+// (space-separated) into a single sorted key string. Base64 image URLs are
+// normalised to a fixed placeholder so that different but equivalent images
+// don't cause a mismatch.
+// normColor converts rgba(R,G,B,1.00) to rgb(R, G, B) for comparison.
+var rgbaOpaqueRE = regexp.MustCompile(`rgba\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*1(?:\.0*)?\s*\)`)
+
+func normColor(s string) string {
+	return rgbaOpaqueRE.ReplaceAllString(s, "rgb($1, $2, $3)")
+}
+
+// normBorders converts border shorthand (e.g. "1px solid rgb(192, 192, 192)")
+// to longhand properties for comparison. Also merges separate longhand props.
+func normBorders(merged map[string]string) {
+	sides := []string{"top", "right", "bottom", "left"}
+	for _, side := range sides {
+		key := "border-" + side
+		if val, ok := merged[key]; ok {
+			// Shorthand: "1px solid rgb(...)". Split into width/style/color.
+			parts := strings.SplitN(strings.TrimSpace(val), " ", 3)
+			if len(parts) >= 3 {
+				merged["border-"+side+"-width"] = parts[0]
+				merged["border-"+side+"-style"] = parts[1]
+				merged["border-"+side+"-color"] = normColor(parts[2])
+			}
+			delete(merged, key)
+		}
+		// Normalise longhand color format.
+		if val, ok := merged["border-"+side+"-color"]; ok {
+			merged["border-"+side+"-color"] = normColor(val)
+		}
+	}
+}
+
+func resolveClasses(cls string, cssMap map[string]map[string]string) string {
+	merged := map[string]string{}
+	for _, c := range strings.Fields(cls) {
+		if props, ok := cssMap[c]; ok {
+			for k, v := range props {
+				merged[k] = v
+			}
+		}
+	}
+	// Normalise base64 image data in background values.
+	if bg, ok := merged["background"]; ok && strings.Contains(bg, "base64,") {
+		merged["background"] = "url(BASE64) no-repeat !important"
+	}
+	// Normalise border shorthand/longhand differences.
+	normBorders(merged)
+	// Normalise color format (rgba opaque → rgb).
+	for k, v := range merged {
+		if strings.Contains(v, "rgba(") {
+			merged[k] = normColor(v)
+		}
+	}
+	// Sort keys for deterministic comparison.
+	keys := make([]string, 0, len(merged))
+	for k := range merged {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var sb strings.Builder
+	for _, k := range keys {
+		sb.WriteString(k)
+		sb.WriteString(":")
+		sb.WriteString(normNum(merged[k]))
+		sb.WriteString(";")
+	}
+	return sb.String()
 }
 
 func strSliceEqual(a, b []string) bool {

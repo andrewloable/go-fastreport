@@ -38,16 +38,19 @@ type CurrencyFormat struct {
 	NegativePattern int
 }
 
-// NewCurrencyFormat returns a CurrencyFormat with default settings.
+// NewCurrencyFormat returns a CurrencyFormat with settings from the current
+// system locale, mirroring C#'s constructor which reads from
+// CultureInfo.CurrentCulture.NumberFormat.
 func NewCurrencyFormat() *CurrencyFormat {
+	loc := currentLocale()
 	return &CurrencyFormat{
 		UseLocaleSettings: true,
-		DecimalDigits:     2,
-		DecimalSeparator:  ".",
-		GroupSeparator:    ",",
-		CurrencySymbol:    "$",
-		PositivePattern:   0,
-		NegativePattern:   0,
+		DecimalDigits:     loc.CurrencyDecimalDigits,
+		DecimalSeparator:  loc.CurrencyDecimalSeparator,
+		GroupSeparator:    loc.CurrencyGroupSeparator,
+		CurrencySymbol:    loc.CurrencySymbol,
+		PositivePattern:   loc.CurrencyPositivePattern,
+		NegativePattern:   loc.CurrencyNegativePattern,
 	}
 }
 
@@ -67,13 +70,23 @@ func (f *CurrencyFormat) FormatValue(v any) string {
 		return fmt.Sprint(v)
 	}
 
-	dec := "."
-	grp := ","
-	sym := "$"
-	if !f.UseLocaleSettings {
+	var dec, grp, sym string
+	var posPattern, negPattern int
+	if f.UseLocaleSettings {
+		// Mirror C# GetNumberFormatInfo(): when UseLocale=true, clone the
+		// current culture's NumberFormat and only override DecimalDigits.
+		loc := currentLocale()
+		dec = loc.CurrencyDecimalSeparator
+		grp = loc.CurrencyGroupSeparator
+		sym = loc.CurrencySymbol
+		posPattern = loc.CurrencyPositivePattern
+		negPattern = loc.CurrencyNegativePattern
+	} else {
 		dec = f.DecimalSeparator
 		grp = f.GroupSeparator
 		sym = f.CurrencySymbol
+		posPattern = f.PositivePattern
+		negPattern = f.NegativePattern
 	}
 
 	neg := val < 0
@@ -81,9 +94,9 @@ func (f *CurrencyFormat) FormatValue(v any) string {
 	n := formatNumber(abs, f.DecimalDigits, dec, grp)
 
 	if !neg {
-		return applyCurrencyPositivePattern(n, sym, f.PositivePattern)
+		return applyCurrencyPositivePattern(n, sym, posPattern)
 	}
-	return applyCurrencyNegativePattern(n, sym, f.NegativePattern)
+	return applyCurrencyNegativePattern(n, sym, negPattern)
 }
 
 func applyCurrencyPositivePattern(n, sym string, pattern int) string {

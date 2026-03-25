@@ -120,7 +120,12 @@ func toTime(v any) (time.Time, bool) {
 		}
 		for _, l := range layouts {
 			if parsed, err := time.Parse(l, t); err == nil {
-				return parsed, true
+				// Convert to local time to match C# DateTime.Parse() behaviour.
+				// C# parses RFC3339 strings into DateTimeKind.Local, converting
+				// the value to the system's local timezone. Without this, dates
+				// near midnight with a different UTC offset (e.g. "23:00+03:00"
+				// on a UTC+8 system) would format as the previous calendar day.
+				return parsed.Local(), true
 			}
 		}
 	}

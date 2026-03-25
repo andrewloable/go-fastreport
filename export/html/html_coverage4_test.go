@@ -77,15 +77,15 @@ func TestRenderObject_Picture_Barcode(t *testing.T) {
 				Width:   100,
 				Height:  50,
 				BlobIdx: blobIdx,
-				// Mark as barcode → should use background-size:100% 100% instead of resizing.
+				// Mark as barcode — C# does not use background-size for barcode images.
 				IsBarcode: true,
 			},
 		},
 	})
 	exp := html.NewExporter()
 	out := exportHTMLCustom(t, exp, pp)
-	if !strings.Contains(out, "background-size:100% 100%;") {
-		t.Errorf("Barcode: expected 'background-size:100%% 100%%;' in output, not found")
+	if !strings.Contains(out, "data:image/Png;base64,") {
+		t.Errorf("Barcode: expected base64 PNG image in output, not found")
 	}
 }
 
@@ -598,7 +598,10 @@ func TestRenderObject_Shape_WithFillColor(t *testing.T) {
 		},
 	})
 	out := exportHTML(t, pp)
-	if !strings.Contains(out, "background-color:rgb(0, 128, 255)") {
-		t.Errorf("Shape FillColor: expected rgb(0, 128, 255), not found")
+	if !strings.Contains(out, "data:image/Png;base64,") {
+		t.Errorf("Shape FillColor: expected data:image/Png;base64, not found")
+	}
+	if !strings.Contains(out, "position:absolute;") {
+		t.Errorf("Shape FillColor: expected position:absolute in inline style, not found")
 	}
 }

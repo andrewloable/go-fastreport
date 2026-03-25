@@ -882,5 +882,12 @@ func applyBandObjectHeights(bb *band.BandBase, pb *preview.PreparedBand, effecti
 			pb.Objects[poIdx].Height = effectiveH[i]
 		}
 		poIdx++
+		// CellularTextObject inserts extra cell PreparedObjects after the anchor.
+		// Skip over them so the FRX→PreparedObject index mapping stays aligned.
+		if _, ok := obj.(*object.CellularTextObject); ok {
+			for poIdx < len(pb.Objects) && strings.Contains(pb.Objects[poIdx].Name, "_r") {
+				poIdx++
+			}
+		}
 	}
 }

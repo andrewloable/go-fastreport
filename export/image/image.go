@@ -277,12 +277,12 @@ func (e *Exporter) renderObject(obj preview.PreparedObject, bandTop float32) {
 		if bounds.Empty() {
 			return
 		}
-		// Fill object background.
+		// Fill object background. Only fill when FillColor is set (A > 0).
+		// When A == 0 (transparent), skip fill so that the canvas background
+		// (set by the caller — white for full-page export, transparent for
+		// RenderObjectPNG) is preserved.
 		if obj.FillColor.A > 0 {
 			draw.Draw(e.curPage, bounds, &image.Uniform{obj.FillColor}, image.Point{}, draw.Over)
-		} else {
-			white := color.RGBA{R: 255, G: 255, B: 255, A: 255}
-			draw.Draw(e.curPage, bounds, &image.Uniform{white}, image.Point{}, draw.Over)
 		}
 
 		e.drawBorderLines(obj.Border, x, y, w, h)
@@ -1187,8 +1187,14 @@ func RenderGenericPNG(obj preview.PreparedObject) ([]byte, error) {
 		h = 1
 	}
 	canvas := image.NewRGBA(image.Rect(0, 0, w, h))
-	// Transparent background.
-	draw.Draw(canvas, canvas.Bounds(), &image.Uniform{color.RGBA{0, 0, 0, 0}}, image.Point{}, draw.Src)
+	// Fill with FillColor when set so the fill is baked into the PNG.
+	// C# renders filled shapes (polygons, etc.) as filled images.
+	// When no fill: use transparent so underlying page content shows through.
+	bg := color.RGBA{0, 0, 0, 0}
+	if obj.FillColor.A > 0 {
+		bg = obj.FillColor
+	}
+	draw.Draw(canvas, canvas.Bounds(), &image.Uniform{bg}, image.Point{}, draw.Src)
 
 	exp := &Exporter{
 		ResolutionX: DefaultDPI,
@@ -1284,8 +1290,10 @@ func RenderObjectPNG(obj preview.PreparedObject) ([]byte, error) {
 
 	canvas := image.NewRGBA(image.Rect(0, 0, renderW, renderH))
 
-	// Fill background.
-	bg := color.RGBA{R: 255, G: 255, B: 255, A: 255}
+	// Fill background. Use transparent when no fill is set so that underlying
+	// page content (e.g. orange polygon fills) shows through the PNG.
+	// C# GetLayerPicture renders on a transparent bitmap for the same reason.
+	bg := color.RGBA{0, 0, 0, 0} // transparent
 	if obj.FillColor.A > 0 {
 		bg = obj.FillColor
 	}

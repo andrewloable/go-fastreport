@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"math"
 	"strings"
 
 	"github.com/andrewloable/go-fastreport/expr"
@@ -665,9 +666,12 @@ func (b *BarcodeObject) UpdateAutoSize() {
 			// Approximate Arial 8pt GDI+ MeasureString at 96 DPI.
 			// C#: using (Graphics g = ...) txtWidth = g.MeasureString(text, Font, 100000).Width
 			// Average character advance for Arial Regular 8pt at 96 DPI ≈ fontPx × 0.542.
+			// Floor the result to match C# GDI+ MeasureString which returns
+			// precise per-glyph measurements; our average-based approximation
+			// tends to overshoot by a fractional amount.
 			const arialAvgWidthFactor = 0.542
 			fontPx := float32(8.0) * 96.0 / 72.0 // barcode default: Arial 8pt
-			txtWidth := float32(len(displayText)) * fontPx * arialAvgWidthFactor
+			txtWidth := float32(math.Floor(float64(float32(len(displayText)) * fontPx * arialAvgWidthFactor)))
 			if barWidth < txtWidth {
 				extra := (txtWidth-barWidth)/2 + 2
 				w = (barWidth + 2*extra) * 1.25

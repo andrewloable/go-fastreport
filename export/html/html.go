@@ -438,9 +438,20 @@ func (e *Exporter) renderObject(obj preview.PreparedObject, scale float32) {
 	case preview.ObjectTypePicture:
 		if obj.BlobIdx >= 0 && e.pp != nil {
 			if data := e.pp.BlobStore.Get(obj.BlobIdx); len(data) > 0 {
+				// Apply border width adjustment (C# Layer method): position shifts by
+				// -borderWidth/2 and size shrinks by borderWidth. Mirrors renderTextObject.
+				var bLeft, bTop, bRight, bBottom float32
+				htmlBorderWidthValues(&obj.Border, scale, &bLeft, &bTop, &bRight, &bBottom)
+				adjLeft := left - bLeft/2
+				adjTop := top - bTop/2
+				adjW := w - bRight/2 - bLeft/2
+				adjH := h - bBottom/2 - bTop/2
+
 				// C# LayerBack flow: GetStyle(obj) registers the picture's non-text
 				// style class FIRST, then LayerPicture registers the image data class.
-				// GetStyle for non-text: text-align:center;position:absolute;color:white;background-color:...;border:none;width;height
+				// C# GetStyle for non-text: color:white; background-color:...; actual border CSS; width/height (unadjusted)
+				// The border:none override goes in the LayerBack div's inline style, not in the CSS class.
+				// The adjusted position/size go in each div's inline style.
 				var picCSS strings.Builder
 				picCSS.WriteString("text-align:center;position:absolute;color:rgb(255, 255, 255);")
 				if obj.FillColor.A == 0 {
@@ -448,15 +459,23 @@ func (e *Exporter) renderObject(obj preview.PreparedObject, scale float32) {
 				} else {
 					picCSS.WriteString(fmt.Sprintf("background-color:%s;", rgbColor(obj.FillColor)))
 				}
-				picCSS.WriteString(fmt.Sprintf("border:none;width:%spx;height:%spx;", pxVal(w), pxVal(h)))
+				// Include actual border CSS in the shared class (matching C# GetStyle).
+				// If no border, emit border:none explicitly (C# always includes border in GetStyle).
+				// Width/height in the class use unadjusted values; inline styles override with adjusted values.
+				if bs := borderCSS(&obj.Border, scale); bs != "" {
+					picCSS.WriteString(bs)
+				} else {
+					picCSS.WriteString("border:none;")
+				}
+				picCSS.WriteString(fmt.Sprintf("width:%spx;height:%spx;", pxVal(w), pxVal(h)))
 				// picClass and imgClass are assigned below depending on InlineStyles mode.
 
 				// Resize image to display dimensions for correct rendering in HTML.
 				// For rotated objects (Angle != 0), apply rotation to the image
 				// to match C# GetLayerPicture behaviour.
 				var imgData []byte
-				targetW := int(math.Round(float64(w)))
-				targetH := int(math.Round(float64(h)))
+				targetW := int(math.Round(float64(adjW)))
+				targetH := int(math.Round(float64(adjH)))
 				if obj.Angle != 0 {
 					imgData = imgexp.RotateImagePNG(data, obj.Angle, targetW, targetH)
 				} else {
@@ -465,7 +484,7 @@ func (e *Exporter) renderObject(obj preview.PreparedObject, scale float32) {
 				mime := imageMIMEForCSS(imgData)
 				encoded := base64.StdEncoding.EncodeToString(imgData)
 				imgCSS := fmt.Sprintf(
-					"background: url('data:%s;base64,%s') no-repeat !important;background-size:100%% 100%%;-webkit-print-color-adjust:exact;",
+					"background: url('data:%s;base64,%s') no-repeat !important;-webkit-print-color-adjust:exact;",
 					mime, encoded,
 				)
 				// Two overlapping divs: background/border div + image overlay div (C# pattern).
@@ -476,19 +495,19 @@ func (e *Exporter) renderObject(obj preview.PreparedObject, scale float32) {
 				// Inline mode: no CSS classes; emit style attributes directly.
 				e.sb.WriteString(fmt.Sprintf(
 					"<div style=\"%sleft:%spx;top:%spx;width:%spx;height:%spx;border:none;\">&nbsp;</div>\n",
-					picCSS.String(), pxVal(left), pxVal(top), pxVal(w), pxVal(h)))
+					picCSS.String(), pxVal(adjLeft), pxVal(adjTop), pxVal(adjW), pxVal(adjH)))
 				e.sb.WriteString(fmt.Sprintf(
 					"<div style=\"%s%sleft:%spx;top:%spx;width:%spx;height:%spx;\">&nbsp;</div>\n",
-					picCSS.String(), imgCSS, pxVal(left), pxVal(top), pxVal(w), pxVal(h)))
+					picCSS.String(), imgCSS, pxVal(adjLeft), pxVal(adjTop), pxVal(adjW), pxVal(adjH)))
 			} else {
 				picClass := e.css.Register(picCSS.String())
 				imgClass := e.css.Register(imgCSS)
 				e.sb.WriteString(fmt.Sprintf(
 					"<div class=\"%s\" style=\"left:%spx;top:%spx;width:%spx;height:%spx;border:none;\">&nbsp;</div>\n",
-					picClass, pxVal(left), pxVal(top), pxVal(w), pxVal(h)))
+					picClass, pxVal(adjLeft), pxVal(adjTop), pxVal(adjW), pxVal(adjH)))
 				e.sb.WriteString(fmt.Sprintf(
 					"<div class=\"%s %s\" style=\"left:%spx;top:%spx;width:%spx;height:%spx;\">&nbsp;</div>\n",
-					picClass, imgClass, pxVal(left), pxVal(top), pxVal(w), pxVal(h)))
+					picClass, imgClass, pxVal(adjLeft), pxVal(adjTop), pxVal(adjW), pxVal(adjH)))
 			}
 			break
 			}
@@ -563,40 +582,9 @@ func (e *Exporter) renderObject(obj preview.PreparedObject, scale float32) {
 		}
 
 	case preview.ObjectTypeShape:
-		var shapeExtra string
-		switch obj.ShapeKind {
-		case 2: // Ellipse
-			shapeExtra = "border:1px solid #000;border-radius:50%;"
-		case 1: // RoundRectangle
-			shapeExtra = fmt.Sprintf("border:1px solid #000;border-radius:%.2fpx;", obj.ShapeCurve*scale)
-		case 3: // Triangle — use inline SVG
-			e.sb.WriteString(fmt.Sprintf(`<div %s>`, styleAttr("")))
-			e.sb.WriteString(fmt.Sprintf(
-				`<svg width="%.2f" height="%.2f">`,
-				w, h,
-			))
-			e.sb.WriteString(fmt.Sprintf(
-				`<polygon points="%.2f,0 0,%.2f %.2f,%.2f" stroke="#000" stroke-width="1" fill="none"/>`,
-				w/2, h, w, h,
-			))
-			e.sb.WriteString(`</svg></div>`)
-		case 4: // Diamond — use inline SVG
-			e.sb.WriteString(fmt.Sprintf(`<div %s>`, styleAttr("")))
-			e.sb.WriteString(fmt.Sprintf(
-				`<svg width="%.2f" height="%.2f">`,
-				w, h,
-			))
-			e.sb.WriteString(fmt.Sprintf(
-				`<polygon points="%.2f,0 %.2f,%.2f %.2f,%.2f 0,%.2f" stroke="#000" stroke-width="1" fill="none"/>`,
-				w/2, w, h/2, w/2, h, h/2,
-			))
-			e.sb.WriteString(`</svg></div>`)
-		default: // Rectangle
-			shapeExtra = "border:1px solid #000;"
-		}
-		if obj.ShapeKind != 3 && obj.ShapeKind != 4 {
-			e.sb.WriteString(fmt.Sprintf(`<div %s></div>`, styleAttr(shapeExtra)))
-		}
+		// C# renders all ShapeObjects as inline-style divs with base64 PNG images.
+		// No CSS classes are used for shapes.
+		e.renderObjectAsInlineImage(obj, left, top, w, h)
 
 	case preview.ObjectTypeDigitalSignature:
 		// Render a dashed-border placeholder box for digital signature fields.
@@ -692,70 +680,8 @@ func (e *Exporter) renderObject(obj preview.PreparedObject, scale float32) {
 		e.sb.WriteString(`</svg></div>`)
 
 	case preview.ObjectTypePolyLine, preview.ObjectTypePolygon:
-		if len(obj.Points) < 2 {
-			e.sb.WriteString(fmt.Sprintf(`<div %s></div>`, styleAttr("")))
-			break
-		}
-
-		// Determine stroke color from border.
-		strokeColor := "black"
-		strokeWidth := 1.0
-		if obj.Border.Lines[0] != nil {
-			lc := obj.Border.Lines[0].Color
-			if lc.A > 0 {
-				strokeColor = fmt.Sprintf("rgba(%d,%d,%d,%.2f)",
-					lc.R, lc.G, lc.B, float32(lc.A)/255.0)
-			}
-			if obj.Border.Lines[0].Width > 0 {
-				strokeWidth = float64(obj.Border.Lines[0].Width) * float64(scale)
-			}
-		}
-
-		// Build SVG points string.
-		var pts strings.Builder
-		for i, pt := range obj.Points {
-			px := float64(pt[0]) * float64(scale)
-			py := float64(pt[1]) * float64(scale)
-			if i > 0 {
-				pts.WriteByte(' ')
-			}
-			pts.WriteString(fmt.Sprintf("%.2f,%.2f", px, py))
-		}
-
-		// PolyLine/Polygon use overflow:visible — build positional inline directly.
-		polyPos := fmt.Sprintf(
-			"position:absolute;left:%.2fpx;top:%.2fpx;width:%.2fpx;height:%.2fpx;overflow:visible;",
-			left, top, w, h,
-		)
-
-		if obj.Kind == preview.ObjectTypePolyLine {
-			e.sb.WriteString(fmt.Sprintf(
-				`<div style="%s"><svg width="%.2f" height="%.2f" style="overflow:visible;">`,
-				polyPos, w, h,
-			))
-			e.sb.WriteString(fmt.Sprintf(
-				`<polyline points="%s" stroke="%s" stroke-width="%.2f" fill="none"/>`,
-				pts.String(), strokeColor, strokeWidth,
-			))
-			e.sb.WriteString(`</svg></div>`)
-		} else {
-			// Polygon — close the path and fill.
-			fillColor := "none"
-			if obj.FillColor.A > 0 {
-				fc := obj.FillColor
-				fillColor = fmt.Sprintf("rgba(%d,%d,%d,%.2f)",
-					fc.R, fc.G, fc.B, float32(fc.A)/255.0)
-			}
-			e.sb.WriteString(fmt.Sprintf(
-				`<div style="%s"><svg width="%.2f" height="%.2f" style="overflow:visible;">`,
-				polyPos, w, h,
-			))
-			e.sb.WriteString(fmt.Sprintf(
-				`<polygon points="%s" stroke="%s" stroke-width="%.2f" fill="%s"/>`,
-				pts.String(), strokeColor, strokeWidth, fillColor,
-			))
-			e.sb.WriteString(`</svg></div>`)
-		}
+		// Render as base64 PNG image matching C# LayerBack + LayerPicture pattern.
+		e.renderObjectAsImage(obj, left, top, w, h, scale)
 
 	case preview.ObjectTypeSVG:
 		if obj.BlobIdx >= 0 && e.pp != nil {
@@ -780,6 +706,57 @@ func (e *Exporter) renderObject(obj preview.PreparedObject, scale float32) {
 // renderTextObject renders a text object matching C# HTMLExportLayers output.
 // Outer div: class with font+alignment+color+background+border+size, inline style with position.
 // Inner div: class with display:block;border:0;width;padding;margin-top.
+// renderObjectAsImage renders a PreparedObject (polygon, shape, etc.) as a
+// single div with a base64 PNG background image, matching C# HTMLExportLayers
+// pattern for non-text objects (one div, two CSS classes: styling + image).
+func (e *Exporter) renderObjectAsImage(obj preview.PreparedObject, left, top, w, h, scale float32) {
+	pngBytes, err := imgexp.RenderGenericPNG(obj)
+	if err != nil || len(pngBytes) == 0 {
+		return
+	}
+
+	var picCSS strings.Builder
+	picCSS.WriteString("text-align:center;position:absolute;color:rgb(255, 255, 255);")
+	if obj.FillColor.A == 0 {
+		picCSS.WriteString("background-color:transparent;")
+	} else {
+		picCSS.WriteString(fmt.Sprintf("background-color:%s;", rgbColor(obj.FillColor)))
+	}
+	picCSS.WriteString(fmt.Sprintf("border:none;width:%spx;height:%spx;", pxVal(w), pxVal(h)))
+
+	encoded := base64.StdEncoding.EncodeToString(pngBytes)
+	imgCSS := fmt.Sprintf(
+		"background: url('data:image/Png;base64,%s') no-repeat !important;-webkit-print-color-adjust:exact;",
+		encoded,
+	)
+
+	if e.InlineStyles {
+		e.sb.WriteString(fmt.Sprintf(
+			"<div style=\"%s%sleft:%spx;top:%spx;width:%spx;height:%spx;\">&nbsp;</div>\n",
+			picCSS.String(), imgCSS, pxVal(left), pxVal(top), pxVal(w), pxVal(h)))
+	} else {
+		picClass := e.css.Register(picCSS.String())
+		imgClass := e.css.Register(imgCSS)
+		e.sb.WriteString(fmt.Sprintf(
+			"<div class=\"%s %s\" style=\"left:%spx;top:%spx;width:%spx;height:%spx;\">&nbsp;</div>\n",
+			picClass, imgClass, pxVal(left), pxVal(top), pxVal(w), pxVal(h)))
+	}
+}
+
+// renderObjectAsInlineImage renders a PreparedObject as a single div with
+// inline style containing a base64 PNG background image. No CSS classes.
+// Matches C# rendering of ShapeObjects (HTMLExportLayers.cs).
+func (e *Exporter) renderObjectAsInlineImage(obj preview.PreparedObject, left, top, w, h float32) {
+	pngBytes, err := imgexp.RenderGenericPNG(obj)
+	if err != nil || len(pngBytes) == 0 {
+		return
+	}
+	encoded := base64.StdEncoding.EncodeToString(pngBytes)
+	e.sb.WriteString(fmt.Sprintf(
+		"<div  style=\"left:%spx;top:%spx;width:%spx;height:%spx;position:absolute;background: url('data:image/Png;base64,%s') no-repeat !important;-webkit-print-color-adjust:exact;\">&nbsp;</div>\n",
+		pxVal(left), pxVal(top), pxVal(w), pxVal(h), encoded))
+}
+
 func (e *Exporter) renderTextObject(obj preview.PreparedObject, scale float32) {
 	left := obj.Left * scale
 	top := obj.Top * scale
@@ -875,6 +852,9 @@ func (e *Exporter) renderTextObject(obj preview.PreparedObject, scale float32) {
 	// position:absolute, color, background-color, RTL (C# GetStyle).
 	outerCSS.WriteString("position:absolute;")
 	tc := obj.TextColor
+	if tc.A == 0 {
+		tc = color.RGBA{A: 255} // default opaque black, matching C#
+	}
 	outerCSS.WriteString(fmt.Sprintf("color:%s;", rgbColor(tc)))
 	fc := obj.FillColor
 	if fc.A > 0 {
@@ -981,40 +961,38 @@ func (e *Exporter) renderTextObject(obj preview.PreparedObject, scale float32) {
 		pxVal(adjLeft), pxVal(adjTop), pxVal(adjW), pxVal(adjH))
 
 	// For rotated text objects (Angle != 0), emit LayerBack + LayerPicture and return.
-	// Skip registering outerCSS/innerCSS classes — they would never be used.
 	// C# IsMemo() returns false when Angle != 0, so the object is rendered as:
-	//   LayerBack:    background/border div (border:none in inline style)
-	//   LayerPicture: div with base64-PNG background-image of the rendered rotated text
+	//   LayerBack:    div with full text styling CSS + border:none in inline style
+	//   LayerPicture: div with same CSS class + base64-PNG background-image
+	// C# uses GetStyle(obj) for LayerBack which includes the full text styling.
 	// C# ref: HTMLExportLayers.cs IsMemo() line 719, LayerBack/LayerPicture lines 937-955.
 	if obj.Angle != 0 {
-		var bgCSS strings.Builder
-		bgCSS.WriteString("text-align:center;position:absolute;color:rgb(255, 255, 255);")
-		if obj.FillColor.A > 0 {
-			bgCSS.WriteString(fmt.Sprintf("background-color:%s;", rgbColor(obj.FillColor)))
-		} else {
-			bgCSS.WriteString("background-color:transparent;")
-		}
-		bgCSS.WriteString(fmt.Sprintf("border:none;width:%spx;height:%spx;", pxVal(w), pxVal(h)))
 		posStyle := fmt.Sprintf("left:%spx;top:%spx;width:%spx;height:%spx;", pxVal(left), pxVal(top), pxVal(w), pxVal(h))
 
 		// Render the text object as a PNG and embed as base64 data URL (LayerPicture).
 		picCSS := ""
 		if pngBytes, err := imgexp.RenderObjectPNG(obj); err == nil {
 			b64 := base64.StdEncoding.EncodeToString(pngBytes)
-			picCSS = fmt.Sprintf("background:url('data:image/Png;base64,%s') no-repeat !important;-webkit-print-color-adjust:exact;", b64)
+			picCSS = fmt.Sprintf("background: url('data:image/Png;base64,%s') no-repeat !important;-webkit-print-color-adjust:exact;", b64)
 		}
 
 		if e.InlineStyles {
-			// LayerBack
-			e.sb.WriteString(fmt.Sprintf("<div style=\"%s%sborder:none;\">&nbsp;</div>\n", bgCSS.String(), posStyle))
-			// LayerPicture with embedded image
-			e.sb.WriteString(fmt.Sprintf("<div style=\"%s%s\">&nbsp;</div>\n", posStyle, picCSS))
+			// LayerBack: full text styling + border:none
+			e.sb.WriteString(fmt.Sprintf("<div style=\"%s%sborder:none;\">&nbsp;</div>\n", outerCSS.String(), posStyle))
+			// LayerPicture: full text styling + background-image
+			e.sb.WriteString(fmt.Sprintf("<div style=\"%s%s%s\">&nbsp;</div>\n", outerCSS.String(), posStyle, picCSS))
 		} else {
-			bgClass := e.cssClass(bgCSS.String())
+			// Use outerCSS for the LayerBack class (matches C# GetStyle(obj))
+			layerClass := e.cssClass(outerCSS.String())
 			// LayerBack
-			e.sb.WriteString(fmt.Sprintf("<div class=\"%s\" style=\"%sborder:none;\">&nbsp;</div>\n", bgClass, posStyle))
-			// LayerPicture: inline style carries the background-image (varies per object)
-			e.sb.WriteString(fmt.Sprintf("<div class=\"%s\" style=\"%s%s\">&nbsp;</div>\n", bgClass, posStyle, picCSS))
+			e.sb.WriteString(fmt.Sprintf("<div class=\"%s\" style=\"%sborder:none;\">&nbsp;</div>\n", layerClass, posStyle))
+			// LayerPicture: same class + image class
+			if picCSS != "" {
+				imgClass := e.css.Register(picCSS)
+				e.sb.WriteString(fmt.Sprintf("<div class=\"%s %s\" style=\"%s\">&nbsp;</div>\n", layerClass, imgClass, posStyle))
+			} else {
+				e.sb.WriteString(fmt.Sprintf("<div class=\"%s\" style=\"%s\">&nbsp;</div>\n", layerClass, posStyle))
+			}
 		}
 		return
 	}

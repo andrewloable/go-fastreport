@@ -596,88 +596,51 @@ func (e *Exporter) renderObject(obj preview.PreparedObject, scale float32) {
 		e.sb.WriteString(fmt.Sprintf(`<div %s><span>%s</span></div>`, styleAttr(sigExtra), export.HTMLString(label)))
 
 	case preview.ObjectTypeCheckBox:
-		// Determine which symbol to draw.
-		symbol := -1 // none
-		if obj.Checked {
-			symbol = obj.CheckedSymbol // 0=check, 1=cross, 2=plus, 3=fill
-		} else {
-			switch obj.UncheckedSymbol {
-			case 0: // None — just the box, no symbol
-			case 1:
-				symbol = 1 // cross
-			case 2:
-				symbol = 10 // minus
-			case 3:
-				symbol = 11 // slash
-			case 4:
-				symbol = 12 // backslash
+		// C# renders checkboxes as PNG images using the LayerBack + LayerPicture
+		// div pair pattern (same as other picture objects), with border adjustments.
+		pngBytes, err := imgexp.RenderGenericPNG(obj)
+		if err == nil && len(pngBytes) > 0 {
+			// Apply border width adjustment (mirrors ObjectTypePicture rendering).
+			var bLeft, bTop, bRight, bBottom float32
+			htmlBorderWidthValues(&obj.Border, scale, &bLeft, &bTop, &bRight, &bBottom)
+			adjLeft := left - bLeft/2
+			adjTop := top - bTop/2
+			adjW := w - bRight/2 - bLeft/2
+			adjH := h - bBottom/2 - bTop/2
+
+			var picCSS strings.Builder
+			picCSS.WriteString("text-align:center;position:absolute;color:rgb(255, 255, 255);background-color:transparent;")
+			if bs := borderCSS(&obj.Border, scale); bs != "" {
+				picCSS.WriteString(bs)
+			} else {
+				picCSS.WriteString("border:none;")
+			}
+			picCSS.WriteString(fmt.Sprintf("width:%spx;height:%spx;", pxVal(w), pxVal(h)))
+
+			encoded := base64.StdEncoding.EncodeToString(pngBytes)
+			imgCSS := fmt.Sprintf(
+				"background: url('data:image/Png;base64,%s') no-repeat !important;-webkit-print-color-adjust:exact;",
+				encoded,
+			)
+
+			if e.InlineStyles {
+				e.sb.WriteString(fmt.Sprintf(
+					"<div style=\"%sleft:%spx;top:%spx;width:%spx;height:%spx;border:none;\">&nbsp;</div>\n",
+					picCSS.String(), pxVal(adjLeft), pxVal(adjTop), pxVal(adjW), pxVal(adjH)))
+				e.sb.WriteString(fmt.Sprintf(
+					"<div style=\"%s%sleft:%spx;top:%spx;width:%spx;height:%spx;\">&nbsp;</div>\n",
+					picCSS.String(), imgCSS, pxVal(adjLeft), pxVal(adjTop), pxVal(adjW), pxVal(adjH)))
+			} else {
+				picClass := e.css.Register(picCSS.String())
+				imgClass := e.css.Register(imgCSS)
+				e.sb.WriteString(fmt.Sprintf(
+					"<div class=\"%s\" style=\"left:%spx;top:%spx;width:%spx;height:%spx;border:none;\">&nbsp;</div>\n",
+					picClass, pxVal(adjLeft), pxVal(adjTop), pxVal(adjW), pxVal(adjH)))
+				e.sb.WriteString(fmt.Sprintf(
+					"<div class=\"%s %s\" style=\"left:%spx;top:%spx;width:%spx;height:%spx;\">&nbsp;</div>\n",
+					picClass, imgClass, pxVal(adjLeft), pxVal(adjTop), pxVal(adjW), pxVal(adjH)))
 			}
 		}
-
-		// Get check color; default to opaque black.
-		cc := obj.CheckColor
-		if cc.A == 0 {
-			cc = color.RGBA{A: 255}
-		}
-		strokeColor := fmt.Sprintf("rgb(%d,%d,%d)", cc.R, cc.G, cc.B)
-
-		e.sb.WriteString(fmt.Sprintf(`<div %s>`, styleAttr("")))
-		e.sb.WriteString(fmt.Sprintf(`<svg width="%.2f" height="%.2f" style="position:absolute;top:0;left:0;width:100%%;height:100%%;">`, w, h))
-
-		switch symbol {
-		case 0: // checkmark
-			e.sb.WriteString(fmt.Sprintf(
-				`<polyline points="%.2f,%.2f %.2f,%.2f %.2f,%.2f" stroke="%s" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>`,
-				w*0.15, h*0.5,
-				w*0.4, h*0.75,
-				w*0.85, h*0.25,
-				strokeColor,
-			))
-		case 1: // cross
-			e.sb.WriteString(fmt.Sprintf(
-				`<line x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f" stroke="%s" stroke-width="2"/>`,
-				w*0.2, h*0.2, w*0.8, h*0.8, strokeColor,
-			))
-			e.sb.WriteString(fmt.Sprintf(
-				`<line x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f" stroke="%s" stroke-width="2"/>`,
-				w*0.8, h*0.2, w*0.2, h*0.8, strokeColor,
-			))
-		case 2: // plus
-			e.sb.WriteString(fmt.Sprintf(
-				`<line x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f" stroke="%s" stroke-width="2"/>`,
-				w*0.5, h*0.15, w*0.5, h*0.85, strokeColor,
-			))
-			e.sb.WriteString(fmt.Sprintf(
-				`<line x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f" stroke="%s" stroke-width="2"/>`,
-				w*0.15, h*0.5, w*0.85, h*0.5, strokeColor,
-			))
-		case 3: // fill — filled rectangle
-			fc := obj.CheckColor
-			if fc.A == 0 {
-				fc = color.RGBA{A: 255}
-			}
-			e.sb.WriteString(fmt.Sprintf(
-				`<rect x="%.2f" y="%.2f" width="%.2f" height="%.2f" fill="rgb(%d,%d,%d)"/>`,
-				w*0.1, h*0.1, w*0.8, h*0.8, fc.R, fc.G, fc.B,
-			))
-		case 10: // minus
-			e.sb.WriteString(fmt.Sprintf(
-				`<line x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f" stroke="%s" stroke-width="2"/>`,
-				w*0.2, h*0.5, w*0.8, h*0.5, strokeColor,
-			))
-		case 11: // slash
-			e.sb.WriteString(fmt.Sprintf(
-				`<line x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f" stroke="%s" stroke-width="2"/>`,
-				w*0.2, h*0.8, w*0.8, h*0.2, strokeColor,
-			))
-		case 12: // backslash
-			e.sb.WriteString(fmt.Sprintf(
-				`<line x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f" stroke="%s" stroke-width="2"/>`,
-				w*0.2, h*0.2, w*0.8, h*0.8, strokeColor,
-			))
-		}
-
-		e.sb.WriteString(`</svg></div>`)
 
 	case preview.ObjectTypePolyLine, preview.ObjectTypePolygon:
 		// Render as base64 PNG image matching C# LayerBack + LayerPicture pattern.

@@ -359,98 +359,66 @@ func TestExport_EmbedCSS_Disabled(t *testing.T) {
 
 // ── Checkbox: unchecked symbols ───────────────────────────────────────────────
 
+// Checkboxes are now rendered as PNG images (matching C# LayerBack + LayerPicture).
+// These tests verify that the PNG rendering produces valid base64 image output.
+
 func TestRenderObject_CheckBox_UncheckedMinus(t *testing.T) {
 	pp := buildPageWithObjs([]preview.PreparedObject{
-		{
-			Name: "CB1", Kind: preview.ObjectTypeCheckBox,
-			Left: 0, Top: 0, Width: 20, Height: 20,
-			Checked:         false,
-			UncheckedSymbol: 2, // minus
-		},
+		{Name: "CB1", Kind: preview.ObjectTypeCheckBox, Left: 0, Top: 0, Width: 20, Height: 20, Checked: false, UncheckedSymbol: 2},
 	})
 	out := exportHTML(t, pp)
-	// Minus draws a horizontal line at y=0.5*h.
-	if !strings.Contains(out, "<line") {
-		t.Errorf("Unchecked minus: expected <line element")
+	if !strings.Contains(out, "base64,") {
+		t.Errorf("Unchecked minus: expected base64 PNG image")
 	}
 }
 
 func TestRenderObject_CheckBox_UncheckedSlash(t *testing.T) {
 	pp := buildPageWithObjs([]preview.PreparedObject{
-		{
-			Name: "CB2", Kind: preview.ObjectTypeCheckBox,
-			Left: 0, Top: 0, Width: 20, Height: 20,
-			Checked:         false,
-			UncheckedSymbol: 3, // slash
-		},
+		{Name: "CB2", Kind: preview.ObjectTypeCheckBox, Left: 0, Top: 0, Width: 20, Height: 20, Checked: false, UncheckedSymbol: 3},
 	})
 	out := exportHTML(t, pp)
-	if !strings.Contains(out, "<line") {
-		t.Errorf("Unchecked slash: expected <line element")
+	if !strings.Contains(out, "base64,") {
+		t.Errorf("Unchecked slash: expected base64 PNG image")
 	}
 }
 
 func TestRenderObject_CheckBox_UncheckedBackslash(t *testing.T) {
 	pp := buildPageWithObjs([]preview.PreparedObject{
-		{
-			Name: "CB3", Kind: preview.ObjectTypeCheckBox,
-			Left: 0, Top: 0, Width: 20, Height: 20,
-			Checked:         false,
-			UncheckedSymbol: 4, // backslash
-		},
+		{Name: "CB3", Kind: preview.ObjectTypeCheckBox, Left: 0, Top: 0, Width: 20, Height: 20, Checked: false, UncheckedSymbol: 4},
 	})
 	out := exportHTML(t, pp)
-	if !strings.Contains(out, "<line") {
-		t.Errorf("Unchecked backslash: expected <line element")
+	if !strings.Contains(out, "base64,") {
+		t.Errorf("Unchecked backslash: expected base64 PNG image")
 	}
 }
 
 func TestRenderObject_CheckBox_CheckedPlus(t *testing.T) {
 	pp := buildPageWithObjs([]preview.PreparedObject{
-		{
-			Name: "CB4", Kind: preview.ObjectTypeCheckBox,
-			Left: 0, Top: 0, Width: 20, Height: 20,
-			Checked:       true,
-			CheckedSymbol: 2, // plus
-		},
+		{Name: "CB4", Kind: preview.ObjectTypeCheckBox, Left: 0, Top: 0, Width: 20, Height: 20, Checked: true, CheckedSymbol: 2},
 	})
 	out := exportHTML(t, pp)
-	// Plus draws two lines (vertical + horizontal).
-	lineCount := strings.Count(out, "<line")
-	if lineCount < 2 {
-		t.Errorf("Checked plus: expected at least 2 <line elements, got %d", lineCount)
+	if !strings.Contains(out, "base64,") {
+		t.Errorf("Checked plus: expected base64 PNG image")
 	}
 }
 
 func TestRenderObject_CheckBox_CheckedFill(t *testing.T) {
 	pp := buildPageWithObjs([]preview.PreparedObject{
-		{
-			Name: "CB5", Kind: preview.ObjectTypeCheckBox,
-			Left: 0, Top: 0, Width: 20, Height: 20,
-			Checked:       true,
-			CheckedSymbol: 3, // fill
-		},
+		{Name: "CB5", Kind: preview.ObjectTypeCheckBox, Left: 0, Top: 0, Width: 20, Height: 20, Checked: true, CheckedSymbol: 3},
 	})
 	out := exportHTML(t, pp)
-	if !strings.Contains(out, "<rect") {
-		t.Errorf("Checked fill: expected <rect element")
+	if !strings.Contains(out, "base64,") {
+		t.Errorf("Checked fill: expected base64 PNG image")
 	}
 }
 
 func TestRenderObject_CheckBox_CheckedCross(t *testing.T) {
 	pp := buildPageWithObjs([]preview.PreparedObject{
-		{
-			Name: "CB6", Kind: preview.ObjectTypeCheckBox,
-			Left: 0, Top: 0, Width: 20, Height: 20,
-			Checked:       true,
-			CheckedSymbol: 1, // cross
-		},
+		{Name: "CB6", Kind: preview.ObjectTypeCheckBox, Left: 0, Top: 0, Width: 20, Height: 20, Checked: true, CheckedSymbol: 1},
 	})
 	out := exportHTML(t, pp)
-	// Cross draws two crossing lines.
-	lineCount := strings.Count(out, "<line")
-	if lineCount < 2 {
-		t.Errorf("Checked cross: expected at least 2 <line elements, got %d", lineCount)
+	if !strings.Contains(out, "base64,") {
+		t.Errorf("Checked cross: expected base64 PNG image")
 	}
 }
 

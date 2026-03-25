@@ -2,6 +2,7 @@ package engine
 
 import (
 	"image/color"
+	"sort"
 	"strings"
 
 	"github.com/andrewloable/go-fastreport/band"
@@ -218,20 +219,29 @@ func calcBandLayout(bb *band.BandBase, baseHeight float32, evalFn func(string) s
 	// Step 2: propagate downward shifts for objects that sit below a
 	// growing or shrinking peer. Object j is "below" object i when j's top
 	// (after accumulated shifts) is at or below i's original bottom edge.
+	// C# sorts objects by Top before this loop so that cascading shifts
+	// propagate correctly from top to bottom (BandBase.cs CalcHeight).
 	shifts := make([]float32, n)
 	if hasGrowShrink {
+		// Build a sorted index array by Top position (ascending).
+		sortedIdx := make([]int, 0, n)
 		for i := 0; i < n; i++ {
-			obj := objs.Get(i)
-			d, hasDim := obj.(hasDims)
-			if !hasDim {
-				continue
+			if _, hasDim := objs.Get(i).(hasDims); hasDim {
+				sortedIdx = append(sortedIdx, i)
 			}
+		}
+		sort.Slice(sortedIdx, func(a, b int) bool {
+			return tops[sortedIdx[a]] < tops[sortedIdx[b]]
+		})
+
+		for _, i := range sortedIdx {
+			d := objs.Get(i).(hasDims)
 			delta := effectiveH[i] - d.Height()
 			if delta == 0 {
 				continue
 			}
 			parentBottom := tops[i] + d.Height()
-			for j := 0; j < n; j++ {
+			for _, j := range sortedIdx {
 				if j == i {
 					continue
 				}
@@ -878,16 +888,19 @@ func applyBandObjectHeights(bb *band.BandBase, pb *preview.PreparedBand, effecti
 			continue
 		}
 
+		// CellularTextObject: skip height adjustment for the container (its
+		// dimensions are computed from the table grid, not from FRX Height)
+		// and skip over all inserted cell PreparedObjects.
+		if _, ok := obj.(*object.CellularTextObject); ok {
+			poIdx++
+			for poIdx < len(pb.Objects) && strings.Contains(pb.Objects[poIdx].Name, "_r") {
+				poIdx++
+			}
+			continue
+		}
 		if effectiveH[i] != pb.Objects[poIdx].Height {
 			pb.Objects[poIdx].Height = effectiveH[i]
 		}
 		poIdx++
-		// CellularTextObject inserts extra cell PreparedObjects after the anchor.
-		// Skip over them so the FRX→PreparedObject index mapping stays aligned.
-		if _, ok := obj.(*object.CellularTextObject); ok {
-			for poIdx < len(pb.Objects) && strings.Contains(pb.Objects[poIdx].Name, "_r") {
-				poIdx++
-			}
-		}
 	}
 }

@@ -405,11 +405,54 @@ func (e *Exporter) renderObject(obj preview.PreparedObject, bandTop float32) {
 			draw.Draw(e.curPage, bounds, &image.Uniform{white}, image.Point{}, draw.Over)
 			boxColor := color.RGBA{A: 255}
 			e.drawRect(bounds, boxColor)
-			// Draw check-mark (X) when checked.
-			if obj.Text == "true" {
-				pad := 2
-				e.drawLine(x+pad, y+pad, x+w-pad, y+h-pad, boxColor)
-				e.drawLine(x+w-pad, y+pad, x+pad, y+h-pad, boxColor)
+
+			// Determine symbol to draw using obj.Checked/CheckedSymbol/UncheckedSymbol.
+			cc := obj.CheckColor
+			if cc.A == 0 {
+				cc = color.RGBA{A: 255}
+			}
+			symbol := -1 // none
+			if obj.Checked {
+				symbol = obj.CheckedSymbol // 0=check, 1=cross, 2=plus, 3=fill
+			} else {
+				switch obj.UncheckedSymbol {
+				case 1:
+					symbol = 1 // cross
+				case 2:
+					symbol = 10 // minus
+				case 3:
+					symbol = 11 // slash
+				case 4:
+					symbol = 12 // backslash
+				}
+			}
+
+			pad := int(float64(w) * 0.15)
+			if pad < 2 {
+				pad = 2
+			}
+			switch symbol {
+			case 0: // checkmark
+				// Draw check: down-right then up-right
+				mx := x + int(float64(w)*0.4)
+				my := y + int(float64(h)*0.75)
+				e.drawLine(x+int(float64(w)*0.15), y+int(float64(h)*0.5), mx, my, cc)
+				e.drawLine(mx, my, x+int(float64(w)*0.85), y+int(float64(h)*0.25), cc)
+			case 1: // cross (X)
+				e.drawLine(x+pad, y+pad, x+w-pad, y+h-pad, cc)
+				e.drawLine(x+w-pad, y+pad, x+pad, y+h-pad, cc)
+			case 2: // plus (+)
+				e.drawLine(x+w/2, y+pad, x+w/2, y+h-pad, cc)
+				e.drawLine(x+pad, y+h/2, x+w-pad, y+h/2, cc)
+			case 3: // fill (filled rectangle)
+				fillBounds := image.Rect(x+pad, y+pad, x+w-pad, y+h-pad)
+				draw.Draw(e.curPage, fillBounds, &image.Uniform{cc}, image.Point{}, draw.Over)
+			case 10: // minus (-)
+				e.drawLine(x+pad, y+h/2, x+w-pad, y+h/2, cc)
+			case 11: // slash (/)
+				e.drawLine(x+pad, y+h-pad, x+w-pad, y+pad, cc)
+			case 12: // backslash (\)
+				e.drawLine(x+pad, y+pad, x+w-pad, y+h-pad, cc)
 			}
 		}
 

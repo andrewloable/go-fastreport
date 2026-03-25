@@ -680,6 +680,9 @@ func (e *ReportEngine) populateCellularTextCells(v *object.CellularTextObject, t
 
 	// Default border for spacing cells: no visible lines (matches C# default TableCell).
 	spacerBorder := *style.NewBorder()
+	// Spacer cells in C# inherit the TABLE's default font (TextObjectBase default = 10pt).
+	// They also have WordWrap=true and Clip=true (C# TableCell defaults).
+	spacerFont := style.DefaultFont()
 
 	for ri := 0; ri < rowCount; ri++ {
 		cellTop := originY + float32(ri)*(cellH+vertSpacing)
@@ -699,7 +702,8 @@ func (e *ReportEngine) populateCellularTextCells(v *object.CellularTextObject, t
 				FillColor: fillColor,
 				HorzAlign: 1, // Center — each character is always centered in its cell
 				VertAlign: 1, // Center
-				WordWrap:  false,
+				WordWrap:  true, // C# TableCell defaults to WordWrap=true
+				Clip:      true, // C# TableCell defaults to Clip=true
 				Border:    border,
 			}
 			pb.Objects = append(pb.Objects, po)
@@ -708,14 +712,17 @@ func (e *ReportEngine) populateCellularTextCells(v *object.CellularTextObject, t
 			// C# inserts spacing columns at odd indices after setting cell properties.
 			if horzSpacing > 0 && ci < colCount-1 {
 				spacer := preview.PreparedObject{
-					Name:    fmt.Sprintf("%s_r%dhs%d", v.Name(), ri, ci),
-					Kind:    preview.ObjectTypeText,
-					Left:    cellLeft + cellW,
-					Top:     cellTop,
-					Width:   horzSpacing,
-					Height:  cellH,
-					BlobIdx: -1,
-					Border:  spacerBorder,
+					Name:     fmt.Sprintf("%s_r%dhs%d", v.Name(), ri, ci),
+					Kind:     preview.ObjectTypeText,
+					Left:     cellLeft + cellW,
+					Top:      cellTop,
+					Width:    horzSpacing,
+					Height:   cellH,
+					BlobIdx:  -1,
+					Border:   spacerBorder,
+					Font:     spacerFont,
+					WordWrap: true,
+					Clip:     true,
 				}
 				pb.Objects = append(pb.Objects, spacer)
 			}
@@ -727,28 +734,34 @@ func (e *ReportEngine) populateCellularTextCells(v *object.CellularTextObject, t
 			for ci := 0; ci < colCount; ci++ {
 				cellLeft := originX + float32(ci)*(cellW+horzSpacing)
 				spacer := preview.PreparedObject{
-					Name:    fmt.Sprintf("%s_vs%dc%d", v.Name(), ri, ci),
-					Kind:    preview.ObjectTypeText,
-					Left:    cellLeft,
-					Top:     spacerTop,
-					Width:   cellW,
-					Height:  vertSpacing,
-					BlobIdx: -1,
-					Border:  spacerBorder,
+					Name:     fmt.Sprintf("%s_vs%dc%d", v.Name(), ri, ci),
+					Kind:     preview.ObjectTypeText,
+					Left:     cellLeft,
+					Top:      spacerTop,
+					Width:    cellW,
+					Height:   vertSpacing,
+					BlobIdx:  -1,
+					Border:   spacerBorder,
+					Font:     spacerFont,
+					WordWrap: true,
+					Clip:     true,
 				}
 				pb.Objects = append(pb.Objects, spacer)
 
 				// Intersection spacer (bottom-right corner between cells).
 				if horzSpacing > 0 && ci < colCount-1 {
 					spacer := preview.PreparedObject{
-						Name:    fmt.Sprintf("%s_vs%dhs%d", v.Name(), ri, ci),
-						Kind:    preview.ObjectTypeText,
-						Left:    cellLeft + cellW,
-						Top:     spacerTop,
-						Width:   horzSpacing,
-						Height:  vertSpacing,
-						BlobIdx: -1,
-						Border:  spacerBorder,
+						Name:     fmt.Sprintf("%s_vs%dhs%d", v.Name(), ri, ci),
+						Kind:     preview.ObjectTypeText,
+						Left:     cellLeft + cellW,
+						Top:      spacerTop,
+						Width:    horzSpacing,
+						Height:   vertSpacing,
+						BlobIdx:  -1,
+						Border:   spacerBorder,
+						Font:     spacerFont,
+						WordWrap: true,
+						Clip:     true,
 					}
 					pb.Objects = append(pb.Objects, spacer)
 				}
@@ -1122,13 +1135,48 @@ func (e *ReportEngine) buildPreparedObject(obj report.Base) *preview.PreparedObj
 	case *object.CellularTextObject:
 		// CellularTextObject is rendered as a grid of individual character cells
 		// by populateCellularTextCells (called from populateBandObjects2).
-		// In C#, GetTable() creates a TableObject whose cells are the only rendered
-		// elements — no separate container/anchor is visible.
-		// We must still create the anchor PreparedObject to maintain the 1:1 mapping
-		// between FRX objects and pb.Objects (used by band layout height adjustment
-		// in calcBandLayout). Mark it NotExportable so HTML export skips it.
+		// In C#, GetTable() creates a TableObject that renders a container div
+		// (table background with no border, default font) plus individual cell divs.
+		// The container div must be present to maintain the 1:1 mapping between FRX
+		// objects and pb.Objects (used by band layout height adjustment in calcBandLayout).
+		// Container properties match C# TableObject defaults: no border, transparent fill,
+		// default font (TextObjectBase default = 10pt), empty text.
 		po.Kind = preview.ObjectTypeText
-		po.NotExportable = true
+		po.Text = ""
+		po.WordWrap = true
+		po.Clip = true
+		po.Border = *style.NewBorder() // no visible lines (BorderLinesNone)
+		// Compute container dimensions from actual table size (matching C# GetTable):
+		// table.Width = colCount*cellW + (colCount-1)*horzSpacing
+		// table.Height = rowCount*cellH + (rowCount-1)*vertSpacing
+		{
+			cw, ch := v.CellWidth(), v.CellHeight()
+			if cw == 0 || ch == 0 {
+				fontPx := v.Font().Size * 96.0 / 72.0
+				qcm := float32(9.45)
+				auto := float32(math.Round(float64(fontPx+10)/float64(qcm))) * qcm
+				if auto <= 0 {
+					auto = qcm
+				}
+				if cw == 0 {
+					cw = auto
+				}
+				if ch == 0 {
+					ch = auto
+				}
+			}
+			hs, vs := v.HorzSpacing(), v.VertSpacing()
+			cc := int((v.Width() + hs + 1) / (cw + hs))
+			if cc < 1 {
+				cc = 1
+			}
+			rc := int((v.Height() + vs + 1) / (ch + vs))
+			if rc < 1 {
+				rc = 1
+			}
+			po.Width = float32(cc)*cw + float32(max(0, cc-1))*hs
+			po.Height = float32(rc)*ch + float32(max(0, rc-1))*vs
+		}
 
 	case *object.ZipCodeObject:
 		// Evaluate DataColumn / Expression to update the Text value before
@@ -1153,9 +1201,8 @@ func (e *ReportEngine) buildPreparedObject(obj report.Base) *preview.PreparedObj
 
 	case *object.CheckBoxObject:
 		po.Kind = preview.ObjectTypeCheckBox
+		po.Border = v.Border()
 		// Evaluate expression or data column binding to determine checked state.
-		// If no expression/binding, fall back to the statically deserialized value.
-		// Mirrors C# Variant bool coercion: bool→bool, numeric non-zero→true, string→parse.
 		if expr := v.Expression(); expr != "" {
 			result, err := e.report.Calc(expr)
 			if err == nil {
@@ -1166,7 +1213,6 @@ func (e *ReportEngine) buildPreparedObject(obj report.Base) *preview.PreparedObj
 			if err == nil {
 				v.SetChecked(anyToBool(result))
 			} else {
-				// Fallback: evalText returns string representation.
 				s := e.evalText("[" + col + "]")
 				v.SetChecked(s == "true" || s == "True" || s == "1")
 			}

@@ -611,16 +611,12 @@ func TestRenderObject_CheckBox_Checked(t *testing.T) {
 			Kind:    preview.ObjectTypeCheckBox,
 			Left:    0, Top: 0, Width: 20, Height: 20,
 			Checked: true,
-			// CheckedSymbol 0 = checkmark (default)
 		},
 	})
 	out := exportHTML(t, pp)
-	// New rendering uses inline SVG with a polyline for the checkmark.
-	if !strings.Contains(out, `<svg`) {
-		t.Errorf("checkbox checked: expected SVG element, got %q", out)
-	}
-	if !strings.Contains(out, `<polyline`) {
-		t.Errorf("checkbox checked: expected polyline checkmark in SVG, got %q", out)
+	// Checkboxes render as PNG images (matching C# LayerBack + LayerPicture).
+	if !strings.Contains(out, "base64,") {
+		t.Errorf("checkbox checked: expected base64 PNG image, got %q", out)
 	}
 }
 
@@ -630,16 +626,12 @@ func TestRenderObject_CheckBox_Unchecked(t *testing.T) {
 			Kind:    preview.ObjectTypeCheckBox,
 			Left:    0, Top: 0, Width: 20, Height: 20,
 			Checked: false,
-			// UncheckedSymbol 0 = None (default) — just the box, no symbol
 		},
 	})
 	out := exportHTML(t, pp)
-	// New rendering uses inline SVG; unchecked with no symbol has an empty SVG.
-	if !strings.Contains(out, `<svg`) {
-		t.Errorf("checkbox unchecked: expected SVG element, got %q", out)
-	}
-	if strings.Contains(out, `<polyline`) || strings.Contains(out, `<line`) {
-		t.Errorf("checkbox unchecked (None symbol): should not have symbol element, got %q", out)
+	// Unchecked with no symbol still renders as a PNG (empty box).
+	if !strings.Contains(out, "base64,") {
+		t.Errorf("checkbox unchecked: expected base64 PNG image, got %q", out)
 	}
 }
 

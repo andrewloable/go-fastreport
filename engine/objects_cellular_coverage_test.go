@@ -565,8 +565,9 @@ func TestBuildPreparedObject_CellularTextObject_WithSolidFill(t *testing.T) {
 	if po == nil {
 		t.Fatal("buildPreparedObject(CellularTextObject with SolidFill) returned nil")
 	}
-	if !po.NotExportable {
-		t.Error("CellularTextObject anchor should be NotExportable")
+	// Container should have computed table dimensions and no visible border.
+	if po.Border.VisibleLines != style.BorderLinesNone {
+		t.Error("CellularTextObject container should have no visible border lines")
 	}
 }
 

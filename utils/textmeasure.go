@@ -31,6 +31,15 @@ func MeasureText(text string, f style.Font, maxWidth float32) (width, height flo
 	return maxW, lineH * float32(len(lines))
 }
 
+// GDIMeasureStringPadding returns the extra height that .NET's
+// Graphics.MeasureString adds with the default StringFormat (GenericDefault).
+// This is fontSize_pt / 6 pixels (≡ fontPx / 8). It should be added to the
+// measured height only when the C# simple MeasureString path is used (i.e.
+// IsAdvancedRendererNeeded is false).
+func GDIMeasureStringPadding(f style.Font) float32 {
+	return f.Size / 6.0
+}
+
 // MeasureLines returns the number of visual lines produced by word-wrapping
 // text at maxWidth pixels using the given font.
 // If maxWidth <= 0, each \n-delimited paragraph is one line.

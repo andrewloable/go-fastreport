@@ -175,89 +175,115 @@ func (e *Exporter) ExportPageBegin(pg *preview.PreparedPage) error {
 	return nil
 }
 
-// renderWatermarkText emits a CSS-positioned div with rotated text.
+// renderWatermarkText rasterizes the watermark text onto a transparent image
+// and emits it using the LayerBack + LayerPicture two-div pattern, matching
+// C# HTMLExportLayers.Watermark() which creates a PictureObject with DrawText
+// then calls LayerBack (fill/border container) and LayerPicture (image overlay).
 func (e *Exporter) renderWatermarkText(wm *preview.PreparedWatermark, pageW, pageH float32) {
 	if wm.Text == "" {
 		return
 	}
-	c := wm.TextColor
-	rgba := fmt.Sprintf("rgba(%d,%d,%d,%.2f)", c.R, c.G, c.B, float64(c.A)/255.0)
-	fontSize := wm.Font.Size
-	if fontSize <= 0 {
-		fontSize = 48
+
+	w := int(pageW)
+	h := int(pageH)
+	if w < 1 || h < 1 {
+		return
 	}
 
-	var rotDeg int
-	switch wm.TextRotation {
-	case preview.WatermarkTextRotationVertical:
-		rotDeg = 90
-	case preview.WatermarkTextRotationForwardDiagonal:
-		rotDeg = -45
-	case preview.WatermarkTextRotationBackwardDiagonal:
-		rotDeg = 45
-	default: // Horizontal
-		rotDeg = 0
+	img := utils.RenderWatermarkText(wm.Text, wm.Font, wm.TextColor, int(wm.TextRotation), w, h)
+	if img == nil {
+		return
 	}
-	transform := ""
-	if rotDeg != 0 {
-		transform = fmt.Sprintf("transform:rotate(%ddeg);", rotDeg)
+
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		return
 	}
-	e.sb.WriteString(fmt.Sprintf(
-		`<div style="position:absolute;top:0;left:0;width:%.2fpx;height:%.2fpx;`+
-			`display:flex;align-items:center;justify-content:center;pointer-events:none;`+
-			`z-index:0;%s">`,
-		pageW, pageH, transform,
-	))
-	e.sb.WriteString(fmt.Sprintf(
-		`<span style="color:%s;font-size:%.0fpx;white-space:nowrap;user-select:none;">%s</span>`,
-		rgba, fontSize*e.Scale, export.HTMLString(wm.Text),
-	))
-	e.sb.WriteString("</div>\n")
+	b64 := base64.StdEncoding.EncodeToString(buf.Bytes())
+
+	// Build the LayerBack CSS (same as C# GetStyle for a transparent PictureObject).
+	picCSS := fmt.Sprintf(
+		"text-align:center;position:absolute;color:rgb(255, 255, 255);background-color:transparent;border:none;width:%spx;height:%spx;",
+		pxVal(pageW), pxVal(pageH))
+	// Build the LayerPicture CSS (base64 background image).
+	imgCSS := fmt.Sprintf(
+		"background: url('data:image/Png;base64,%s') no-repeat !important;-webkit-print-color-adjust:exact;",
+		b64)
+
+	// Emit two divs: LayerBack (fill container) + LayerPicture (image overlay).
+	if e.InlineStyles {
+		e.sb.WriteString(fmt.Sprintf(
+			"<div style=\"%sleft:0px;top:0px;width:%spx;height:%spx;border:none;\">&nbsp;</div>\n",
+			picCSS, pxVal(pageW), pxVal(pageH)))
+		e.sb.WriteString(fmt.Sprintf(
+			"<div style=\"%s%sleft:0px;top:0px;width:%spx;height:%spx;\">&nbsp;</div>\n",
+			picCSS, imgCSS, pxVal(pageW), pxVal(pageH)))
+	} else {
+		picClass := e.css.Register(picCSS)
+		imgClass := e.css.Register(imgCSS)
+		e.sb.WriteString(fmt.Sprintf(
+			"<div class=\"%s\" style=\"left:0px;top:0px;width:%spx;height:%spx;border:none;\">&nbsp;</div>\n",
+			picClass, pxVal(pageW), pxVal(pageH)))
+		e.sb.WriteString(fmt.Sprintf(
+			"<div class=\"%s %s\" style=\"left:0px;top:0px;width:%spx;height:%spx;\">&nbsp;</div>\n",
+			picClass, imgClass, pxVal(pageW), pxVal(pageH)))
+	}
 }
 
 // renderWatermarkImage emits a positioned div with a base64-encoded background image.
+// C# always calls Watermark(page, false) which creates a PictureObject with a
+// transparent bitmap even if no image data exists. To match, we render a
+// transparent PNG when ImageBlobIdx < 0 or blob data is empty.
 func (e *Exporter) renderWatermarkImage(wm *preview.PreparedWatermark, pageW, pageH float32) {
-	if wm.ImageBlobIdx < 0 || e.pp == nil {
-		return
+	var b64 string
+	var hasImage bool
+	if wm.ImageBlobIdx >= 0 && e.pp != nil {
+		imgData := e.pp.BlobStore.Get(wm.ImageBlobIdx)
+		if len(imgData) > 0 {
+			b64 = base64.StdEncoding.EncodeToString(imgData)
+			hasImage = true
+		}
 	}
-	imgData := e.pp.BlobStore.Get(wm.ImageBlobIdx)
-	if len(imgData) == 0 {
-		return
+	if !hasImage {
+		// C# renders a transparent bitmap even with no image data.
+		w, h := int(pageW), int(pageH)
+		if w < 1 || h < 1 {
+			return
+		}
+		img := image.NewRGBA(image.Rect(0, 0, w, h))
+		var buf bytes.Buffer
+		if err := png.Encode(&buf, img); err != nil {
+			return
+		}
+		b64 = base64.StdEncoding.EncodeToString(buf.Bytes())
 	}
-	opacity := 1.0 - float64(wm.ImageTransparency)
-	if opacity < 0 {
-		opacity = 0
-	}
-	b64 := base64.StdEncoding.EncodeToString(imgData)
+	// Build LayerBack CSS (same as watermark text — transparent PictureObject).
+	picCSS := fmt.Sprintf(
+		"text-align:center;position:absolute;color:rgb(255, 255, 255);background-color:transparent;border:none;width:%spx;height:%spx;",
+		pxVal(pageW), pxVal(pageH))
+	// Build LayerPicture CSS with background image.
+	imgCSS := fmt.Sprintf(
+		"background: url('data:image/Png;base64,%s') no-repeat !important;-webkit-print-color-adjust:exact;",
+		b64)
 
-	var bgSize string
-	switch wm.ImageSize {
-	case preview.WatermarkImageSizeStretch:
-		bgSize = "100% 100%"
-	case preview.WatermarkImageSizeZoom:
-		bgSize = "contain"
-	case preview.WatermarkImageSizeTile:
-		bgSize = "auto"
-	default:
-		bgSize = "auto"
+	// Emit LayerBack + LayerPicture divs.
+	if e.InlineStyles {
+		e.sb.WriteString(fmt.Sprintf(
+			"<div style=\"%sleft:0px;top:0px;width:%spx;height:%spx;border:none;\">&nbsp;</div>\n",
+			picCSS, pxVal(pageW), pxVal(pageH)))
+		e.sb.WriteString(fmt.Sprintf(
+			"<div style=\"%s%sleft:0px;top:0px;width:%spx;height:%spx;\">&nbsp;</div>\n",
+			picCSS, imgCSS, pxVal(pageW), pxVal(pageH)))
+	} else {
+		picClass := e.css.Register(picCSS)
+		imgClass := e.css.Register(imgCSS)
+		e.sb.WriteString(fmt.Sprintf(
+			"<div class=\"%s\" style=\"left:0px;top:0px;width:%spx;height:%spx;border:none;\">&nbsp;</div>\n",
+			picClass, pxVal(pageW), pxVal(pageH)))
+		e.sb.WriteString(fmt.Sprintf(
+			"<div class=\"%s %s\" style=\"left:0px;top:0px;width:%spx;height:%spx;\">&nbsp;</div>\n",
+			picClass, imgClass, pxVal(pageW), pxVal(pageH)))
 	}
-
-	repeat := "no-repeat"
-	if wm.ImageSize == preview.WatermarkImageSizeTile {
-		repeat = "repeat"
-	}
-	bgPos := "center center"
-	if wm.ImageSize == preview.WatermarkImageSizeNormal {
-		bgPos = "top left"
-	}
-
-	e.sb.WriteString(fmt.Sprintf(
-		`<div style="position:absolute;top:0;left:0;width:%.2fpx;height:%.2fpx;`+
-			`opacity:%.2f;pointer-events:none;z-index:0;`+
-			`background-image:url('data:image/png;base64,%s');`+
-			`background-size:%s;background-repeat:%s;background-position:%s;"></div>`+"\n",
-		pageW, pageH, opacity, b64, bgSize, repeat, bgPos,
-	))
 }
 
 func (e *Exporter) ExportBand(b *preview.PreparedBand) error {

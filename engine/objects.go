@@ -1428,7 +1428,12 @@ func (e *ReportEngine) buildPreparedObject(obj report.Base) *preview.PreparedObj
 					}
 				}
 			}
-			po.BlobIdx = e.preparedPages.BlobStore.Add(v.Name(), data)
+			// Use content hash as dedup key, matching C# PictureObject.Serialize
+			// which calls BlobStore.AddOrUpdate(bytes, Murmur3.ComputeHash(bytes)).
+			// Using the object name would incorrectly dedup different images from
+			// data-bound PictureObjects (e.g. employee photos).
+			imgHash := utils.ComputeHashBytes(data)
+			po.BlobIdx = e.preparedPages.BlobStore.Add(imgHash, data)
 		}
 
 	case *object.CellularTextObject:
@@ -1494,6 +1499,7 @@ func (e *ReportEngine) buildPreparedObject(obj report.Base) *preview.PreparedObj
 		brd := v.Border()
 		borderColor := brd.Color()
 		borderWidth := brd.Lines[0].Width
+		drawBorder := brd.VisibleLines != style.BorderLinesNone
 		zipW, zipH := object.ZipCodeDimensions(v, borderWidth)
 		po.Width = zipW
 		po.Height = zipH
@@ -1501,7 +1507,7 @@ func (e *ReportEngine) buildPreparedObject(obj report.Base) *preview.PreparedObj
 			po.FillColor = f.Color
 		}
 		po.BlobIdx = e.renderGaugeBlob(v.Name(),
-			object.RenderZipCode(v, borderColor, borderWidth, po.FillColor,
+			object.RenderZipCode(v, borderColor, borderWidth, drawBorder, po.FillColor,
 				int(zipW), int(zipH)))
 
 	case *object.CheckBoxObject:

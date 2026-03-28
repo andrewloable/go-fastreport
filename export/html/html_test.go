@@ -325,11 +325,12 @@ func TestExporter_WatermarkText_Behind(t *testing.T) {
 		t.Fatalf("Export: %v", err)
 	}
 	out := buf.String()
-	if !strings.Contains(out, "CONFIDENTIAL") {
-		t.Error("watermark text 'CONFIDENTIAL' should appear in HTML output")
+	// Watermark text is rasterized to a PNG image (matching C# behaviour).
+	if strings.Contains(out, ">CONFIDENTIAL<") {
+		t.Error("watermark text should be rasterized, not visible as HTML")
 	}
-	if !strings.Contains(out, "rotate(") {
-		t.Error("watermark should include CSS rotation transform")
+	if !strings.Contains(out, "data:image/Png;base64,") {
+		t.Error("watermark: expected rasterized PNG image in output")
 	}
 }
 
@@ -341,8 +342,12 @@ func TestExporter_WatermarkText_OnTop(t *testing.T) {
 		t.Fatalf("Export: %v", err)
 	}
 	out := buf.String()
-	if !strings.Contains(out, "DRAFT") {
-		t.Error("on-top watermark text 'DRAFT' should appear in HTML output")
+	// Watermark text is rasterized to a PNG image (matching C# behaviour).
+	if strings.Contains(out, ">DRAFT<") {
+		t.Error("on-top watermark text should be rasterized, not visible as HTML")
+	}
+	if !strings.Contains(out, "data:image/Png;base64,") {
+		t.Error("on-top watermark: expected rasterized PNG image in output")
 	}
 }
 
@@ -363,11 +368,11 @@ func TestExporter_WatermarkText_Horizontal(t *testing.T) {
 		t.Fatalf("Export: %v", err)
 	}
 	out := buf.String()
-	if !strings.Contains(out, "HORIZONTAL") {
-		t.Error("watermark text should appear")
+	// Watermark text is rasterized to a PNG image (matching C# behaviour).
+	if strings.Contains(out, ">HORIZONTAL<") {
+		t.Error("watermark text should be rasterized, not visible as HTML")
 	}
-	// Horizontal has no CSS rotation transform.
-	if strings.Contains(out, "rotate(") {
-		t.Error("horizontal watermark should not have rotate transform")
+	if !strings.Contains(out, "data:image/Png;base64,") {
+		t.Error("horizontal watermark: expected rasterized PNG image in output")
 	}
 }

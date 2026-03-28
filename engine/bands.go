@@ -207,12 +207,22 @@ func calcBandLayout(bb *band.BandBase, baseHeight float32, evalFn func(string) s
 		textToMeasure = strings.TrimRight(textToMeasure, "\n")
 
 		var textH float32
+		// C# TextObject.CalcSize uses two paths (TextObject.cs line 803-847):
+		//   - IsAdvancedRendererNeeded (HorzAlign==Justify || Wysiwyg || LineHeight!=0 || HasHtmlTags):
+		//     uses AdvancedTextRenderer.CalcHeight() which returns pure line-height sum
+		//   - else: uses g.MeasureString which adds GDI+ cell padding (fontSize_pt / 6 px)
+		advancedNeeded := txt.HorzAlign() == object.HorzAlignJustify ||
+			txt.Wysiwyg() || txt.LineHeight() != 0 ||
+			txt.TextRenderType() == object.TextRenderTypeHtmlTags
 		switch txt.TextRenderType() {
 		case object.TextRenderTypeHtmlTags, object.TextRenderTypeHtmlParagraph:
 			renderer := utils.NewHtmlTextRenderer(textToMeasure, txt.Font(), defaultTextColor)
 			textH = renderer.MeasureHeight(objWidth)
 		default:
 			_, textH = utils.MeasureText(textToMeasure, txt.Font(), objWidth)
+			if !advancedNeeded {
+				textH += utils.GDIMeasureStringPadding(txt.Font())
+			}
 		}
 		// Add top+bottom padding back into the measured height.
 		// C# CalcSize adds Padding.Vertical + 1 (a 1px tolerance).

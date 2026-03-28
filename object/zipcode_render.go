@@ -39,10 +39,11 @@ var zipGridRows = [11]int{
 // RenderZipCode renders a ZipCodeObject as a PNG-ready image.Image.
 // The image includes fill, border, markers, grid, and digit strokes.
 // Parameters borderColor/borderWidth come from the object's Border; fillColor
-// from the object's Fill.  w×h are the image dimensions in pixels.
+// from the object's Fill.  drawBorder controls whether the rectangle outline is
+// drawn (true only when Border.Lines != None).  w×h are the image dimensions.
 //
 // This mirrors C# ZipCodeObject.Draw() (ZipCodeObject.cs line 266-292).
-func RenderZipCode(z *ZipCodeObject, borderColor color.RGBA, borderWidth float32, fillColor color.RGBA, w, h int) image.Image {
+func RenderZipCode(z *ZipCodeObject, borderColor color.RGBA, borderWidth float32, drawBorder bool, fillColor color.RGBA, w, h int) image.Image {
 	if w < 1 || h < 1 {
 		return nil
 	}
@@ -54,9 +55,9 @@ func RenderZipCode(z *ZipCodeObject, borderColor color.RGBA, borderWidth float32
 		zipFillRect(img, 0, 0, w, h, fillColor)
 	}
 
-	// 2. Draw simple border (C# FlagSimpleBorder = true → Border.Draw with inset pen).
-	//    PenAlignment.Inset means the border is drawn inside the rectangle.
-	if borderWidth > 0 && borderColor.A > 0 {
+	// 2. Draw simple border only when Border.Lines != None (C# base.Draw handles
+	//    the outline; it checks Border.Lines before drawing).
+	if drawBorder && borderWidth > 0 && borderColor.A > 0 {
 		bw := int(math.Round(float64(borderWidth)))
 		bw = max(bw, 1)
 		zipDrawRectOutline(img, 0, 0, w, h, bw, borderColor)

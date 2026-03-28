@@ -3,6 +3,7 @@ package table
 import (
 	"github.com/andrewloable/go-fastreport/object"
 	"github.com/andrewloable/go-fastreport/report"
+	"github.com/andrewloable/go-fastreport/serial"
 	"github.com/andrewloable/go-fastreport/style"
 )
 
@@ -120,8 +121,31 @@ func (c *TableCell) AddObject(obj report.Serializable) {
 	c.objects = append(c.objects, obj)
 }
 
+// ReplaceObject replaces the embedded object at index i.
+func (c *TableCell) ReplaceObject(i int, obj report.Serializable) {
+	if i >= 0 && i < len(c.objects) {
+		c.objects[i] = obj
+	}
+}
+
 // ObjectCount returns the number of embedded objects.
 func (c *TableCell) ObjectCount() int { return len(c.objects) }
+
+// DeserializeChild handles child XML elements inside a TableCell during FRX
+// deserialization. Embedded report objects (e.g. PictureObject) are created
+// via the serial registry and added to the cell's objects collection.
+// Mirrors C# TableCell which inherits IParent.AddChild (ReportComponentBase.cs).
+func (c *TableCell) DeserializeChild(childType string, r report.Reader) bool {
+	obj, err := serial.DefaultRegistry.Create(childType)
+	if err != nil || obj == nil {
+		return false
+	}
+	_ = obj.Deserialize(r)
+	if s, ok := obj.(report.Serializable); ok {
+		c.AddObject(s)
+	}
+	return true
+}
 
 // CalcWidth returns the current width of the cell.
 // Mirrors C# TableCell.CalcWidth (TableCell.cs).

@@ -8,6 +8,7 @@ import (
 	"image/color"
 	"image/png"
 	"math"
+	"regexp"
 	"strings"
 
 	"github.com/andrewloable/go-fastreport/band"
@@ -17,6 +18,7 @@ import (
 	"github.com/andrewloable/go-fastreport/format"
 	"github.com/andrewloable/go-fastreport/gauge"
 	"github.com/andrewloable/go-fastreport/maprender"
+	"github.com/andrewloable/go-fastreport/matrix"
 	"github.com/andrewloable/go-fastreport/object"
 	"github.com/andrewloable/go-fastreport/preview"
 	"github.com/andrewloable/go-fastreport/report"
@@ -26,6 +28,10 @@ import (
 	"github.com/andrewloable/go-fastreport/utils"
 )
 
+
+// countRE matches table aggregate expressions like [Count(Cell2)], [Sum(Cell5)].
+// Used in autoManualBuild to substitute data row counts in trailer columns.
+var countRE = regexp.MustCompile(`\[Count\([^)]+\)\]`)
 
 // populateBandObjects converts the child report objects of a BandBase into
 // preview.PreparedObject snapshots and appends them to pb.
@@ -72,15 +78,73 @@ func (e *ReportEngine) populateBandObjects2(parentBand *band.BandBase, objs *rep
 						base = built
 					}
 				}
-				// Apply CellDuplicates deduplication before rendering.
-				// Mirrors C# TableResult.GeneratePages() calling ProcessDuplicates()
-				// (FastReport.Base/Table/TableResult.cs lines 334, 359).
+				// Apply AutoSize, auto-spans, and CellDuplicates before rendering.
+				// Mirrors C# TableResult.GeneratePages() calling CalcWidth/CalcHeight,
+				// CalcSpans, and ProcessDuplicates (TableBase.cs, TableResult.cs).
+				base.CalcWidth()
+				base.CalcHeight()
 				base.ProcessDuplicates()
 				e.populateTableObjects(base, tbl.Left(), tbl.Top(), pb)
+				// For ManualBuild/wrapped tables, shrink the band height to the
+				// table's top offset. The table cells extend beyond the band.
+				// Mirrors C# where GeneratePages adjusts the band height.
+				if tbl.IsManualBuild() && tbl.Top() > 0 {
+					pb.Height = tbl.Top()
+				}
 			}
 			// Render AdvMatrixObject physical cells as individual PreparedObjects.
 			if adv, ok := obj.(*object.AdvMatrixObject); ok {
 				e.populateAdvMatrixCells(adv, pb)
+			}
+			// Render MatrixObject (classic cross-tab matrix).
+			// C# source: MatrixObject.GetData → MatrixHelper.StartPrint/AddDataRow/FinishPrint.
+			if mx, ok := obj.(*matrix.MatrixObject); ok {
+				// Resolve data source if not already set.
+				if mx.DataSource == nil && mx.DataSourceName != "" && e.report != nil {
+					dict := e.report.Dictionary()
+					if dict != nil {
+						ds := dict.FindDataSourceByAlias(mx.DataSourceName)
+						if ds == nil {
+							ds = dict.FindDataSourceByName(mx.DataSourceName)
+						}
+						if ds == nil {
+							// Try case-insensitive search through all data sources.
+							for _, existing := range dict.DataSources() {
+								if strings.EqualFold(existing.Name(), mx.DataSourceName) ||
+									strings.EqualFold(existing.Alias(), mx.DataSourceName) {
+									ds = existing
+									break
+								}
+							}
+						}
+						mx.DataSource = ds
+					}
+				}
+				// Extract cell format from template cells (must be after FRX load).
+				mx.ExtractCellFormat()
+				// Collect data from the bound data source.
+				calc := func(expr string) any {
+					val, err := e.report.Calc(expr)
+					if err != nil {
+						return nil
+					}
+					return val
+				}
+				e.report.SetCalcContext(mx.DataSource)
+				mx.GetDataWithCalc(calc)
+				// Bridge runtime store to multi-level trees for BuildTemplateMultiLevel.
+				mx.SyncRuntimeToMultiLevel()
+				// Build the result table from collected data.
+				mx.BuildTemplateMultiLevel()
+				// Apply AutoSize and render cells.
+				mx.TableBase.CalcWidth()
+				mx.TableBase.CalcHeight()
+				e.populateTableObjects(&mx.TableBase, mx.Left(), mx.Top(), pb)
+				// Shrink band height to the matrix's Top offset (space above matrix).
+				// The matrix cells extend beyond the band. Mirrors C# GeneratePages.
+				if mx.Top() > 0 {
+					pb.Height = mx.Top()
+				}
 			}
 			// Render CrossViewReportObject cells as a grid of PreparedObjects.
 			// Mirrors C# CrossViewObject.GetData + engine rendering in CrossViewObject.cs.
@@ -204,77 +268,218 @@ func (e *ReportEngine) populateContainerChildren(c *object.ContainerObject, offs
 // populateTableObjects flattens a TableBase's cells into PreparedObjects.
 // Each cell is rendered at its computed absolute position (originX + colOffset,
 // originY + rowOffset). ColSpan and RowSpan determine cell size.
+// When Layout is Wrapped, columns are split into chunks that fit the page width,
+// with FixedColumns repeated for each chunk (mirroring C# TableBase.GeneratePages).
 func (e *ReportEngine) populateTableObjects(tbl *table.TableBase, originX, originY float32, pb *preview.PreparedBand) {
-	// Pre-compute cumulative column X offsets.
 	cols := tbl.Columns()
-	colX := make([]float32, len(cols)+1)
+	nCols := len(cols)
+	if nCols == 0 {
+		return
+	}
+
+	// Pre-compute cumulative column X offsets.
+	colX := make([]float32, nCols+1)
 	for i, col := range cols {
 		colX[i+1] = colX[i] + col.Width()
 	}
 
-	// Iterate rows, accumulating Y offset.
-	rowY := float32(0)
-	for ri, row := range tbl.Rows() {
-		rowH := row.Height()
-		for ci, cell := range row.Cells() {
-			if cell == nil {
-				continue
-			}
-			// Skip cells that are covered by another cell's span.
-			// Mirrors C# LayerTable: if (!table.IsInsideSpan(table[j, i])).
-			if tbl.IsInsideSpan(ci, ri) {
-				continue
-			}
-			// Compute cell width from ColSpan.
-			colSpan := cell.ColSpan()
-			if colSpan < 1 {
-				colSpan = 1
-			}
-			endCol := ci + colSpan
-			if endCol > len(cols) {
-				endCol = len(cols)
-			}
-			cellW := colX[endCol] - colX[ci]
+	// Compute total table height (sum of all row heights).
+	tableH := float32(0)
+	for _, row := range tbl.Rows() {
+		tableH += row.Height()
+	}
 
-			// Compute cell height from RowSpan.
-			rowSpan := cell.RowSpan()
-			if rowSpan < 1 {
-				rowSpan = 1
-			}
-			cellH := float32(0)
-			for si := ri; si < ri+rowSpan && si < len(tbl.Rows()); si++ {
-				cellH += tbl.Rows()[si].Height()
-			}
+	// Determine column ranges to render. For Wrapped layout, split into sections.
+	type colRange struct {
+		startCol int // first column index (inclusive)
+		endCol   int // last column index (exclusive)
+		xOffset  float32
+		yOffset  float32
+	}
+	var sections []colRange
 
-			absLeft := originX + colX[ci]
-			absTop := originY + rowY
-
-			// Build the cell PreparedObject (cell embeds TextObject).
-			cellText := e.evalTextWithFormat(cell.Text(), cell.Format())
-			cellFill := color.RGBA{R: 255, G: 255, B: 255, A: 0}
-			if f, ok := cell.Fill().(*style.SolidFill); ok {
-				cellFill = f.Color
-			}
-			po := preview.PreparedObject{
-				Name:      cell.Name(),
-				Kind:      preview.ObjectTypeText,
-				Left:      absLeft,
-				Top:       absTop,
-				Width:     cellW,
-				Height:    cellH,
-				Text:      cellText,
-				BlobIdx:   -1,
-				Font:      cell.Font(),
-				TextColor: color.RGBA{A: 255},
-				FillColor: cellFill,
-				HorzAlign: int(cell.HorzAlign()),
-				VertAlign: int(cell.VertAlign()),
-				WordWrap:  cell.WordWrap(),
-				Border:    cell.Border(),
-			}
-			pb.Objects = append(pb.Objects, po)
+	if tbl.Layout() == table.TableLayoutWrapped && tbl.FixedColumns() > 0 {
+		fixedCols := tbl.FixedColumns()
+		fixedWidth := colX[fixedCols]
+		// Available width for data columns per section.
+		pageWidth := pb.Width
+		if pageWidth <= 0 {
+			pageWidth = 718.2 // A4 default
 		}
-		rowY += rowH
+		availWidth := pageWidth - originX - fixedWidth
+
+		// First pass: compute section boundaries (data column chunks).
+		type sectionInfo struct {
+			dataStart, dataEnd int
+			chunkW             float32
+			wrapY              float32
+		}
+		var sectionInfos []sectionInfo
+		wrapY := float32(0)
+		dataCol := fixedCols
+		for dataCol < nCols {
+			chunkEnd := dataCol
+			chunkW := float32(0)
+			for chunkEnd < nCols {
+				cw := cols[chunkEnd].Width()
+				if chunkW+cw > availWidth && chunkEnd > dataCol {
+					break
+				}
+				chunkW += cw
+				chunkEnd++
+			}
+			if chunkEnd == dataCol {
+				chunkEnd = dataCol + 1
+			}
+			sectionInfos = append(sectionInfos, sectionInfo{dataCol, chunkEnd, chunkW, wrapY})
+			dataCol = chunkEnd
+			wrapY += tableH + tbl.WrappedGap()
+		}
+
+		// Total height of all wrapped sections.
+		nSec := len(sectionInfos)
+		totalWrappedH := float32(nSec)*tableH + float32(nSec-1)*tbl.WrappedGap()
+
+		// Second pass: emit section backgrounds, border containers, and column ranges.
+		for _, sec := range sectionInfos {
+			// Section background: cascading height from section top to the page footer.
+			// Mirrors C# where each section PreparedBand spans to the page footer.
+			// bandContentArea = pageHeight - bandAbsoluteTop - footerHeight.
+			bandContentArea := totalWrappedH + originY
+			if e.pageHeight > 0 {
+				footerH := e.PageFooterHeight()
+				bandContentArea = e.pageHeight - pb.Top - footerH
+			}
+			remainingH := bandContentArea - (originY + sec.wrapY)
+			// Use ObjectTypePicture for section bg — its LayerBack CSS matches
+			// C#'s band background: text-align:center, color:white, border:none.
+			sectionBg := preview.PreparedObject{
+				Kind:    preview.ObjectTypePicture,
+				Left:    0,
+				Top:     originY + sec.wrapY,
+				Width:   pageWidth,
+				Height:  remainingH,
+				BlobIdx: -1,
+			}
+			pb.Objects = append(pb.Objects, sectionBg)
+
+			// Table border container per section.
+			sectionW := fixedWidth + sec.chunkW
+			sectionBorder := preview.PreparedObject{
+				Kind:     preview.ObjectTypeText,
+				Left:     originX,
+				Top:      originY + sec.wrapY,
+				Width:    sectionW,
+				Height:   tableH,
+				BlobIdx:  -1,
+				Font:     style.DefaultFont(), // C#: TextObjectBase default = Arial 10pt
+				WordWrap: true,
+				Clip:     true,
+				Border:   tbl.Border(),
+			}
+			pb.Objects = append(pb.Objects, sectionBorder)
+
+			// Emit fixed columns + data columns for this section.
+			sections = append(sections, colRange{0, fixedCols, 0, sec.wrapY})
+			sections = append(sections, colRange{sec.dataStart, sec.dataEnd, fixedWidth - colX[sec.dataStart], sec.wrapY})
+		}
+	} else {
+		// Non-wrapped: single section with all columns.
+		sections = append(sections, colRange{0, nCols, 0, 0})
+	}
+
+	// Render cells for each section.
+	for _, sec := range sections {
+		rowY := float32(0)
+		for ri, row := range tbl.Rows() {
+			rowH := row.Height()
+			for ci := sec.startCol; ci < sec.endCol; ci++ {
+				if ci >= len(row.Cells()) {
+					continue
+				}
+				cell := row.Cells()[ci]
+				if cell == nil {
+					continue
+				}
+				if tbl.IsInsideSpan(ci, ri) {
+					continue
+				}
+				colSpan := cell.ColSpan()
+				if colSpan < 1 {
+					colSpan = 1
+				}
+				endCol := ci + colSpan
+				if endCol > sec.endCol {
+					endCol = sec.endCol
+				}
+				if endCol > nCols {
+					endCol = nCols
+				}
+				cellW := colX[endCol] - colX[ci]
+
+				rowSpan := cell.RowSpan()
+				if rowSpan < 1 {
+					rowSpan = 1
+				}
+				cellH := float32(0)
+				for si := ri; si < ri+rowSpan && si < len(tbl.Rows()); si++ {
+					cellH += tbl.Rows()[si].Height()
+				}
+
+				absLeft := originX + sec.xOffset + colX[ci]
+				absTop := originY + sec.yOffset + rowY
+
+				cellText := e.evalTextWithFormat(cell.Text(), cell.Format())
+				cellFill := color.RGBA{R: 255, G: 255, B: 255, A: 0}
+				if f, ok := cell.Fill().(*style.SolidFill); ok {
+					cellFill = f.Color
+				}
+				po := preview.PreparedObject{
+					Name:      cell.Name(),
+					Kind:      preview.ObjectTypeText,
+					Left:      absLeft,
+					Top:       absTop,
+					Width:     cellW,
+					Height:    cellH,
+					Text:      cellText,
+					BlobIdx:   -1,
+					Font:      cell.Font(),
+					TextColor: color.RGBA{A: 255},
+					FillColor: cellFill,
+					HorzAlign: int(cell.HorzAlign()),
+					VertAlign: int(cell.VertAlign()),
+					WordWrap:  cell.WordWrap(),
+					Clip:      true, // C# TableCell defaults to Clip=true
+					Border:    cell.Border(),
+				}
+				pb.Objects = append(pb.Objects, po)
+
+				// Render embedded PictureObjects inside the cell.
+				// C# table cells can contain child PictureObjects (e.g. Photo column
+				// with BindableControl="Picture"). These are rendered as separate
+				// LayerBack+LayerPicture div pairs.
+				for _, childObj := range cell.Objects() {
+					if pic, ok := childObj.(*object.PictureObject); ok {
+						picPO := preview.PreparedObject{
+							Name:    pic.Name(),
+							Kind:    preview.ObjectTypePicture,
+							Left:    absLeft + pic.Left(),
+							Top:     absTop + pic.Top(),
+							Width:   pic.Width(),
+							Height:  pic.Height(),
+							BlobIdx: -1,
+						}
+						if data := pic.ImageData(); len(data) > 0 {
+							if e.preparedPages != nil {
+								picPO.BlobIdx = e.preparedPages.BlobStore.Add("", data)
+							}
+						}
+						pb.Objects = append(pb.Objects, picPO)
+					}
+				}
+			}
+			rowY += rowH
+		}
 	}
 }
 
@@ -351,20 +556,67 @@ func (e *ReportEngine) autoManualBuild(tbl *table.TableObject) *table.TableBase 
 	}
 
 	// Print one data column per data source row.
+	dataRowCount := 0
 	for !ds.EOF() {
 		e.report.SetCalcContext(ds)
 		eval := func(text string) string { return e.evalText(text) }
 		h.CellTextEval = eval
+		// Evaluate PictureObject DataColumn bindings for embedded images.
+		// For each PictureObject in the cell, create a NEW PictureObject with
+		// the captured image data (since the template's PictureObject is shared).
+		h.CellObjectEval = func(cell *table.TableCell) {
+			objs := cell.Objects()
+			for i, childObj := range objs {
+				if pic, ok := childObj.(*object.PictureObject); ok {
+					col := pic.DataColumn()
+					if col == "" {
+						continue
+					}
+					val, err := e.report.Calc("[" + col + "]")
+					if err != nil {
+						continue
+					}
+					s, ok := val.(string)
+					if !ok || len(s) == 0 {
+						continue
+					}
+					// Try standard base64 decoding first, then raw (no padding).
+					decoded, decErr := base64.StdEncoding.DecodeString(s)
+					if decErr != nil {
+						decoded, decErr = base64.RawStdEncoding.DecodeString(s)
+					}
+					if decErr != nil || len(decoded) == 0 {
+						continue
+					}
+					newPic := object.NewPictureObject()
+					newPic.SetName(pic.Name())
+					newPic.SetLeft(pic.Left())
+					newPic.SetTop(pic.Top())
+					newPic.SetWidth(pic.Width())
+					newPic.SetHeight(pic.Height())
+					newPic.SetImageData(decoded)
+					cell.ReplaceObject(i, newPic)
+				}
+			}
+		}
 		h.PrintColumn(dataColIdx)
 		h.PrintRows()
 		h.CellTextEval = nil
+		h.CellObjectEval = nil
 		_ = ds.Next()
+		dataRowCount++
 	}
 
 	// Print trailer columns (dataColIdx+1 .. nCols-1).
+	// Substitute Count(CellName) aggregate with the data row count.
+	countStr := fmt.Sprintf("%d", dataRowCount)
 	for i := dataColIdx + 1; i < nCols; i++ {
+		h.CellTextEval = func(text string) string {
+			return countRE.ReplaceAllString(text, countStr)
+		}
 		h.PrintColumn(i)
 		h.PrintRows()
+		h.CellTextEval = nil
 	}
 
 	return h.Result()
@@ -1040,6 +1292,22 @@ func (e *ReportEngine) buildPreparedObject(obj report.Base) *preview.PreparedObj
 				break
 			}
 		}
+		// AutoWidth: measure the evaluated text and shrink the width to fit.
+		// C# ref: TextObject.Serialize (TextObject.cs:1383-1392) — applied when
+		// SerializeTo == Preview. CalcSize() returns measured width/height.
+		if v.AutoWidth() && po.Text != "" {
+			po.WordWrap = false
+			textW, _ := utils.MeasureText(po.Text, po.Font, 0)
+			// Scale from basicfont's monospace widths to the target font's proportional widths.
+			textW = utils.ScaleWidth(textW, po.Font)
+			textW += po.PaddingLeft + po.PaddingRight
+			if v.HorzAlign() == object.HorzAlignRight {
+				po.Left += po.Width - textW
+			} else if v.HorzAlign() == object.HorzAlignCenter {
+				po.Left += po.Width/2 - textW/2
+			}
+			po.Width = textW
+		}
 
 	case *object.ContainerObject:
 		// Render the container background as a rectangle; children are added
@@ -1079,6 +1347,16 @@ func (e *ReportEngine) buildPreparedObject(obj report.Base) *preview.PreparedObj
 		po.Kind = preview.ObjectTypeLine
 		po.LineDiagonal = v.Diagonal()
 		po.Border = v.Border()
+		// Ensure horizontal lines have at least 1px height so the border is visible.
+		// In C#, LineObject with Height=0 renders with the border line width.
+		// C# ref: LineObject.cs Draw() uses Height for rendering calculations.
+		if !v.Diagonal() && po.Height == 0 && po.Width > 0 {
+			lw := float32(1)
+			if v.Border().Lines[0] != nil && v.Border().Lines[0].Width > 0 {
+				lw = v.Border().Lines[0].Width
+			}
+			po.Height = lw
+		}
 		if f, ok := v.Fill().(*style.SolidFill); ok {
 			po.FillColor = f.Color
 		}
@@ -1109,6 +1387,27 @@ func (e *ReportEngine) buildPreparedObject(obj report.Base) *preview.PreparedObj
 		po.Border = v.Border()
 		if f, ok := v.Fill().(*style.SolidFill); ok && f.Color.A > 0 {
 			po.FillColor = f.Color
+		}
+		// Evaluate DataColumn binding to load image data from the current data
+		// source row. C# ref: PictureObject.GetData() (PictureObject.cs:705-736)
+		// calls Report.GetColumnValueNullable(DataColumn) which returns byte[].
+		if col := v.DataColumn(); col != "" && e.report != nil {
+			val, err := e.report.Calc("[" + col + "]")
+			if err == nil && val != nil {
+				switch d := val.(type) {
+				case []byte:
+					v.SetImageData(d)
+				case string:
+					if len(d) > 0 {
+						// Try base64 decode (XML data sources store binary as base64).
+						if decoded, decErr := base64.StdEncoding.DecodeString(d); decErr == nil && len(decoded) > 0 {
+							v.SetImageData(decoded)
+						} else if decoded, decErr = base64.RawStdEncoding.DecodeString(d); decErr == nil && len(decoded) > 0 {
+							v.SetImageData(decoded)
+						}
+					}
+				}
+			}
 		}
 		if data := v.ImageData(); len(data) > 0 {
 			// Apply grayscale and/or transparency transforms before storing in BlobStore.
@@ -1189,15 +1488,21 @@ func (e *ReportEngine) buildPreparedObject(obj report.Base) *preview.PreparedObj
 		} else if expr := v.Expression(); expr != "" {
 			v.SetText(e.evalText(expr))
 		}
-		// Render as a barcode placeholder (no text content).
-		// ZipCodeObject generates a graphical barcode; we cannot yet render it
-		// as an image, so we output a blank rectangle to preserve layout.
-		// The barcode text value is intentionally not shown as text content
-		// so that the HTML output matches the C# reference (which renders the
-		// barcode as a picture element).
-		po.Kind = preview.ObjectTypeText
-		po.TextColor = color.RGBA{} // transparent — suppress visible text
-		po.Text = ""
+		// Render as a picture (C# LayerBack + LayerPicture pattern).
+		// C# Draw() recalculates dimensions (ZipCodeObject.cs line 268-269).
+		po.Kind = preview.ObjectTypePicture
+		brd := v.Border()
+		borderColor := brd.Color()
+		borderWidth := brd.Lines[0].Width
+		zipW, zipH := object.ZipCodeDimensions(v, borderWidth)
+		po.Width = zipW
+		po.Height = zipH
+		if f, ok := v.Fill().(*style.SolidFill); ok && f.Color.A > 0 {
+			po.FillColor = f.Color
+		}
+		po.BlobIdx = e.renderGaugeBlob(v.Name(),
+			object.RenderZipCode(v, borderColor, borderWidth, po.FillColor,
+				int(zipW), int(zipH)))
 
 	case *object.CheckBoxObject:
 		po.Kind = preview.ObjectTypeCheckBox
@@ -1225,21 +1530,37 @@ func (e *ReportEngine) buildPreparedObject(obj report.Base) *preview.PreparedObj
 	case *gauge.LinearGauge:
 		e.evalGaugeValue(&v.GaugeObject)
 		po.Kind = preview.ObjectTypePicture
+		po.Border = v.Border()
+		if f, ok := v.Fill().(*style.SolidFill); ok && f.Color.A > 0 {
+			po.FillColor = f.Color
+		}
 		po.BlobIdx = e.renderGaugeBlob(v.Name(), gauge.RenderLinear(v, int(geom.Width()), int(geom.Height())))
 
 	case *gauge.RadialGauge:
 		e.evalGaugeValue(&v.GaugeObject)
 		po.Kind = preview.ObjectTypePicture
+		po.Border = v.Border()
+		if f, ok := v.Fill().(*style.SolidFill); ok && f.Color.A > 0 {
+			po.FillColor = f.Color
+		}
 		po.BlobIdx = e.renderGaugeBlob(v.Name(), gauge.RenderRadial(v, int(geom.Width()), int(geom.Height())))
 
 	case *gauge.SimpleGauge:
 		e.evalGaugeValue(&v.GaugeObject)
 		po.Kind = preview.ObjectTypePicture
+		po.Border = v.Border()
+		if f, ok := v.Fill().(*style.SolidFill); ok && f.Color.A > 0 {
+			po.FillColor = f.Color
+		}
 		po.BlobIdx = e.renderGaugeBlob(v.Name(), gauge.RenderSimple(v, int(geom.Width()), int(geom.Height())))
 
 	case *gauge.SimpleProgressGauge:
 		e.evalGaugeValue(&v.GaugeObject)
 		po.Kind = preview.ObjectTypePicture
+		po.Border = v.Border()
+		if f, ok := v.Fill().(*style.SolidFill); ok && f.Color.A > 0 {
+			po.FillColor = f.Color
+		}
 		po.BlobIdx = e.renderGaugeBlob(v.Name(), gauge.RenderSimpleProgress(v, int(geom.Width()), int(geom.Height())))
 
 	case *object.RichObject:
@@ -1269,6 +1590,12 @@ func (e *ReportEngine) buildPreparedObject(obj report.Base) *preview.PreparedObj
 				po.BlobIdx = e.renderGaugeBlob(v.Name(), img)
 			}
 		}
+
+	case *matrix.MatrixObject:
+		// MatrixObject cells are rendered by populateBandObjects2.
+		// The anchor exists only for FRX→PreparedObject index mapping.
+		po.Kind = preview.ObjectTypeText
+		po.NotExportable = true
 
 	case *object.AdvMatrixObject:
 		// Render the physical table layout as a grid of text PreparedObjects.
@@ -1403,10 +1730,13 @@ func (e *ReportEngine) buildPreparedObject(obj report.Base) *preview.PreparedObj
 		}
 
 	case *table.TableObject:
-		// The bounding box is rendered as a shape; individual cells are added
-		// by populateTableObjects called from populateBandObjects2.
-		po.Kind = preview.ObjectTypeShape
-		po.ShapeKind = 0 // Rectangle
+		// Individual cells are rendered by populateTableObjects (called from
+		// populateBandObjects2). The anchor exists only to maintain the 1:1
+		// FRX→PreparedObject mapping for band layout height adjustment.
+		// In C#, the table container is generated per wrapped section by
+		// GeneratePages, not as a single anchor div.
+		po.Kind = preview.ObjectTypeText
+		po.NotExportable = true
 		po.Border = v.Border()
 		if f, ok := v.Fill().(*style.SolidFill); ok {
 			po.FillColor = f.Color

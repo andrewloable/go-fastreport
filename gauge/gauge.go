@@ -12,6 +12,8 @@ import (
 	"fmt"
 
 	"github.com/andrewloable/go-fastreport/report"
+	"github.com/andrewloable/go-fastreport/style"
+	"github.com/andrewloable/go-fastreport/units"
 )
 
 // ── Scale ─────────────────────────────────────────────────────────────────────
@@ -358,11 +360,15 @@ type LinearGauge struct {
 }
 
 // NewLinearGauge creates a LinearGauge with defaults.
+// C# default size: Width = 8cm, Height = 2cm (LinearGauge.cs:53-54).
 func NewLinearGauge() *LinearGauge {
-	return &LinearGauge{
+	g := &LinearGauge{
 		GaugeObject: *NewGaugeObject(),
 		Orientation: OrientationHorizontal,
 	}
+	g.SetWidth(8 * units.Centimeters)
+	g.SetHeight(2 * units.Centimeters)
+	return g
 }
 
 // BaseName returns the base name prefix for auto-generated names.
@@ -399,6 +405,14 @@ func (g *LinearGauge) Serialize(w report.Writer) error {
 func (g *LinearGauge) Deserialize(r report.Reader) error {
 	if err := g.GaugeObject.Deserialize(r); err != nil {
 		return err
+	}
+	// C# default: 8cm x 2cm. FRX omits Width/Height when equal to defaults,
+	// but ComponentBase.Deserialize reads them as 0 when absent.
+	if g.Width() == 0 {
+		g.SetWidth(8 * units.Centimeters)
+	}
+	if g.Height() == 0 {
+		g.SetHeight(2 * units.Centimeters)
 	}
 	g.Orientation = Orientation(r.ReadInt("Orientation", 0))
 	g.Inverted = r.ReadBool("Inverted", false)
@@ -451,8 +465,9 @@ type RadialGauge struct {
 }
 
 // NewRadialGauge creates a RadialGauge with a 270-degree sweep (–135° to +135°).
+// C# default size: Width = Height = 4cm (RadialGauge.cs:232-233).
 func NewRadialGauge() *RadialGauge {
-	return &RadialGauge{
+	g := &RadialGauge{
 		GaugeObject:           *NewGaugeObject(),
 		StartAngle:            -135,
 		EndAngle:              135,
@@ -461,6 +476,9 @@ func NewRadialGauge() *RadialGauge {
 		SemicircleOffsetRatio: 1,
 		GradientAutoRotate:    true,
 	}
+	g.SetWidth(4 * units.Centimeters)
+	g.SetHeight(4 * units.Centimeters)
+	return g
 }
 
 // BaseName returns the base name prefix for auto-generated names.
@@ -517,6 +535,13 @@ func (g *RadialGauge) Deserialize(r report.Reader) error {
 	if err := g.GaugeObject.Deserialize(r); err != nil {
 		return err
 	}
+	// C# default: 4cm x 4cm. FRX omits Width/Height when equal to defaults.
+	if g.Width() == 0 {
+		g.SetWidth(4 * units.Centimeters)
+	}
+	if g.Height() == 0 {
+		g.SetHeight(4 * units.Centimeters)
+	}
 	g.StartAngle = float64(r.ReadFloat("StartAngle", -135))
 	g.EndAngle = float64(r.ReadFloat("EndAngle", 135))
 	g.GaugeType = RadialGaugeType(r.ReadInt("GaugeType", int(RadialGaugeTypeCircle)))
@@ -569,8 +594,9 @@ type SimpleGauge struct {
 }
 
 // NewSimpleGauge creates a SimpleGauge with defaults.
+// C# default size: Width = 8cm, Height = 2cm (SimpleGauge.cs:33-34).
 func NewSimpleGauge() *SimpleGauge {
-	return &SimpleGauge{
+	g := &SimpleGauge{
 		GaugeObject:    *NewGaugeObject(),
 		Shape:          SimpleGaugeShapeRectangle,
 		ShowText:       true,
@@ -578,6 +604,9 @@ func NewSimpleGauge() *SimpleGauge {
 		FirstSubScale:  NewSimpleSubScale(),
 		SecondSubScale: NewSimpleSubScale(),
 	}
+	g.SetWidth(8 * units.Centimeters)
+	g.SetHeight(2 * units.Centimeters)
+	return g
 }
 
 // BaseName returns the base name prefix for auto-generated names.
@@ -630,6 +659,13 @@ func (g *SimpleGauge) Deserialize(r report.Reader) error {
 	if err := g.GaugeObject.Deserialize(r); err != nil {
 		return err
 	}
+	// C# default: 8cm x 2cm. FRX omits Width/Height when equal to defaults.
+	if g.Width() == 0 {
+		g.SetWidth(8 * units.Centimeters)
+	}
+	if g.Height() == 0 {
+		g.SetHeight(2 * units.Centimeters)
+	}
 	g.Shape = SimpleGaugeShape(r.ReadInt("Shape", 0))
 	g.ShowText = r.ReadBool("ShowText", true)
 	g.TextFormat = r.ReadStr("TextFormat", "%g%%")
@@ -669,11 +705,19 @@ type SimpleProgressGauge struct {
 }
 
 // NewSimpleProgressGauge creates a SimpleProgressGauge with defaults.
+// C# SimpleProgressGauge extends SimpleGauge, inheriting 8cm x 2cm default size.
+// C# also sets Border.Lines = BorderLines.All (SimpleProgressGauge.cs:47).
 func NewSimpleProgressGauge() *SimpleProgressGauge {
-	return &SimpleProgressGauge{
+	g := &SimpleProgressGauge{
 		GaugeObject: *NewGaugeObject(),
 		ShowText:    true,
 	}
+	g.SetWidth(8 * units.Centimeters)
+	g.SetHeight(2 * units.Centimeters)
+	b := g.Border()
+	b.VisibleLines = style.BorderLinesAll
+	g.SetBorder(b)
+	return g
 }
 
 // BaseName returns the base name prefix for auto-generated names.
@@ -697,6 +741,13 @@ func (g *SimpleProgressGauge) Serialize(w report.Writer) error {
 func (g *SimpleProgressGauge) Deserialize(r report.Reader) error {
 	if err := g.GaugeObject.Deserialize(r); err != nil {
 		return err
+	}
+	// C# SimpleProgressGauge inherits 8cm x 2cm from SimpleGauge.
+	if g.Width() == 0 {
+		g.SetWidth(8 * units.Centimeters)
+	}
+	if g.Height() == 0 {
+		g.SetHeight(2 * units.Centimeters)
 	}
 	g.ShowText = r.ReadBool("ShowText", true)
 	return nil

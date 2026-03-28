@@ -35,7 +35,7 @@ func TestBorderCSS_AllSides_Defaults(t *testing.T) {
 	}
 	got := borderCSS(b, 1.0)
 	// All four sides should be present.
-	for _, side := range []string{"border-top:", "border-right:", "border-bottom:", "border-left:"} {
+	for _, side := range []string{"border-top-width:", "border-right-width:", "border-bottom-width:", "border-left-width:"} {
 		if !strings.Contains(got, side) {
 			t.Errorf("all-sides nil-lines: expected %q in %q", side, got)
 		}
@@ -58,8 +58,8 @@ func TestBorderCSS_TopOnly(t *testing.T) {
 		},
 	}
 	got := borderCSS(b, 1.0)
-	if !strings.Contains(got, "border-top:") {
-		t.Errorf("top only: expected border-top, got %q", got)
+	if !strings.Contains(got, "border-top-width:") {
+		t.Errorf("top only: expected border-top-width, got %q", got)
 	}
 	// C# HTMLBorder: non-visible sides get explicit "none" declarations to prevent
 	// border inheritance in browsers.
@@ -87,8 +87,8 @@ func TestBorderCSS_LeftOnly(t *testing.T) {
 		},
 	}
 	got := borderCSS(b, 1.0)
-	if !strings.Contains(got, "border-left:") {
-		t.Errorf("left only: expected border-left, got %q", got)
+	if !strings.Contains(got, "border-left-width:") {
+		t.Errorf("left only: expected border-left-width, got %q", got)
 	}
 	// C# HTMLBorder: non-visible sides get explicit "none" declarations.
 	if !strings.Contains(got, "border-right:none;") {
@@ -115,7 +115,7 @@ func TestBorderCSS_RightOnly(t *testing.T) {
 		},
 	}
 	got := borderCSS(b, 1.0)
-	if !strings.Contains(got, "border-right:") {
+	if !strings.Contains(got, "border-right-width:") {
 		t.Errorf("right only: expected border-right, got %q", got)
 	}
 }
@@ -133,7 +133,7 @@ func TestBorderCSS_BottomOnly(t *testing.T) {
 		},
 	}
 	got := borderCSS(b, 1.0)
-	if !strings.Contains(got, "border-bottom:") {
+	if !strings.Contains(got, "border-bottom-width:") {
 		t.Errorf("bottom only: expected border-bottom, got %q", got)
 	}
 }
@@ -289,8 +289,8 @@ func TestBorderCSS_Scale(t *testing.T) {
 	}
 	got := borderCSS(b, 3.0)
 	// Width = 2 * 3 = 6px
-	if !strings.Contains(got, "6.00px") {
-		t.Errorf("scale: expected '6.00px', got %q", got)
+	if !strings.Contains(got, "6px") {
+		t.Errorf("scale: expected '6px', got %q", got)
 	}
 }
 
@@ -302,14 +302,14 @@ func TestBorderCSS_NilLineEntry_UsesDefaults(t *testing.T) {
 		// Lines[3] (Bottom) = nil → defaults
 	}
 	got := borderCSS(b, 1.0)
-	if !strings.Contains(got, "border-left:") {
-		t.Errorf("nil left line: expected border-left, got %q", got)
+	if !strings.Contains(got, "border-left-width:") {
+		t.Errorf("nil left line: expected border-left-width, got %q", got)
 	}
-	if !strings.Contains(got, "border-bottom:") {
+	if !strings.Contains(got, "border-bottom-width:") {
 		t.Errorf("nil bottom line: expected border-bottom, got %q", got)
 	}
 	// Width defaults to 1px, style defaults to solid.
-	if !strings.Contains(got, "1.00px") {
+	if !strings.Contains(got, "1px") {
 		t.Errorf("nil line: expected default '1.00px', got %q", got)
 	}
 	if !strings.Contains(got, "solid") {

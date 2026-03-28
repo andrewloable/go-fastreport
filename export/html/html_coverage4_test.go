@@ -477,8 +477,8 @@ func TestRenderObject_Text_WithBorder(t *testing.T) {
 		},
 	})
 	out := exportHTML(t, pp)
-	if !strings.Contains(out, "border-top:") {
-		t.Errorf("Text border: expected border-top, not found")
+	if !strings.Contains(out, "border-top-width:") {
+		t.Errorf("Text border: expected border-top-width, not found")
 	}
 }
 

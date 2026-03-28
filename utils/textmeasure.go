@@ -56,6 +56,20 @@ func scaleMaxWidth(maxWidth float32, f style.Font) float32 {
 	return maxWidth * (basicAvgWidth / actualAvgWidth)
 }
 
+// ScaleWidth converts a width measured by MeasureText (using the basicfont
+// fallback) to the approximate width at the target font's proportions.
+// This compensates for the monospace basicfont being wider than proportional
+// fonts like Tahoma or Arial.
+func ScaleWidth(measuredWidth float32, f style.Font) float32 {
+	fontPx := f.Size * 96.0 / 72.0
+	if fontPx <= 0 {
+		return measuredWidth
+	}
+	actualAvgWidth := fontPx * 0.48
+	basicAvgWidth := float32(7.0)
+	return measuredWidth * (actualAvgWidth / basicAvgWidth)
+}
+
 // ── internal helpers ──────────────────────────────────────────────────────────
 
 // faceForStyle returns a font.Face for the given style.Font.

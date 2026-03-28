@@ -662,9 +662,9 @@ func TestBuildTemplateMultiLevel_SingleLevel(t *testing.T) {
 	m.BuildTemplateMultiLevel()
 
 	// col header rows = 1 (single col level), row leaves = 2 (Alice, Bob).
-	// nRowHeaderCols = 1. Total rows = 1 (header) + 2 (leaves) + 1 (AddRow padding) = 4.
-	if m.RowCount() != 4 {
-		t.Errorf("RowCount = %d, want 4", m.RowCount())
+	// nRowHeaderCols = 1 (LevelSize-1). Total rows = 1 (header) + 2 (leaves) = 3.
+	if m.RowCount() != 3 {
+		t.Errorf("RowCount = %d, want 3", m.RowCount())
 	}
 }
 
@@ -681,10 +681,10 @@ func TestBuildTemplateMultiLevel_MultiLevel(t *testing.T) {
 
 	// col header rows = colRoot.LevelSize = 1.
 	// row leaves: Q1, Q2 = 2.
-	// nRowHeaderCols = rowRoot.LevelSize = 2.
-	// Actual RowCount = 4 (1 col-header + 2 leaves + 1 padding row from AddRow).
-	if m.RowCount() != 4 {
-		t.Errorf("RowCount = %d, want 4", m.RowCount())
+	// nRowHeaderCols = rowRoot.LevelSize-1 = 1.
+	// RowCount = 1 (col-header) + 2 (leaves) = 3.
+	if m.RowCount() != 3 {
+		t.Errorf("RowCount = %d, want 3", m.RowCount())
 	}
 }
 
@@ -747,10 +747,10 @@ func TestBuildTemplateMultiLevel_DeepHierarchy(t *testing.T) {
 
 	m.BuildTemplateMultiLevel()
 
-	// row leaves = 3 (SF, LA, NYC). col header rows = 2.
-	// Actual RowCount = 6 (2 col-header rows + 3 leaf rows + 1 padding).
-	if m.RowCount() != 6 {
-		t.Errorf("RowCount = %d, want 6", m.RowCount())
+	// row leaves = 3 (SF, LA, NYC). col header rows = 1 (LevelSize-1).
+	// RowCount = 1 (col-header) + 3 (leaf rows) + 1 (padding) = 5.
+	if m.RowCount() != 5 {
+		t.Errorf("RowCount = %d, want 5", m.RowCount())
 	}
 }
 
@@ -765,9 +765,9 @@ func TestBuildTemplateMultiLevel_RowSpanning(t *testing.T) {
 
 	m.BuildTemplateMultiLevel()
 
-	// Actual RowCount = 4 (1 col-header + 2 row-leaves + 1 padding).
-	if m.RowCount() != 4 {
-		t.Errorf("RowCount = %d, want 4", m.RowCount())
+	// RowCount = 1 (col-header) + 2 (row-leaves) = 3.
+	if m.RowCount() != 3 {
+		t.Errorf("RowCount = %d, want 3", m.RowCount())
 	}
 }
 
@@ -783,9 +783,11 @@ func TestBuildTemplateMultiLevel_ColSpanning(t *testing.T) {
 	m.BuildTemplateMultiLevel()
 
 	// col level 0: "2024" spans 2. col level 1: Q1, Q2.
-	// Total col header rows = 2. Row leaves = 1. Actual RowCount = 4.
-	if m.RowCount() != 4 {
-		t.Errorf("RowCount = %d, want 4", m.RowCount())
+	// nColHeaderRows = LevelSize-1 = 1. Row leaves = 1. RowCount = 1+1 = 2.
+	// But col tree is 2024→Q1,Q2 (2 levels), LevelSize=2, -1=1 header row.
+	// Actually colRoot→2024→Q1,Q2: LevelSize=3, -1=2 header rows. RowCount=2+1=3.
+	if m.RowCount() != 3 {
+		t.Errorf("RowCount = %d, want 3", m.RowCount())
 	}
 }
 

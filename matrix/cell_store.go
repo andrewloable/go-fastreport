@@ -168,6 +168,24 @@ type matrixDataRuntime struct {
 	cells   *CellStore
 }
 
+// Rows returns the runtime row header tree.
+func (rt *matrixDataRuntime) Rows() *MatrixHeader { return rt.rows }
+
+// Columns returns the runtime column header tree.
+func (rt *matrixDataRuntime) Columns() *MatrixHeader { return rt.columns }
+
+// GetCellValue returns the aggregated value for the cell at (colIdx, rowIdx, cellIdx).
+func (rt *matrixDataRuntime) GetCellValue(colIdx, rowIdx, cellIdx int) any {
+	if rt.cells == nil {
+		return nil
+	}
+	return rt.cells.GetValue(colIdx, rowIdx, cellIdx)
+}
+
+// Runtime returns the matrixDataRuntime for d, creating it if needed.
+// Used by SyncRuntimeToMultiLevel to bridge runtime data to template building.
+func (d *MatrixData) Runtime() *matrixDataRuntime { return d.runtime() }
+
 // runtime returns the matrixDataRuntime for d, creating it if needed.
 // The Descriptors slices are synchronised from d.Columns and d.Rows.
 func (d *MatrixData) runtime() *matrixDataRuntime {

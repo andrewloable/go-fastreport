@@ -36,7 +36,9 @@ func NewTableRow() *TableRow {
 		ComponentBase: *report.NewComponentBase(),
 		maxHeight:     1000, // matches C# DefaultValue(1000)
 	}
-	r.SetHeight(30) // default row height
+	// C# DefaultHeight: (int)Math.Round(18 / (0.25f * Units.Centimeters)) * (0.25f * Units.Centimeters)
+	// = round(18 / 9.45) * 9.45 = 2 * 9.45 = 18.9
+	r.SetHeight(18.9)
 	return r
 }
 
@@ -183,9 +185,9 @@ func (r *TableRow) Deserialize(rd report.Reader) error {
 	if err := r.ComponentBase.Deserialize(rd); err != nil {
 		return err
 	}
-	// ComponentBase.Deserialize defaults Height to 0; re-read with the table row
-	// default of 30 so that rows without an explicit Height attribute are usable.
-	r.SetHeight(rd.ReadFloat("Height", 30))
+	// ComponentBase.Deserialize defaults Height to 0; re-read with the C# default
+	// of 18.9 so that rows without an explicit Height attribute match C# output.
+	r.SetHeight(rd.ReadFloat("Height", 18.9))
 	r.minHeight = rd.ReadFloat("MinHeight", 0)
 	r.maxHeight = rd.ReadFloat("MaxHeight", 1000)
 	r.autoSize = rd.ReadBool("AutoSize", false)

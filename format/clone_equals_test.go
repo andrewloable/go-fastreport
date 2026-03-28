@@ -122,7 +122,8 @@ func TestCurrencyFormat_Clone(t *testing.T) {
 func TestCurrencyFormat_Clone_Defaults(t *testing.T) {
 	orig := NewCurrencyFormat()
 	cloned := orig.Clone().(*CurrencyFormat)
-	if cloned.DecimalDigits != 2 || !cloned.UseLocaleSettings || cloned.CurrencySymbol != "$" {
+	loc := currentLocale()
+	if cloned.DecimalDigits != loc.CurrencyDecimalDigits || !cloned.UseLocaleSettings || cloned.CurrencySymbol != loc.CurrencySymbol {
 		t.Errorf("Clone of default CurrencyFormat: %+v", cloned)
 	}
 }

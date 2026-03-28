@@ -56,6 +56,10 @@ type TableHelper struct {
 	// Set before PrintColumn/PrintRow and clear it after PrintRows/PrintColumns.
 	CellTextEval func(text string) string
 
+	// CellObjectEval, when non-nil, is called for each cloned cell during copyCells
+	// to evaluate embedded objects (e.g. PictureObject DataColumn bindings).
+	CellObjectEval func(cell *TableCell)
+
 	// pageBreak is set by PageBreak() and consumed by the next PrintRow/PrintColumn.
 	// Mirrors TableHelper.pageBreak (TableHelper.cs line 22).
 	pageBreak bool
@@ -71,9 +75,17 @@ const (
 
 // newTableHelper creates a TableHelper backed by the given template table.
 func newTableHelper(src *TableObject) *TableHelper {
+	res := NewTableBase()
+	// Propagate layout settings from the source table so that the result
+	// table renders with the same wrapping/pagination behaviour.
+	// Mirrors C# TableHelper which inherits Layout/WrappedGap/FixedColumns.
+	res.SetLayout(src.Layout())
+	res.SetWrappedGap(src.WrappedGap())
+	res.SetFixedColumns(src.FixedColumns())
+	res.SetBorder(src.Border()) // C# propagates table border to result
 	return &TableHelper{
 		src:         src,
-		result:      NewTableBase(),
+		result:      res,
 		nowPrinting: npNone,
 	}
 }
@@ -244,13 +256,16 @@ func (h *TableHelper) copyCells(srcColIdx, srcRowIdx, dstColIdx, dstRowIdx int) 
 
 	if srcCell != nil {
 		dst := cloneCell(srcCell)
-		if h.src.ManualBuildAutoSpans {
-			// Reset spans — auto-span is resolved during rendering.
-			dst.SetColSpan(1)
-			dst.SetRowSpan(1)
-		}
+		// Note: ManualBuildAutoSpans span reset is NOT applied here.
+		// Data cells naturally have RowSpan=1 from the template.
+		// Non-data cells (trailer/header) should keep their original spans
+		// (e.g. Cell23 with RowSpan=4). C#'s CalcSpans re-detects spans
+		// but Go preserves template spans, which is equivalent.
 		if h.CellTextEval != nil {
 			dst.SetText(h.CellTextEval(dst.Text()))
+		}
+		if h.CellObjectEval != nil {
+			h.CellObjectEval(dst)
 		}
 		row.cells[dstColIdx] = dst
 	}
@@ -291,5 +306,9 @@ func cloneCell(src *TableCell) *TableCell {
 	dst.SetBorder(b)
 	dst.SetFill(src.Fill())
 	dst.SetFont(src.Font())
+	// Clone embedded objects (e.g. PictureObjects).
+	for _, obj := range src.Objects() {
+		dst.AddObject(obj)
+	}
 	return dst
 }

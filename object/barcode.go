@@ -237,7 +237,7 @@ type ZipCodeObject struct {
 //	showGrid      = true
 //	text          = "123456"
 func NewZipCodeObject() *ZipCodeObject {
-	return &ZipCodeObject{
+	z := &ZipCodeObject{
 		ReportComponentBase: *report.NewReportComponentBase(),
 		text:                zipDefaultText,
 		segmentWidth:        zipDefaultSegmentWidth,
@@ -247,6 +247,15 @@ func NewZipCodeObject() *ZipCodeObject {
 		showMarkers:         true,
 		showGrid:            true,
 	}
+	// C# constructor sets Border.Width = 3 (ZipCodeObject.cs line 376).
+	// This width is used both for the border rectangle and as the pen width
+	// for drawing digit strokes.
+	brd := z.Border()
+	for i := range brd.Lines {
+		brd.Lines[i].Width = 3
+	}
+	z.SetBorder(brd)
+	return z
 }
 
 // Text returns the zip code string.

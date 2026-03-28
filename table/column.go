@@ -31,7 +31,9 @@ func NewTableColumn() *TableColumn {
 		ComponentBase: *report.NewComponentBase(),
 		maxWidth:      5000, // matches C# DefaultValue(5000)
 	}
-	c.SetWidth(100) // default column width
+	// C# DefaultWidth: (int)Math.Round(64 / (0.25f * Units.Centimeters)) * (0.25f * Units.Centimeters)
+	// = round(64 / 9.45) * 9.45 = 7 * 9.45 = 66.15
+	c.SetWidth(66.15)
 	return c
 }
 
@@ -141,9 +143,9 @@ func (c *TableColumn) Deserialize(r report.Reader) error {
 	if err := c.ComponentBase.Deserialize(r); err != nil {
 		return err
 	}
-	// ComponentBase.Deserialize defaults Width to 0; re-read with the table column
-	// default of 100 so that columns without an explicit Width attribute are usable.
-	c.SetWidth(r.ReadFloat("Width", 100))
+	// ComponentBase.Deserialize defaults Width to 0; re-read with the C# default
+	// of 66.15 so that columns without an explicit Width attribute match C# output.
+	c.SetWidth(r.ReadFloat("Width", 66.15))
 	c.minWidth = r.ReadFloat("MinWidth", 0)
 	c.maxWidth = r.ReadFloat("MaxWidth", 5000)
 	c.autoSize = r.ReadBool("AutoSize", false)

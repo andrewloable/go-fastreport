@@ -5,6 +5,8 @@ package format
 
 import (
 	"os"
+	"os/exec"
+	"runtime"
 	"strings"
 	"sync"
 )
@@ -51,6 +53,14 @@ var localeTable = map[string]LocaleNumberInfo{
 		ShortDatePattern: "1/2/2006", LongDatePattern: "Monday, January 2, 2006",
 	},
 	"fil-PH": {
+		CurrencySymbol: "₱", CurrencyDecimalSeparator: ".", CurrencyGroupSeparator: ",",
+		CurrencyDecimalDigits: 2, CurrencyPositivePattern: 0, CurrencyNegativePattern: 0,
+		NumberDecimalSeparator: ".", NumberGroupSeparator: ",", NumberDecimalDigits: 2, NumberNegativePattern: 1,
+		PercentSymbol: "%", PercentDecimalSeparator: ".", PercentGroupSeparator: ",",
+		PercentDecimalDigits: 2, PercentPositivePattern: 1, PercentNegativePattern: 1,
+		ShortDatePattern: "1/2/2006", LongDatePattern: "Monday, January 2, 2006",
+	},
+	"en-PH": {
 		CurrencySymbol: "₱", CurrencyDecimalSeparator: ".", CurrencyGroupSeparator: ",",
 		CurrencyDecimalDigits: 2, CurrencyPositivePattern: 0, CurrencyNegativePattern: 0,
 		NumberDecimalSeparator: ".", NumberGroupSeparator: ",", NumberDecimalDigits: 2, NumberNegativePattern: 1,
@@ -250,11 +260,28 @@ func GetLocaleInfo(code string) LocaleNumberInfo {
 }
 
 // detectLocale reads the system locale from environment variables.
-// Checks LC_ALL, LC_MONETARY, LANG in order; falls back to "en-US".
+// Checks LC_ALL, LC_MONETARY, LANG in order. On macOS, falls back to
+// the system region via "defaults read NSGlobalDomain AppleLocale".
+// Final fallback is "en-US".
 func detectLocale() string {
 	for _, env := range []string{"LC_ALL", "LC_MONETARY", "LANG"} {
-		if v := os.Getenv(env); v != "" && v != "C" && v != "POSIX" {
-			return v
+		v := os.Getenv(env)
+		if v == "" {
+			continue
+		}
+		// Skip C/POSIX invariant locale (including "C.UTF-8").
+		norm := normalizeLocale(v)
+		if norm == "C" || norm == "POSIX" {
+			continue
+		}
+		return v
+	}
+	// macOS: env vars are often "C.UTF-8"; read the actual region setting.
+	if runtime.GOOS == "darwin" {
+		if out, err := exec.Command("defaults", "read", "NSGlobalDomain", "AppleLocale").Output(); err == nil {
+			if s := strings.TrimSpace(string(out)); s != "" {
+				return s
+			}
 		}
 	}
 	return "en-US"

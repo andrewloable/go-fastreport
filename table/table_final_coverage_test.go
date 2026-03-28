@@ -498,7 +498,7 @@ func TestTableColumn_Deserialize_HappyPath_AllBranches(t *testing.T) {
 		{
 			name:         "all defaults",
 			setup:        func(r *verifyReader) {},
-			wantWidth:    100,
+			wantWidth:    66.15,
 			wantMaxWidth: 5000,
 		},
 		{
@@ -514,7 +514,7 @@ func TestTableColumn_Deserialize_HappyPath_AllBranches(t *testing.T) {
 			setup: func(r *verifyReader) {
 				r.floats["MinWidth"] = 50
 			},
-			wantWidth:    100,
+			wantWidth:    66.15,
 			wantMinWidth: 50,
 			wantMaxWidth: 5000,
 		},
@@ -523,7 +523,7 @@ func TestTableColumn_Deserialize_HappyPath_AllBranches(t *testing.T) {
 			setup: func(r *verifyReader) {
 				r.floats["MaxWidth"] = 2000
 			},
-			wantWidth:    100,
+			wantWidth:    66.15,
 			wantMaxWidth: 2000,
 		},
 		{
@@ -531,7 +531,7 @@ func TestTableColumn_Deserialize_HappyPath_AllBranches(t *testing.T) {
 			setup: func(r *verifyReader) {
 				r.bools["AutoSize"] = true
 			},
-			wantWidth:    100,
+			wantWidth:    66.15,
 			wantMaxWidth: 5000,
 			wantAutoSize: true,
 		},
@@ -540,7 +540,7 @@ func TestTableColumn_Deserialize_HappyPath_AllBranches(t *testing.T) {
 			setup: func(r *verifyReader) {
 				r.bools["PageBreak"] = true
 			},
-			wantWidth:     100,
+			wantWidth:     66.15,
 			wantMaxWidth:  5000,
 			wantPageBreak: true,
 		},
@@ -549,7 +549,7 @@ func TestTableColumn_Deserialize_HappyPath_AllBranches(t *testing.T) {
 			setup: func(r *verifyReader) {
 				r.ints["KeepColumns"] = 5
 			},
-			wantWidth:    100,
+			wantWidth:    66.15,
 			wantMaxWidth: 5000,
 			wantKeepCols: 5,
 		},
@@ -774,7 +774,7 @@ func TestTableRow_Deserialize_HappyPath_AllBranches(t *testing.T) {
 		{
 			name:       "all defaults",
 			setup:      func(r *verifyReader) {},
-			wantHeight: 30,
+			wantHeight: 18.9,
 			wantMaxH:   1000,
 		},
 		{
@@ -790,7 +790,7 @@ func TestTableRow_Deserialize_HappyPath_AllBranches(t *testing.T) {
 			setup: func(r *verifyReader) {
 				r.floats["MinHeight"] = 5
 			},
-			wantHeight: 30,
+			wantHeight: 18.9,
 			wantMinH:   5,
 			wantMaxH:   1000,
 		},
@@ -799,7 +799,7 @@ func TestTableRow_Deserialize_HappyPath_AllBranches(t *testing.T) {
 			setup: func(r *verifyReader) {
 				r.floats["MaxHeight"] = 2000
 			},
-			wantHeight: 30,
+			wantHeight: 18.9,
 			wantMaxH:   2000,
 		},
 		{
@@ -807,7 +807,7 @@ func TestTableRow_Deserialize_HappyPath_AllBranches(t *testing.T) {
 			setup: func(r *verifyReader) {
 				r.bools["AutoSize"] = true
 			},
-			wantHeight:   30,
+			wantHeight:   18.9,
 			wantMaxH:     1000,
 			wantAutoSize: true,
 		},
@@ -816,7 +816,7 @@ func TestTableRow_Deserialize_HappyPath_AllBranches(t *testing.T) {
 			setup: func(r *verifyReader) {
 				r.bools["CanBreak"] = true
 			},
-			wantHeight:   30,
+			wantHeight:   18.9,
 			wantMaxH:     1000,
 			wantCanBreak: true,
 		},
@@ -825,7 +825,7 @@ func TestTableRow_Deserialize_HappyPath_AllBranches(t *testing.T) {
 			setup: func(r *verifyReader) {
 				r.bools["PageBreak"] = true
 			},
-			wantHeight:    30,
+			wantHeight:    18.9,
 			wantMaxH:      1000,
 			wantPageBreak: true,
 		},
@@ -834,7 +834,7 @@ func TestTableRow_Deserialize_HappyPath_AllBranches(t *testing.T) {
 			setup: func(r *verifyReader) {
 				r.ints["KeepRows"] = 3
 			},
-			wantHeight:   30,
+			wantHeight:   18.9,
 			wantMaxH:     1000,
 			wantKeepRows: 3,
 		},

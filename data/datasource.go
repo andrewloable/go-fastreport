@@ -7,6 +7,9 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+
+	"golang.org/x/text/collate"
+	"golang.org/x/text/language"
 )
 
 // DataSource is the primary interface for all data providers.
@@ -297,6 +300,11 @@ type Sortable interface {
 	SortRows(specs []SortSpec)
 }
 
+// unicodeCollator provides culture-aware string comparison that matches C#'s
+// default CurrentCulture sort order. Accented characters sort near their base
+// characters (e.g. â sorts as a variant of 'a'), matching System.String.Compare.
+var unicodeCollator = collate.New(language.Und)
+
 // compareAny compares two values of arbitrary type.
 func compareAny(a, b any) int {
 	switch av := a.(type) {
@@ -314,7 +322,9 @@ func compareAny(a, b any) int {
 		return cmp.Compare(av, bv)
 	case string:
 		bv, _ := b.(string)
-		return strings.Compare(av, bv)
+		// Use Unicode collation to match C# culture-sensitive string comparison.
+		// This ensures accented characters (â, é, ö) sort near their base characters.
+		return unicodeCollator.CompareString(av, bv)
 	case bool:
 		if av == b.(bool) {
 			return 0
@@ -324,7 +334,7 @@ func compareAny(a, b any) int {
 		}
 		return 1
 	default:
-		return strings.Compare(fmt.Sprintf("%v", a), fmt.Sprintf("%v", b))
+		return unicodeCollator.CompareString(fmt.Sprintf("%v", a), fmt.Sprintf("%v", b))
 	}
 }
 

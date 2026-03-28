@@ -74,6 +74,13 @@ func (r *Report) Calc(expression string) (any, error) {
 	// Replace [Token] patterns with safe identifier forms.
 	goExpr := translateExpression(unwrapped)
 
+	// C# expressions can reference Engine.Method(...) which calls a method on the
+	// ReportEngine object. In Go we register Engine_Method as a callable function,
+	// so we need to rewrite "Engine." prefix to "Engine_" in the expression text.
+	// This handles patterns like Engine.GetBookmarkPage(Categories_CategoryName).
+	// C# ref: Script context exposes Engine property (ReportEngine).
+	goExpr = rewriteEnginePrefix(goExpr)
+
 	// If the expression is a simple dotted identifier (e.g. "Report.ReportInfo.Description"),
 	// sanitize dots to underscores so it matches keys in the environment.
 	if isSimpleDottedIdent(goExpr) {
@@ -262,6 +269,16 @@ func isSimpleDottedIdent(s string) bool {
 		}
 	}
 	return true
+}
+
+// rewriteEnginePrefix replaces "Engine." prefix with "Engine_" in expressions.
+// In C# FastReport, "Engine" is a property on the script context that exposes
+// the ReportEngine object. Method calls like Engine.GetBookmarkPage(name) need
+// to be rewritten to Engine_GetBookmarkPage(name) so they match the Go custom
+// function registration. This only rewrites the "Engine." prefix at word
+// boundaries to avoid false positives.
+func rewriteEnginePrefix(s string) string {
+	return strings.ReplaceAll(s, "Engine.", "Engine_")
 }
 
 // sanitizeIdent converts a token like "DataSource.Field" into a valid Go

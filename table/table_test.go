@@ -16,8 +16,8 @@ func TestNewTableColumn_Defaults(t *testing.T) {
 	if c == nil {
 		t.Fatal("NewTableColumn returned nil")
 	}
-	if c.Width() != 100 {
-		t.Errorf("Width default = %v, want 100", c.Width())
+	if c.Width() != 66.15 {
+		t.Errorf("Width default = %v, want 66.15", c.Width())
 	}
 	if c.MinWidth() != 0 {
 		t.Errorf("MinWidth default = %v, want 0", c.MinWidth())
@@ -72,8 +72,8 @@ func TestNewTableRow_Defaults(t *testing.T) {
 	if r == nil {
 		t.Fatal("NewTableRow returned nil")
 	}
-	if r.Height() != 30 {
-		t.Errorf("Height default = %v, want 30", r.Height())
+	if r.Height() != 18.9 {
+		t.Errorf("Height default = %v, want 18.9", r.Height())
 	}
 	if r.MinHeight() != 0 {
 		t.Errorf("MinHeight default = %v, want 0", r.MinHeight())
@@ -562,8 +562,8 @@ func TestTableColumn_Deserialize_DefaultWidth(t *testing.T) {
 	if err := got.Deserialize(r); err != nil {
 		t.Fatalf("Deserialize: %v", err)
 	}
-	if got.Width() != 100 {
-		t.Errorf("Width after Deserialize without Width attr: got %v, want 100", got.Width())
+	if got.Width() != 66.15 {
+		t.Errorf("Width after Deserialize without Width attr: got %v, want 66.15", got.Width())
 	}
 }
 
@@ -580,8 +580,8 @@ func TestTableRow_Deserialize_DefaultHeight(t *testing.T) {
 	if err := got.Deserialize(r); err != nil {
 		t.Fatalf("Deserialize: %v", err)
 	}
-	if got.Height() != 30 {
-		t.Errorf("Height after Deserialize without Height attr: got %v, want 30", got.Height())
+	if got.Height() != 18.9 {
+		t.Errorf("Height after Deserialize without Height attr: got %v, want 18.9", got.Height())
 	}
 }
 

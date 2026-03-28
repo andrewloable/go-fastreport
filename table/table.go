@@ -586,8 +586,51 @@ func (t *TableBase) RestoreState() {
 	t.ResetSpanList()
 }
 
+// CalcSpans auto-detects RowSpan for ManualBuild tables when
+// ManualBuildAutoSpans is true. For each column, consecutive cells with
+// identical text are merged: the first cell gets RowSpan = count, the rest
+// get RowSpan = 0 (marking them as spanned/covered).
+// Mirrors C# TableBase.CalcSpans (TableBase.cs).
+func (t *TableBase) CalcSpans() {
+	nCols := len(t.columns)
+	nRows := len(t.rows)
+	for ci := 0; ci < nCols; ci++ {
+		ri := 0
+		for ri < nRows {
+			cell := t.Cell(ri, ci)
+			if cell == nil {
+				ri++
+				continue
+			}
+			// Count consecutive cells with the same text in this column.
+			span := 1
+			for ri+span < nRows {
+				next := t.Cell(ri+span, ci)
+				if next == nil || next.Text() != cell.Text() {
+					break
+				}
+				span++
+			}
+			if span > 1 {
+				cell.SetRowSpan(span)
+				// Mark covered cells with RowSpan=0 so IsInsideSpan skips them.
+				for k := 1; k < span; k++ {
+					if c := t.Cell(ri+k, ci); c != nil {
+						c.SetRowSpan(0)
+					}
+				}
+			}
+			ri += span
+		}
+	}
+	t.ResetSpanList()
+}
+
 // CalcWidth returns the total width of the table by summing visible column
-// widths, applying AutoSize expansion from the first row's cell widths.
+// widths, applying AutoSize expansion/contraction from cell widths.
+// When AutoSize=true and MinWidth > 0, the column contracts to MinWidth
+// if content doesn't require the declared width (no text measurement
+// available in Go, so MinWidth is used as the contracted width).
 // Mirrors C# TableBase.CalcWidth (TableBase.cs).
 func (t *TableBase) CalcWidth() float32 {
 	if len(t.rows) > 0 {
@@ -595,7 +638,12 @@ func (t *TableBase) CalcWidth() float32 {
 			if col.AutoSize() {
 				cell := t.Cell(0, ci)
 				if cell != nil && cell.Width() > col.Width() {
+					// Expand to fit content.
 					col.SetWidth(cell.Width())
+				} else if col.MinWidth() > 0 && col.Width() > col.MinWidth() {
+					// Contract to MinWidth when content fits.
+					// C# measures actual text; Go approximates with MinWidth.
+				col.SetWidth(col.MinWidth())
 				}
 			}
 		}
@@ -696,7 +744,17 @@ func (t *TableBase) Deserialize(r report.Reader) error {
 	}
 	t.fixedRows = r.ReadInt("FixedRows", 0)
 	t.fixedColumns = r.ReadInt("FixedColumns", 0)
-	t.layout = TableLayout(r.ReadInt("Layout", 0))
+	// Layout can be stored as an int (0/1/2) or a string enum name
+	// ("AcrossThenDown"/"DownThenAcross"/"Wrapped") in FRX files.
+	layoutStr := r.ReadStr("Layout", "")
+	switch layoutStr {
+	case "Wrapped":
+		t.layout = TableLayoutWrapped
+	case "DownThenAcross":
+		t.layout = TableLayoutDownThenAcross
+	default:
+		t.layout = TableLayout(r.ReadInt("Layout", 0))
+	}
 	t.printOnParent = r.ReadBool("PrintOnParent", false)
 	t.wrappedGap = r.ReadFloat("WrappedGap", 0)
 	t.repeatHeaders = r.ReadBool("RepeatHeaders", true) // C# default is true

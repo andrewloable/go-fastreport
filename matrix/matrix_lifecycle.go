@@ -1,5 +1,7 @@
 package matrix
 
+import "github.com/andrewloable/go-fastreport/format"
+
 // matrix_lifecycle.go adds the runtime state fields and engine lifecycle hooks
 // to MatrixObject that were identified as missing gaps.
 //
@@ -186,6 +188,45 @@ func (m *MatrixObject) OnAfterData() {
 // C# source: MatrixObject.AddValue(object[] columnValues, object[] rowValues, object[] cellValues).
 func (m *MatrixObject) AddValue(columnValues, rowValues, cellValues []any) {
 	m.Data.AddValue(columnValues, rowValues, cellValues)
+}
+
+// ExtractCellFormat scans the template cells for a non-General Format
+// (e.g. Currency) and stores it for use during BuildTemplateMultiLevel.
+// Must be called AFTER FRX children are fully deserialized (the template rows).
+func (m *MatrixObject) ExtractCellFormat() {
+	for _, row := range m.TableBase.Rows() {
+		for _, cell := range row.Cells() {
+			if cell == nil {
+				continue
+			}
+			f := cell.Format()
+			if f == nil {
+				continue
+			}
+			if _, isGen := f.(*format.GeneralFormat); !isGen {
+				m.cellFormat = f
+				return
+			}
+		}
+	}
+}
+
+// SyncRuntimeToMultiLevel bridges the runtime header trees (populated by
+// GetDataWithCalc → AddValueAt) to the multi-level header trees used by
+// BuildTemplateMultiLevel. After calling GetDataWithCalc, the data is in
+// m.Data.rt.rows/columns. This method copies those trees to m.rowRoot/colRoot
+// so BuildTemplateMultiLevel can generate the result table.
+func (m *MatrixObject) SyncRuntimeToMultiLevel() {
+	rt := m.Data.Runtime()
+	if rt == nil {
+		return
+	}
+	m.rowRoot = rt.Rows().Root
+	m.colRoot = rt.Columns().Root
+	// Ensure mlAccumulators is initialized.
+	if m.mlAccumulators == nil {
+		m.mlAccumulators = make(map[multiLevelKey]*accumulator)
+	}
 }
 
 // Value returns the current cell value at the given descriptor index.

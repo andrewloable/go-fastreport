@@ -4,8 +4,10 @@ package matrix
 
 import (
 	"fmt"
+	"strconv"
 
 	"github.com/andrewloable/go-fastreport/data"
+	"github.com/andrewloable/go-fastreport/format"
 	"github.com/andrewloable/go-fastreport/report"
 	"github.com/andrewloable/go-fastreport/table"
 )
@@ -281,6 +283,13 @@ type MatrixObject struct {
 	ManualBuildHandler  func(*MatrixObject) // C#: MatrixObject.ManualBuild event
 	ModifyResultHandler func(*MatrixObject) // C#: MatrixObject.ModifyResult event
 	AfterTotalsHandler  func(*MatrixObject) // C#: MatrixObject.AfterTotals event
+
+	// cellFormat is applied to data cell values during BuildTemplateMultiLevel.
+	// Populated from the template data cell's Format (e.g. Currency).
+	cellFormat format.Format
+	// savedTemplateRows preserves template rows before BuildTemplateMultiLevel
+	// resets the TableBase. Used to extract header labels and formatting.
+	savedTemplateRows []*table.TableRow
 
 	// saveVisible holds the pre-run Visible state for RestoreState.
 	saveVisible bool
@@ -571,6 +580,8 @@ func (m *MatrixObject) Deserialize(r report.Reader) error {
 	m.ManualBuildEvent = r.ReadStr("ManualBuildEvent", "")
 	m.ModifyResultEvent = r.ReadStr("ModifyResultEvent", "")
 	m.AfterTotalsEvent = r.ReadStr("AfterTotalsEvent", "")
+	// Note: cellFormat extraction is deferred to ExtractCellFormat() which
+	// is called by the engine after children (template rows/cells) are loaded.
 	return nil
 }
 
@@ -629,7 +640,8 @@ func (m *MatrixObject) DeserializeChild(childType string, r report.Reader) bool 
 		}
 		return true
 	}
-	return false
+	// Delegate to TableBase for TableRow/TableColumn children.
+	return m.TableBase.DeserializeChild(childType, r)
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -646,6 +658,18 @@ func toFloat(v any) float64 {
 		return float64(x)
 	case int32:
 		return float64(x)
+	case string:
+		f, err := strconv.ParseFloat(x, 64)
+		if err == nil {
+			return f
+		}
+	case []any:
+		// Accumulated values: sum all elements.
+		sum := 0.0
+		for _, elem := range x {
+			sum += toFloat(elem)
+		}
+		return sum
 	}
 	return 0
 }

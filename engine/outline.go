@@ -1,5 +1,7 @@
 package engine
 
+import "fmt"
+
 // outline.go provides AddOutline / OutlineUp / AddBookmark helpers that wrap
 // the PreparedPages outline and bookmark collections.
 
@@ -44,4 +46,22 @@ func (e *ReportEngine) GetBookmarkPage(name string) int {
 		return 0
 	}
 	return e.preparedPages.Bookmarks.GetPageNo(name)
+}
+
+// registerEngineFunctions registers Engine.* methods as callable functions in
+// the report's expression environment. In C#, the script context exposes an
+// Engine property (ReportEngine) whose methods can be called directly in
+// expressions (e.g. Engine.GetBookmarkPage(name)). In Go, we register them
+// as custom functions with the Engine_ prefix.
+func (e *ReportEngine) registerEngineFunctions() {
+	if e.report == nil {
+		return
+	}
+	e.report.RegisterFunction("Engine_GetBookmarkPage", func(args []any) (any, error) {
+		if len(args) == 0 {
+			return 0, nil
+		}
+		name := fmt.Sprintf("%v", args[0])
+		return e.GetBookmarkPage(name), nil
+	})
 }

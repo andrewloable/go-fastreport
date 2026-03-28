@@ -572,11 +572,24 @@ func (e *Exporter) renderObject(obj preview.PreparedObject, scale float32) {
 			// Horizontal or vertical without caps: use CSS border (fast path).
 			colorStr := rgbColor(lineColor)
 			widthStr := fmt.Sprintf("%.2fpx", lineWidth)
+			// Map LineStyle to CSS border-style, matching C# HTMLBorderStyle()
+			// (HTMLExportDraw.cs:46-61).
+			cssStyle := "solid"
+			if obj.Border.Lines[0] != nil {
+				switch obj.Border.Lines[0].Style {
+				case style.LineStyleDot:
+					cssStyle = "dotted"
+				case style.LineStyleDash, style.LineStyleDashDot, style.LineStyleDashDotDot:
+					cssStyle = "dashed"
+				case style.LineStyleDouble:
+					cssStyle = "double"
+				}
+			}
 			var lineExtra string
 			if h <= w {
-				lineExtra = fmt.Sprintf("border-bottom:%s solid %s;height:1px;", widthStr, colorStr)
+				lineExtra = fmt.Sprintf("border-bottom:%s %s %s;height:1px;", widthStr, cssStyle, colorStr)
 			} else {
-				lineExtra = fmt.Sprintf("border-left:%s solid %s;width:1px;", widthStr, colorStr)
+				lineExtra = fmt.Sprintf("border-left:%s %s %s;width:1px;", widthStr, cssStyle, colorStr)
 			}
 			e.sb.WriteString(fmt.Sprintf(`<div %s></div>`, styleAttr(lineExtra)))
 		}
@@ -1437,8 +1450,10 @@ func borderCSS(b *style.Border, scale float32) string {
 				lineStyle = "double"
 			}
 		}
-		sb.WriteString(fmt.Sprintf("%s:%.2fpx %s rgba(%d,%d,%d,%.2f);",
-			s.prop, width, lineStyle, c.R, c.G, c.B, float32(c.A)/255.0))
+		// C# HTMLBorder uses longhand properties: border-X-width, border-X-color,
+		// border-X-style (matching BandBase.cs Layer method).
+		sb.WriteString(fmt.Sprintf("%s-width:%spx;%s-color:rgb(%d, %d, %d);%s-style:%s;",
+			s.prop, pxVal(width), s.prop, c.R, c.G, c.B, s.prop, lineStyle))
 	}
 
 	if b.Shadow {

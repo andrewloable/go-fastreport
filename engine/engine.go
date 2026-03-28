@@ -353,6 +353,13 @@ func (e *ReportEngine) Run(opts RunOptions) error {
 		e.ctx = context.Background()
 	}
 
+	// Register Engine.* functions so expressions like
+	// [Engine.GetBookmarkPage([Categories.CategoryName])] resolve correctly.
+	// C# exposes these as methods on the ReportEngine object; in Go we inject
+	// them as callable functions in the expression environment.
+	// The "Engine." prefix is sanitised to "Engine_" by rewriteEnginePrefix in calc.go.
+	e.registerEngineFunctions()
+
 	if err := e.runPhase1(opts.ResetDataState); err != nil {
 		e.runFinished()
 		return fmt.Errorf("engine phase 1: %w", err)

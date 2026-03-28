@@ -6,9 +6,11 @@ import (
 	"strings"
 
 	"github.com/andrewloable/go-fastreport/band"
+	"github.com/andrewloable/go-fastreport/matrix"
 	"github.com/andrewloable/go-fastreport/object"
 	"github.com/andrewloable/go-fastreport/preview"
 	"github.com/andrewloable/go-fastreport/report"
+	"github.com/andrewloable/go-fastreport/table"
 	"github.com/andrewloable/go-fastreport/utils"
 )
 
@@ -150,6 +152,20 @@ func calcBandLayout(bb *band.BandBase, baseHeight float32, evalFn func(string) s
 		}
 		tops[i] = d.Top()
 		effectiveH[i] = d.Height()
+
+		// For horizontal LineObjects with Height=0, set effective height to the
+		// border line width (default 1) so the line is visible. This matches
+		// C# where LineObject.Height is used in rendering calculations.
+		if line, isLine := obj.(*object.LineObject); isLine {
+			if effectiveH[i] == 0 && d.(interface{ Width() float32 }).Width() > 0 && !line.Diagonal() {
+				lw := float32(1)
+				if line.Border().Lines[0] != nil && line.Border().Lines[0].Width > 0 {
+					lw = line.Border().Lines[0].Width
+				}
+				effectiveH[i] = lw
+			}
+			continue
+		}
 
 		txt, isTxt := obj.(*object.TextObject)
 		if !isTxt {
@@ -428,6 +444,16 @@ func (e *ReportEngine) showFullBandOnce(b *band.BandBase) {
 	// C# ReportEngine.ShowBand which calls band.OnBeforePrint first.
 	b.FireBeforePrint()
 	b.FireBeforeLayout()
+
+	// Apply EvenStyle for alternating data rows.
+	// C# ref: BandBase.SaveState() (BandBase.cs:618-645) — after calling
+	// SaveState and OnBeforePrint, applies the even style when RowNo is even.
+	// The style modifies the band's Fill (e.g. OldLace background) and is
+	// restored after rendering via RestoreState.
+	evenStyleApplied := e.applyBandEvenStyle(b)
+	if evenStyleApplied {
+		defer e.restoreBandEvenStyle(b)
+	}
 
 	// Populate outline entry if band has an OutlineExpression and is not a
 	// reprinted/repeated band. Mirrors C# AddBandOutline: !band.Repeated check.
@@ -898,9 +924,127 @@ func applyBandObjectHeights(bb *band.BandBase, pb *preview.PreparedBand, effecti
 			}
 			continue
 		}
+		// TableObject inserts cell PreparedObjects after its anchor.
+		// Skip over them so the FRX→PreparedObject index mapping stays aligned.
+		if _, ok := obj.(*table.TableObject); ok {
+			// TableObject inserts cell PreparedObjects after its anchor.
+			// Skip the anchor and ALL cells. We don't modify table cell heights —
+			// they're computed by the table engine, not by band CanGrow/CanShrink.
+			// poIdx advances past all objects in pb.Objects that belong to this table.
+			poIdx++ // skip anchor
+			// Skip cell PreparedObjects. The count between adjacent FRX object
+			// anchors is the number of cells from this table.
+			nextAnchor := poIdx
+			// Find the next FRX object's anchor position: skip i to i+1 in the
+			// FRX loop, peek at the next visible/geom FRX object index.
+			nextFRXIdx := i + 1
+			for nextFRXIdx < objs.Len() {
+				nobj := objs.Get(nextFRXIdx)
+				if v, ok2 := nobj.(hasVisible); ok2 && !v.Visible() {
+					nextFRXIdx++
+					continue
+				}
+				if _, ok2 := nobj.(hasGeom); !ok2 {
+					nextFRXIdx++
+					continue
+				}
+				break
+			}
+			if nextFRXIdx >= objs.Len() {
+				// Table is the last FRX object: skip all remaining pb.Objects.
+				nextAnchor = len(pb.Objects)
+			} else {
+				// The next FRX object starts at this poIdx + cells.
+				// Since we don't know the exact cell count, scan for a
+				// pb.Object that matches the next FRX object's name.
+				nextName := objs.Get(nextFRXIdx).(interface{ Name() string }).Name()
+				for nextAnchor < len(pb.Objects) && pb.Objects[nextAnchor].Name != nextName {
+					nextAnchor++
+				}
+			}
+			poIdx = nextAnchor
+			continue
+		}
+		// MatrixObject: same skip pattern as TableObject.
+		if _, ok := obj.(*matrix.MatrixObject); ok {
+			poIdx++
+			nextAnchor := poIdx
+			nextFRXIdx := i + 1
+			for nextFRXIdx < objs.Len() {
+				nobj := objs.Get(nextFRXIdx)
+				if v, ok2 := nobj.(hasVisible); ok2 && !v.Visible() {
+					nextFRXIdx++
+					continue
+				}
+				if _, ok2 := nobj.(hasGeom); !ok2 {
+					nextFRXIdx++
+					continue
+				}
+				break
+			}
+			if nextFRXIdx >= objs.Len() {
+				nextAnchor = len(pb.Objects)
+			} else {
+				nextName := objs.Get(nextFRXIdx).(interface{ Name() string }).Name()
+				for nextAnchor < len(pb.Objects) && pb.Objects[nextAnchor].Name != nextName {
+					nextAnchor++
+				}
+			}
+			poIdx = nextAnchor
+			continue
+		}
 		if effectiveH[i] != pb.Objects[poIdx].Height {
 			pb.Objects[poIdx].Height = effectiveH[i]
 		}
 		poIdx++
 	}
+}
+
+// applyBandEvenStyle applies the EvenStyle to the band and its child objects
+// when the current row number is even (2, 4, 6, ...). Returns true if the
+// style was applied (and thus restoreBandEvenStyle must be called later).
+//
+// C# ref: BandBase.SaveState() (BandBase.cs:618-645):
+//
+//	if (RowNo % 2 == 0) { ApplyEvenStyle(); foreach obj: obj.ApplyEvenStyle(); }
+func (e *ReportEngine) applyBandEvenStyle(b *band.BandBase) bool {
+	if e.report == nil || b.EvenStyleName() == "" || b.RowNo()%2 != 0 {
+		return false
+	}
+	// Save band state.
+	b.SaveState()
+	b.ApplyEvenStyle(e.report)
+	// Save and apply even style on each child object.
+	objs := b.Objects()
+	if objs != nil {
+		for i := 0; i < objs.Len(); i++ {
+			type evenStyleable interface {
+				SaveState()
+				ApplyEvenStyle(report.StyleLookup)
+			}
+			if es, ok := objs.Get(i).(evenStyleable); ok {
+				es.SaveState()
+				es.ApplyEvenStyle(e.report)
+			}
+		}
+	}
+	return true
+}
+
+// restoreBandEvenStyle restores the band and child objects to their pre-EvenStyle
+// state. Must be called after rendering when applyBandEvenStyle returned true.
+func (e *ReportEngine) restoreBandEvenStyle(b *band.BandBase) {
+	// Restore child objects first (reverse of save order).
+	objs := b.Objects()
+	if objs != nil {
+		for i := 0; i < objs.Len(); i++ {
+			type restoreable interface {
+				RestoreState()
+			}
+			if rs, ok := objs.Get(i).(restoreable); ok {
+				rs.RestoreState()
+			}
+		}
+	}
+	b.RestoreState()
 }

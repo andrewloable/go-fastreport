@@ -435,6 +435,16 @@ func (r *Report) Styles() *style.StyleSheet { return r.styles }
 // SetStyles replaces the report's style sheet.
 func (r *Report) SetStyles(ss *style.StyleSheet) { r.styles = ss }
 
+// FindStyle returns the named style entry from the report's style sheet,
+// or nil if not found. This satisfies the report.StyleLookup interface so
+// the engine can pass the Report directly to ApplyEvenStyle.
+func (r *Report) FindStyle(name string) *style.StyleEntry {
+	if r.styles == nil {
+		return nil
+	}
+	return r.styles.Find(name)
+}
+
 // --- Pages ---
 
 // Pages returns the ordered list of ReportPage templates.

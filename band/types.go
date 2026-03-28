@@ -927,6 +927,9 @@ func (d *DataBand) Serialize(w report.Writer) error {
 	if d.resetPageNumber {
 		w.WriteBool("ResetPageNumber", true)
 	}
+	if d.maxRows != 0 {
+		w.WriteInt("MaxRows", d.maxRows)
+	}
 	if d.rowCount != 1 {
 		w.WriteInt("RowCount", d.rowCount)
 	}
@@ -1005,6 +1008,7 @@ func (d *DataBand) Deserialize(r report.Reader) error {
 	d.keepSummary = r.ReadBool("KeepSummary", false)
 	d.collectChildRows = r.ReadBool("CollectChildRows", false)
 	d.resetPageNumber = r.ReadBool("ResetPageNumber", false)
+	d.maxRows = r.ReadInt("MaxRows", 0)
 	d.rowCount = r.ReadInt("RowCount", 1)
 	if n := r.ReadInt("Columns.Count", 0); n > 0 {
 		_ = d.columns.SetCount(n)

@@ -26,12 +26,13 @@ func (t *TableBase) DeserializeChild(childType string, r report.Reader) bool {
 			if ct == "TableCell" {
 				cell := NewTableCell()
 				_ = cell.Deserialize(r)
-				// TableCell may have sub-children (e.g. nested objects); skip for now.
+				// Deserialize sub-children of the cell (e.g. PictureObject).
 				for {
-					_, moreKids := r.NextChild()
+					childType, moreKids := r.NextChild()
 					if !moreKids {
 						break
 					}
+					cell.DeserializeChild(childType, r)
 					if r.FinishChild() != nil { break }
 				}
 				row.AddCell(cell)

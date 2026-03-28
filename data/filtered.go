@@ -159,3 +159,16 @@ func (f *FilteredDataSource) Columns() []Column {
 
 // Close delegates to inner.
 func (f *FilteredDataSource) Close() error { return f.inner.Close() }
+
+// SortRows delegates sorting to the inner data source (if it implements
+// Sortable) and then rebuilds the filtered row index. This ensures that
+// child DataBand sort specs are applied even when the data source is
+// wrapped in a relation filter.
+// C# equivalent: DataSource.Init(relation, filter, sort) applies sort
+// before relation filtering; the end result is the same.
+func (f *FilteredDataSource) SortRows(specs []SortSpec) {
+	if inner, ok := f.inner.(Sortable); ok {
+		inner.SortRows(specs)
+		_ = f.rebuildIndex()
+	}
+}

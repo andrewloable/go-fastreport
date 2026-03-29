@@ -28,6 +28,12 @@ type TableRow struct {
 	// savedHeight / savedVisible store state for SaveState/RestoreState.
 	savedHeight  float32
 	savedVisible bool
+
+	// originalIndex tracks which template row index this result row was
+	// cloned from during ManualBuild. Used by table aggregate functions
+	// (Sum, Min, Max, etc.) to determine grouping boundaries.
+	// Mirrors C# TableRow.OriginalComponent concept.
+	originalIndex int
 }
 
 // NewTableRow creates a TableRow with defaults matching the C# constructor.
@@ -41,6 +47,12 @@ func NewTableRow() *TableRow {
 	r.SetHeight(18.9)
 	return r
 }
+
+// OriginalIndex returns the template row index this result row was cloned from.
+func (r *TableRow) OriginalIndex() int { return r.originalIndex }
+
+// SetOriginalIndex sets the template row index.
+func (r *TableRow) SetOriginalIndex(v int) { r.originalIndex = v }
 
 // Cells returns the cells in this row.
 func (r *TableRow) Cells() []*TableCell { return r.cells }

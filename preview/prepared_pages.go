@@ -321,6 +321,17 @@ type PreparedBand struct {
 	// when the band is split across pages. Zero means no repetition.
 	// C# ref: TableBase.FixedRows → repeated header rows on page breaks.
 	FixedHeaderHeight float32
+	// BackgroundHeight, if > 0, overrides Height for the band background div.
+	// Used when a table/matrix creates its own section background: the band
+	// background only covers the gap before the table, not the full content.
+	// C# ref: ExportBandLayers renders band background with band's own height
+	// while the table section background is a separate LayerBack element.
+	BackgroundHeight float32
+	// BackgroundCSS, if non-empty, is a second CSS class for the band background
+	// div (e.g., a glass-fill PNG image layered over the base fill color).
+	// C# ref: HTMLExportLayers.cs LayerPicture → GetStyleTag(index1, index2)
+	// emits dual-class "s{i1} s{i2}" for non-SolidFill band backgrounds.
+	BackgroundCSS string
 }
 
 // ObjectType distinguishes the kind of report object stored in PreparedObject.
@@ -536,6 +547,12 @@ type PreparedObject struct {
 	// MergeModeNone (0) means no merging (default).
 	// C# source: TextObject.MergeMode (TextObject.cs)
 	MergeMode MergeMode
+
+	// BackgroundCSS is an additional CSS class for the element's background image.
+	// Used for GlassFill and other non-solid fills that render as PNG overlays.
+	// When set, the HTML exporter creates a dual-class element (base + background).
+	// C# ref: HTMLExportLayers.cs LayerPicture → GetStyleTag(obj, picStyle).
+	BackgroundCSS string
 
 	// ── Picture-specific fields (ObjectTypePicture only) ─────────────────────
 	// PictureSizeMode mirrors object.SizeMode (0=Normal,1=StretchImage,2=AutoSize,

@@ -27,21 +27,18 @@ func MeasureText(text string, f style.Font, maxWidth float32) (width, height flo
 	// GDI+ MeasureString (GenericDefault StringFormat) adds extra horizontal
 	// padding of approximately fontSize/6 on each side (total ≈ fontSize/3).
 	// C# ref: MSDN "StringFormat.GenericDefault includes trailing space".
+	// When using a real system font, Go's font.MeasureString returns advance
+	// widths that closely match C#'s MeasureString (which already includes the
+	// GDI trailing space). Only add gdiPadW for the basicfont fallback.
 	gdiPadW := float32(0)
-	if isRealFont {
-		gdiPadW = f.Size * 96.0 / 72.0 / 3.0 // ~1/3 em total padding
+	if !isRealFont {
+		// No GDI padding for basicfont; ScaleWidth handles the conversion.
 	}
 
 	// For wrapping: use the real maxWidth with real fonts, scale for basicfont.
 	wrapW := maxWidth
 	if !isRealFont {
 		wrapW = scaleMaxWidth(maxWidth, f)
-	} else if maxWidth > 0 {
-		// Subtract GDI padding from available wrap width.
-		wrapW = maxWidth - gdiPadW
-		if wrapW < 0 {
-			wrapW = maxWidth
-		}
 	}
 
 	lines := wrapLines(text, face, wrapW)
@@ -52,7 +49,7 @@ func MeasureText(text string, f style.Font, maxWidth float32) (width, height flo
 			maxW = w
 		}
 	}
-	// Add GDI+ MeasureString horizontal padding.
+	// Add GDI+ MeasureString horizontal padding (basicfont fallback only).
 	maxW += gdiPadW
 	return maxW, lineH * float32(len(lines))
 }
@@ -78,14 +75,26 @@ func MeasureLines(text string, f style.Font, maxWidth float32) int {
 		face := faceForStyle(f)
 		return len(wrapLines(text, face, 0))
 	}
-	// Compute lines from full text width vs available width.
-	// The wrapLines/scaleMaxWidth approach uses a monospace fallback that
-	// underestimates proportional text widths, so we calculate directly.
-	fullW, _ := MeasureText(text, f, 0)
-	if fullW <= maxWidth {
-		return 1
+	// Split on explicit line breaks first, then calculate word-wrap lines
+	// for each paragraph. This ensures \r\n and \n are always counted.
+	paragraphs := strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
+	total := 0
+	for _, para := range paragraphs {
+		if para == "" {
+			total++
+			continue
+		}
+		fullW, _ := MeasureText(para, f, 0)
+		if fullW <= maxWidth {
+			total++
+		} else {
+			total += int(fullW/maxWidth) + 1
+		}
 	}
-	return int(fullW/maxWidth) + 1
+	if total < 1 {
+		total = 1
+	}
+	return total
 }
 
 // scaleMaxWidth adjusts maxWidth for the basicfont fallback.
@@ -107,6 +116,13 @@ func scaleMaxWidth(maxWidth float32, f style.Font) float32 {
 // This compensates for the monospace basicfont being wider than proportional
 // fonts like Tahoma or Arial.
 func ScaleWidth(measuredWidth float32, f style.Font) float32 {
+	// When MeasureText used a real system font (not basicfont), the width is
+	// already correct and no scaling is needed. Only scale when basicfont was
+	// used as a fallback (monospace approximation).
+	face := faceForStyle(f)
+	if face != basicfont.Face7x13 {
+		return measuredWidth
+	}
 	fontPx := f.Size * 96.0 / 72.0
 	if fontPx <= 0 {
 		return measuredWidth

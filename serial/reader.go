@@ -260,6 +260,33 @@ func (r *Reader) SkipElement() error {
 	return nil
 }
 
+// ReadInnerText reads and returns the text content of the current element,
+// consuming all tokens up to and including the end element. After calling this,
+// the caller should call FinishChild. Sets skipped=true so FinishChild won't
+// try to skip again.
+// This is used for elements like <ScriptText> that contain CDATA/text content
+// rather than attributes or child elements.
+func (r *Reader) ReadInnerText() string {
+	var buf strings.Builder
+	depth := 1
+	for depth > 0 {
+		tok, err := r.dec.Token()
+		if err != nil {
+			break
+		}
+		switch t := tok.(type) {
+		case xml.CharData:
+			buf.Write(t)
+		case xml.StartElement:
+			depth++
+		case xml.EndElement:
+			depth--
+		}
+	}
+	r.skipped = true
+	return buf.String()
+}
+
 // CurrentName returns the element name of the most recently read element.
 func (r *Reader) CurrentName() string {
 	return r.curName

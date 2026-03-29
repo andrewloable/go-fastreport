@@ -95,3 +95,92 @@ func (e *ReportEngine) resetGroupTotals() {
 		}
 	}
 }
+
+// accumulateTotalsForBand is like accumulateTotals but only accumulates totals
+// whose Evaluator matches bandName.  Totals with an empty Evaluator always
+// accumulate (grand-total behaviour).
+//
+// C# ref: TotalCollection.ProcessBand → if (total.Evaluator == band) total.AddValue()
+func (e *ReportEngine) accumulateTotalsForBand(bandName string) {
+	if e.report == nil || len(e.aggregateTotals) == 0 {
+		return
+	}
+	dict := e.report.Dictionary()
+
+	for _, at := range e.aggregateTotals {
+		// Skip if Evaluator is set and doesn't match the current band.
+		if at.Evaluator != "" && !strings.EqualFold(at.Evaluator, bandName) {
+			continue
+		}
+
+		var val any
+
+		switch at.TotalType {
+		case data.TotalTypeCount, data.TotalTypeCountDistinct:
+			val = 1
+		default:
+			if at.Expression == "" {
+				continue
+			}
+			v, err := e.report.Calc(at.Expression)
+			if err != nil {
+				continue
+			}
+			val = v
+		}
+
+		if at.EvaluateCondition != "" {
+			condVal, err := e.report.Calc(at.EvaluateCondition)
+			if err == nil {
+				if b, ok := condVal.(bool); ok && !b {
+					continue
+				}
+			}
+		}
+
+		_ = at.Add(val)
+
+		if dict != nil {
+			for _, t := range dict.Totals() {
+				if strings.EqualFold(t.Name, at.Name) {
+					t.Value = at.Value()
+					break
+				}
+			}
+		}
+	}
+}
+
+// resetTotalsForBand resets AggregateTotals whose PrintOn matches bandName and
+// whose ResetAfterPrint flag is true.  repeated controls whether the band is a
+// reprint; when repeated=true, only totals with ResetOnReprint=true are reset.
+//
+// C# ref: TotalCollection.ProcessBand →
+//
+//	else if (total.PrintOn == band && total.ResetAfterPrint)
+//	    if (!band.Repeated || total.ResetOnReprint) total.ResetValue()
+func (e *ReportEngine) resetTotalsForBand(bandName string, repeated bool) {
+	if e.report == nil || len(e.aggregateTotals) == 0 || bandName == "" {
+		return
+	}
+	for _, at := range e.aggregateTotals {
+		if !strings.EqualFold(at.PrintOn, bandName) {
+			continue
+		}
+		if !at.ResetAfterPrint {
+			continue
+		}
+		if repeated && !at.ResetOnReprint {
+			continue
+		}
+		at.Reset()
+		if dict := e.report.Dictionary(); dict != nil {
+			for _, t := range dict.Totals() {
+				if strings.EqualFold(t.Name, at.Name) {
+					t.Value = at.Value()
+					break
+				}
+			}
+		}
+	}
+}

@@ -492,6 +492,16 @@ func (e *ReportEngine) showBand(b report.Base) {
 	if !isOverlay {
 		e.AdvanceY(height)
 	}
+
+	// C# ShowBand calls ShowChildBand after the parent band has been rendered.
+	// This ensures the ChildBand (e.g. ReportTitleBand's Child1) appears
+	// immediately after its parent at the current CurY position.
+	// C# ref: ReportEngine.Bands.cs ShowBand → ShowChildBand(band).
+	if bb := extractBandBase(b); bb != nil {
+		if child := bb.Child(); child != nil {
+			e.ShowFullBand(&child.BandBase)
+		}
+	}
 }
 
 // populateBandProps fills in the PreparedBand's Width, FillColor, and Border
@@ -513,6 +523,12 @@ func populateBandProps(b report.Base, pb *preview.PreparedBand) {
 	if f, ok := b.(hasFill); ok {
 		if sf, ok2 := f.Fill().(*style.SolidFill); ok2 {
 			pb.FillColor = sf.Color
+		} else if gf, ok2 := f.Fill().(*style.GlassFill); ok2 {
+			// GlassFill: C# ReportComponentBase.FillColor returns Color.Transparent
+			// for non-SolidFill types, so the base div is transparent. The glass
+			// sheen is rendered as a PNG image in a second CSS class.
+			// C# ref: HTMLExportLayers.cs LayerBack → LayerPicture → dual-class.
+			pb.BackgroundCSS = renderGlassFillCSS(gf, int(pb.Width), int(pb.Height))
 		}
 	}
 	if br, ok := b.(hasBorder); ok {

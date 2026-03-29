@@ -70,8 +70,10 @@ func (e *ReportEngine) RunDataBandRowsKeep(db *band.DataBand, rows int, keepFirs
 		db.SetIsFirstRow(isFirstRow)
 		db.SetIsLastRow(isLastRow)
 
-		// Accumulate aggregate totals for this row.
-		e.accumulateTotals()
+		// Accumulate aggregate totals for this row, filtering by the current
+		// data band name so only totals whose Evaluator matches accumulate.
+		// C# ref: TotalCollection.ProcessBand → if (total.Evaluator == band) total.AddValue()
+		e.accumulateTotalsForBand(db.Name())
 
 		// keep header
 		if isFirstRow && keepFirstRow {
@@ -352,8 +354,8 @@ func (e *ReportEngine) RunDataBandFull(db *band.DataBand) error {
 				e.report.SetCalcContext(fullDS)
 			}
 		}
-		// Accumulate aggregate totals for this row.
-		e.accumulateTotals()
+		// Accumulate aggregate totals for this row, filtering by band name.
+		e.accumulateTotalsForBand(db.Name())
 
 		// keep header
 		if isFirstRow && keepFirstRow {
@@ -547,6 +549,11 @@ func (e *ReportEngine) showDataBandFooter(db *band.DataBand) {
 	e.RemoveReprint(footerBand(ftr))
 	if ftr != nil {
 		e.ShowFullBand(&ftr.HeaderFooterBandBase.BandBase)
+		// C# TotalCollection.ProcessBand: after a footer band is printed,
+		// reset any totals whose PrintOn matches this footer's name and
+		// whose ResetAfterPrint=true.
+		// C# ref: ReportEngine.Bands.cs ShowBand → totals.ProcessBand(band)
+		e.resetTotalsForBand(ftr.Name(), ftr.Repeated())
 	}
 	if hdr := db.Header(); hdr != nil {
 		e.RemoveReprint(&hdr.HeaderFooterBandBase.BandBase)
@@ -592,15 +599,15 @@ func (e *ReportEngine) showDataBandBody(db *band.DataBand, rowCount int, cs *dat
 	if db.ResetPageNumber() && (db.FirstRowStartsNewPage() || db.RowNo() > 1) {
 		e.ResetLogicalPageNumber()
 	}
-	// KeepWithData footer: if the footer must stay with this data row and both
-	// won't fit on the current page, force a page break before showing the row.
-	// Mirrors C# ShowDataBand lines 203-207 (ReportEngine.DataBands.cs).
-	// (Full C# uses AddLastToFooter to move objects; Go uses a simpler page-break approach.)
-	if ftr := db.Footer(); ftr != nil && db.CanBreak() && ftr.KeepWithData() {
-		if ftr.Height()+db.Height() > e.FreeSpace() {
-			e.startNewPageForCurrent()
-		}
-	}
+	// NOTE: C# ShowDataBand (lines 203-207) calls dataBand.AddLastToFooter(footer)
+	// here when footer.KeepWithData && footer.Height+row.Height > FreeSpace.
+	// AddLastToFooter is a complex band-split that moves overflowing objects into
+	// the footer so the data row fits on the current page. We do NOT implement this
+	// splitting; instead the keepLastRow + CheckKeepFooter mechanism in the outer
+	// loop handles keeping the last row with its footer. An aggressive page break
+	// here would incorrectly break BEFORE every row that's taller than freeSpace
+	// minus the footer, producing too many pages.
+	// C# ref: ReportEngine.DataBands.cs ShowDataBand lines 192-210.
 	if cs != nil {
 		e.showBandInColumn(db, cs)
 	} else {
@@ -700,7 +707,7 @@ func (e *ReportEngine) runDataBandHierarchical(db *band.DataBand, ds band.DataSo
 			if e.report != nil {
 				e.report.SetCalcContext(fullDS)
 			}
-			e.accumulateTotals()
+			e.accumulateTotalsForBand(db.Name())
 
 			if !headerShown {
 				if hdr := db.Header(); hdr != nil {

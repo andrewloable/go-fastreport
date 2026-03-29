@@ -654,6 +654,10 @@ func (t *TableBase) CalcWidth() float32 {
 			total += col.Width()
 		}
 	}
+	// C# ref: TableBase.CalcWidth sets Width = total (line 983).
+	// This propagates the actual rendered width to the component so that
+	// sibling objects can be repositioned (e.g. two matrices side-by-side).
+	t.SetWidth(total)
 	return total
 }
 

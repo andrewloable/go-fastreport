@@ -139,7 +139,12 @@
       "Bash(curl -sL \"https://raw.githubusercontent.com/wine-mirror/wine/master/dlls/gdiplus/gdiplus_private.h\" -o wine_gdiplus_private.h)",
       "Bash(curl -sL \"https://raw.githubusercontent.com/wine-mirror/wine/master/dlls/gdiplus/gdiplus.c\" -o wine_gdiplus.c)",
       "Bash(curl -sL \"https://raw.githubusercontent.com/wine-mirror/wine/master/dlls/gdiplus/stringformat.c\" -o wine_stringformat.c)",
-      "Read(//System/Library/Fonts/Supplemental/**)"
+      "Read(//System/Library/Fonts/Supplemental/**)",
+      "Bash(./compare_html_semantic --help)",
+      "Bash(./compare_html_semantic -report \"Two Cell Dimensions, Side-by-Side\" -out /tmp/delta/ 2>&1)",
+      "Bash(./compare_html_semantic -report \"Two Cell Dimensions, Side-by-Side\" -out /tmp/delta/)",
+      "Bash(./compare_html_semantic -report \"Two Cell Dimensions, Side-by-Side\" -out html-delta/)",
+      "Bash(do go:*)"
     ]
   }
 }

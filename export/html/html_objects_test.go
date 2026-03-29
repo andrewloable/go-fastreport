@@ -438,6 +438,8 @@ func TestRenderObject_Picture_NoBlob_EmptyPlaceholder(t *testing.T) {
 // ── ObjectTypeLine ─────────────────────────────────────────────────────────────
 
 func TestRenderObject_Line_Horizontal(t *testing.T) {
+	// C# renders all lines as PNG images via LayerPicture (one div, two CSS classes).
+	// Reference: HTMLExportLayers.cs:939-941
 	pp := buildPage([]preview.PreparedObject{
 		{
 			Kind:         preview.ObjectTypeLine,
@@ -446,8 +448,8 @@ func TestRenderObject_Line_Horizontal(t *testing.T) {
 		},
 	})
 	out := exportHTML(t, pp)
-	if !strings.Contains(out, "border-bottom:1.00px solid rgb(0, 0, 0);") {
-		t.Errorf("horizontal line: expected border-bottom:1.00px solid rgb(0, 0, 0);, got %q", out)
+	if !strings.Contains(out, "base64,") {
+		t.Errorf("horizontal line: expected base64 PNG image, got %q", out)
 	}
 }
 
@@ -460,12 +462,13 @@ func TestRenderObject_Line_Vertical(t *testing.T) {
 		},
 	})
 	out := exportHTML(t, pp)
-	if !strings.Contains(out, "border-left:1.00px solid rgb(0, 0, 0);") {
-		t.Errorf("vertical line: expected border-left:1.00px solid rgb(0, 0, 0);, got %q", out)
+	if !strings.Contains(out, "base64,") {
+		t.Errorf("vertical line: expected base64 PNG image, got %q", out)
 	}
 }
 
 func TestRenderObject_Line_Diagonal(t *testing.T) {
+	// C# renders diagonal lines as PNG images too (via LayerPicture).
 	pp := buildPage([]preview.PreparedObject{
 		{
 			Kind:         preview.ObjectTypeLine,
@@ -474,11 +477,8 @@ func TestRenderObject_Line_Diagonal(t *testing.T) {
 		},
 	})
 	out := exportHTML(t, pp)
-	if !strings.Contains(out, "<svg") {
-		t.Errorf("diagonal line: expected SVG element, got %q", out)
-	}
-	if !strings.Contains(out, "<line ") {
-		t.Errorf("diagonal line: expected <line> SVG element, got %q", out)
+	if !strings.Contains(out, "base64,") {
+		t.Errorf("diagonal line: expected base64 PNG image, got %q", out)
 	}
 }
 

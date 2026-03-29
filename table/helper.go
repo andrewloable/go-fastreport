@@ -63,6 +63,23 @@ type TableHelper struct {
 	// pageBreak is set by PageBreak() and consumed by the next PrintRow/PrintColumn.
 	// Mirrors TableHelper.pageBreak (TableHelper.cs line 22).
 	pageBreak bool
+
+	// AutoSpans tracking — mirrors C# TableHelper columnSpans/rowSpans lists
+	// (TableHelper.cs lines 20-21). These track cells with ColSpan/RowSpan > 1
+	// so that repeated prints of the same template column/row automatically
+	// expand the span in the result table.
+	columnSpans []spanData
+	rowSpans    []spanData
+}
+
+// spanData tracks a cell with ColSpan or RowSpan > 1 during AutoSpans processing.
+// Mirrors C# TableHelper.SpanData (TableHelper.cs lines 365-372).
+type spanData struct {
+	originalCell       *TableCell // the template cell (has the original ColSpan/RowSpan)
+	resultCell         *TableCell // the result cell whose span is being expanded
+	originalCellOrigin [2]int     // [col, row] in the template table
+	resultCellOrigin   [2]int     // [col, row] in the result table
+	finishFlag         bool       // set when the last col/row of the original span is reached
 }
 
 type nowPrinting int
@@ -130,6 +147,7 @@ func (h *TableHelper) PrintRow(index int) {
 		}
 
 		row := cloneRow(srcRow)
+		row.SetOriginalIndex(index)
 		row.SetPageBreak(h.pageBreak)
 		h.result.rows = append(h.result.rows, row)
 		h.nowPrinting = npRow
@@ -145,7 +163,9 @@ func (h *TableHelper) PrintRow(index int) {
 
 		// Ensure result has enough rows.
 		for len(h.result.rows) <= h.printRowIdx {
-			h.result.rows = append(h.result.rows, cloneRow(srcRow))
+			r := cloneRow(srcRow)
+			r.SetOriginalIndex(index)
+			h.result.rows = append(h.result.rows, r)
 		}
 
 		// Apply page-break flag to the target row (new or existing).
@@ -199,7 +219,9 @@ func (h *TableHelper) PrintColumn(index int) {
 
 		// Ensure result columns are wide enough.
 		for len(h.result.columns) <= h.printColIdx {
-			h.result.columns = append(h.result.columns, cloneColumn(srcCol))
+			c := cloneColumn(srcCol)
+			c.SetOriginalIndex(index)
+			h.result.columns = append(h.result.columns, c)
 		}
 
 		// Apply page-break flag to the target column (new or existing).
@@ -221,6 +243,7 @@ func (h *TableHelper) PrintColumn(index int) {
 		}
 
 		col := cloneColumn(srcCol)
+		col.SetOriginalIndex(index)
 		col.SetPageBreak(h.pageBreak)
 		h.result.columns = append(h.result.columns, col)
 		h.nowPrinting = npColumn
@@ -238,6 +261,8 @@ func (h *TableHelper) PrintColumns() {
 // copyCells copies a cell from the template at (srcColIdx, srcRowIdx) into
 // the result at (dstColIdx, dstRowIdx), applying auto-span logic when
 // ManualBuildAutoSpans is set.
+//
+// Mirrors C# TableHelper.CopyCells (TableHelper.cs lines 185-383).
 func (h *TableHelper) copyCells(srcColIdx, srcRowIdx, dstColIdx, dstRowIdx int) {
 	if dstRowIdx < 0 || dstRowIdx >= len(h.result.rows) {
 		return
@@ -253,14 +278,158 @@ func (h *TableHelper) copyCells(srcColIdx, srcRowIdx, dstColIdx, dstRowIdx int) 
 		srcColIdx >= 0 && srcColIdx < h.src.ColumnCount() {
 		srcCell = h.src.Cell(srcRowIdx, srcColIdx)
 	}
+	if srcCell == nil {
+		return
+	}
 
-	if srcCell != nil {
+	needData := true
+
+	if h.src.ManualBuildAutoSpans && h.rowsPriority {
+		// ── Column span tracking (row-priority path) ──
+		// Mirrors C# TableHelper.CopyCells AutoSpans rowsPriority block
+		// (TableHelper.cs lines 193-279).
+		if len(h.columnSpans) > 0 {
+			sd := &h.columnSpans[0]
+			// Check if we reached the last column of the original span.
+			lastCol := sd.originalCellOrigin[0] + sd.originalCell.ColSpan() - 1
+			if srcColIdx == lastCol {
+				sd.finishFlag = true
+			}
+			// Clear span if we've wrapped back to the start after finishing,
+			// or if we're outside the original span range.
+			if (sd.finishFlag && srcColIdx == sd.originalCellOrigin[0]) ||
+				srcColIdx < sd.originalCellOrigin[0] || srcColIdx > lastCol {
+				h.columnSpans = h.columnSpans[:0]
+			} else {
+				sd.resultCell.SetColSpan(sd.resultCell.ColSpan() + 1)
+				needData = false
+			}
+		}
+
+		// Start tracking a new column span if the cell has ColSpan > 1.
+		if srcCell.ColSpan() > 1 && len(h.columnSpans) == 0 {
+			// The result cell will be created below when needData is true.
+			// We store a placeholder and update it after the cell is placed.
+			h.columnSpans = append(h.columnSpans, spanData{
+				originalCell:       srcCell,
+				originalCellOrigin: [2]int{srcColIdx, srcRowIdx},
+				resultCellOrigin:   [2]int{dstColIdx, dstRowIdx},
+				// resultCell is set below after the cell is placed in the row.
+			})
+		}
+
+		// ── Row span tracking ──
+		// Check row spans once per row (at the first column).
+		if dstColIdx == 0 {
+			for i := len(h.rowSpans) - 1; i >= 0; i-- {
+				sd := &h.rowSpans[i]
+				lastRow := sd.originalCellOrigin[1] + sd.originalCell.RowSpan() - 1
+				if srcRowIdx == lastRow {
+					sd.finishFlag = true
+				}
+				if (sd.finishFlag && srcRowIdx == sd.originalCellOrigin[1]) ||
+					srcRowIdx < sd.originalCellOrigin[1] || srcRowIdx > lastRow {
+					h.rowSpans = append(h.rowSpans[:i], h.rowSpans[i+1:]...)
+				} else {
+					sd.resultCell.SetRowSpan(sd.resultCell.RowSpan() + 1)
+				}
+			}
+		}
+
+		// Skip cell if it falls inside a row span.
+		for i := range h.rowSpans {
+			sd := &h.rowSpans[i]
+			if dstColIdx >= sd.resultCellOrigin[0] &&
+				dstColIdx <= sd.resultCellOrigin[0]+sd.resultCell.ColSpan()-1 &&
+				dstRowIdx >= sd.resultCellOrigin[1] &&
+				dstRowIdx <= sd.resultCellOrigin[1]+sd.resultCell.RowSpan() {
+				needData = false
+				break
+			}
+		}
+
+		// Start tracking a new row span.
+		if srcCell.RowSpan() > 1 && needData {
+			h.rowSpans = append(h.rowSpans, spanData{
+				originalCell:       srcCell,
+				originalCellOrigin: [2]int{srcColIdx, srcRowIdx},
+				resultCellOrigin:   [2]int{dstColIdx, dstRowIdx},
+				// resultCell is set below.
+			})
+		}
+	} else if h.src.ManualBuildAutoSpans && !h.rowsPriority {
+		// ── Column-priority AutoSpans path ──
+		// Mirrors C# TableHelper.CopyCells column-priority block
+		// (TableHelper.cs lines 281-366).
+		if len(h.rowSpans) > 0 {
+			sd := &h.rowSpans[0]
+			lastRow := sd.originalCellOrigin[1] + sd.originalCell.RowSpan() - 1
+			if srcRowIdx == lastRow {
+				sd.finishFlag = true
+			}
+			if (sd.finishFlag && srcRowIdx == sd.originalCellOrigin[1]) ||
+				srcRowIdx < sd.originalCellOrigin[1] || srcRowIdx > lastRow {
+				h.rowSpans = h.rowSpans[:0]
+			} else {
+				sd.resultCell.SetRowSpan(sd.resultCell.RowSpan() + 1)
+				needData = false
+			}
+		}
+
+		if srcCell.RowSpan() > 1 && len(h.rowSpans) == 0 {
+			h.rowSpans = append(h.rowSpans, spanData{
+				originalCell:       srcCell,
+				originalCellOrigin: [2]int{srcColIdx, srcRowIdx},
+				resultCellOrigin:   [2]int{dstColIdx, dstRowIdx},
+			})
+		}
+
+		if dstRowIdx == 0 {
+			for i := len(h.columnSpans) - 1; i >= 0; i-- {
+				sd := &h.columnSpans[i]
+				lastCol := sd.originalCellOrigin[0] + sd.originalCell.ColSpan() - 1
+				if srcColIdx == lastCol {
+					sd.finishFlag = true
+				}
+				if (sd.finishFlag && srcColIdx == sd.originalCellOrigin[0]) ||
+					srcColIdx < sd.originalCellOrigin[0] || srcColIdx > lastCol {
+					h.columnSpans = append(h.columnSpans[:i], h.columnSpans[i+1:]...)
+				} else {
+					sd.resultCell.SetColSpan(sd.resultCell.ColSpan() + 1)
+				}
+			}
+		}
+
+		for i := range h.columnSpans {
+			sd := &h.columnSpans[i]
+			if dstColIdx >= sd.resultCellOrigin[0] &&
+				dstColIdx <= sd.resultCellOrigin[0]+sd.resultCell.ColSpan()-1 &&
+				dstRowIdx >= sd.resultCellOrigin[1] &&
+				dstRowIdx <= sd.resultCellOrigin[1]+sd.resultCell.RowSpan()-1 {
+				needData = false
+				break
+			}
+		}
+
+		if srcCell.ColSpan() > 1 && needData {
+			h.columnSpans = append(h.columnSpans, spanData{
+				originalCell:       srcCell,
+				originalCellOrigin: [2]int{srcColIdx, srcRowIdx},
+				resultCellOrigin:   [2]int{dstColIdx, dstRowIdx},
+			})
+		}
+	}
+
+	if needData {
 		dst := cloneCell(srcCell)
-		// Note: ManualBuildAutoSpans span reset is NOT applied here.
-		// Data cells naturally have RowSpan=1 from the template.
-		// Non-data cells (trailer/header) should keep their original spans
-		// (e.g. Cell23 with RowSpan=4). C#'s CalcSpans re-detects spans
-		// but Go preserves template spans, which is equivalent.
+		dst.SetOriginalCellName(srcCell.Name())
+		// When AutoSpans is active, result cell starts with ColSpan/RowSpan = 1;
+		// the span tracking increments them. Without AutoSpans, preserve the
+		// template spans directly.
+		if h.src.ManualBuildAutoSpans {
+			dst.SetColSpan(1)
+			dst.SetRowSpan(1)
+		}
 		if h.CellTextEval != nil {
 			dst.SetText(h.CellTextEval(dst.Text()))
 		}
@@ -268,6 +437,20 @@ func (h *TableHelper) copyCells(srcColIdx, srcRowIdx, dstColIdx, dstRowIdx int) 
 			h.CellObjectEval(dst)
 		}
 		row.cells[dstColIdx] = dst
+
+		// Update spanData resultCell references to point to the placed cell.
+		for i := range h.columnSpans {
+			if h.columnSpans[i].resultCell == nil &&
+				h.columnSpans[i].resultCellOrigin == [2]int{dstColIdx, dstRowIdx} {
+				h.columnSpans[i].resultCell = dst
+			}
+		}
+		for i := range h.rowSpans {
+			if h.rowSpans[i].resultCell == nil &&
+				h.rowSpans[i].resultCellOrigin == [2]int{dstColIdx, dstRowIdx} {
+				h.rowSpans[i].resultCell = dst
+			}
+		}
 	}
 }
 

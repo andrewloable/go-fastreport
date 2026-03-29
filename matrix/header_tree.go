@@ -198,10 +198,28 @@ func (m *MatrixObject) BuildTemplateMultiLevel() {
 		nColHeaderRows = 1
 	}
 
-	// Total table columns = row-header columns + one per col-leaf.
-	nCols := nRowHeaderCols + len(colLeaves)
-	// Total table rows = col-header rows + one per row-leaf.
-	nRows := nColHeaderRows + len(rowLeaves)
+	// C# ref: MatrixHelper.UpdateTemplateSizes — CellsSideBySide with multiple
+	// cell descriptors adds an extra column header row for cell descriptor names
+	// (e.g. "Items Sold", "Revenue") and multiplies body columns by nCells.
+	nCells := 1
+	sideBySide := m.CellsSideBySide && len(m.Data.Cells) > 1
+	origColHeaderRows := nColHeaderRows
+	if sideBySide {
+		nCells = len(m.Data.Cells)
+		nColHeaderRows++ // extra row for cell descriptor names
+	}
+
+	// C# ref: MatrixHelper.UpdateTemplateSizes — when ShowTitle, headerHeight++.
+	// The title row occupies row 0 in the result table and shifts everything else down.
+	titleOffset := 0
+	if m.ShowTitle {
+		titleOffset = 1
+	}
+
+	// Total table columns = row-header columns + (col-leaves × nCells).
+	nCols := nRowHeaderCols + len(colLeaves)*nCells
+	// Total table rows = title (if any) + col-header rows + one per row-leaf.
+	nRows := titleOffset + nColHeaderRows + len(rowLeaves)
 
 	// Reset table and restore position.
 	m.TableBase = *table.NewTableBase()
@@ -216,20 +234,26 @@ func (m *MatrixObject) BuildTemplateMultiLevel() {
 	// Determine if we need a Total column.
 	hasTotals := len(m.Data.Rows) > 0 && len(m.Data.Columns) > 0
 	if hasTotals {
-		nCols++ // +1 for the Total column
+		nCols += nCells // +nCells for Total columns (1 per cell descriptor)
 	}
 
 	// Add columns using template column widths.
-	// Template layout: [fixedCols...] [dataColTemplate] [totalColTemplate]
-	// Result layout:   [fixedCols...] [dataCols × N]    [totalCol]
+	// Template layout: [fixedCols...] [dataColTemplate(×nCells)] [totalColTemplate(×nCells)]
+	// Result layout:   [fixedCols...] [dataCols × N × nCells]    [totalCols × nCells]
 	//
 	// C# MatrixHelper uses AutoSize to measure content for each data column.
 	// Go uses the template data column width (Column3) for all expanded data
 	// columns, and the template total column width (Column4) for the Total column.
-	dataColTemplateIdx := nRowHeaderCols                       // Column3 in template
-	totalColTemplateIdx := nRowHeaderCols + 1                  // Column4 in template
-	lastDataColIdx := nRowHeaderCols + len(colLeaves) - 1      // last expanded data col
-	totalColIdx := nRowHeaderCols + len(colLeaves)             // total col position
+	// Template column helpers for side-by-side.
+	// C# ref: MatrixHelper.UpdateCellDescriptors — when CellsSideBySide, each
+	// cell descriptor occupies consecutive template columns starting at HeaderWidth.
+	// dataCellTemplateCol(i) returns the template column for cell descriptor i.
+	// totalCellTemplateCol(i) returns the template column for total cell descriptor i.
+	dataCellTemplateCol := func(cellIdx int) int { return nRowHeaderCols + cellIdx }
+	totalCellTemplateCol := func(cellIdx int) int { return nRowHeaderCols + nCells + cellIdx }
+
+	lastDataColIdx := nRowHeaderCols + len(colLeaves)*nCells - 1
+	totalColStartIdx := nRowHeaderCols + len(colLeaves)*nCells
 
 	for i := 0; i < nCols; i++ {
 		col := table.NewTableColumn()
@@ -239,16 +263,25 @@ func (m *MatrixObject) BuildTemplateMultiLevel() {
 			col.SetMaxWidth(savedCols[i].MaxWidth())
 			col.SetWidth(savedCols[i].Width())
 			col.SetAutoSize(savedCols[i].AutoSize())
-		case i >= nRowHeaderCols && i <= lastDataColIdx && dataColTemplateIdx < len(savedCols):
-			// Expanded data columns: all use the data column template width.
-			col.SetMaxWidth(savedCols[dataColTemplateIdx].MaxWidth())
-			col.SetWidth(savedCols[dataColTemplateIdx].Width())
-			col.SetAutoSize(savedCols[dataColTemplateIdx].AutoSize())
-		case hasTotals && i == totalColIdx && totalColTemplateIdx < len(savedCols):
-			// Total column: use total column template width.
-			col.SetMaxWidth(savedCols[totalColTemplateIdx].MaxWidth())
-			col.SetWidth(savedCols[totalColTemplateIdx].Width())
-			col.SetAutoSize(savedCols[totalColTemplateIdx].AutoSize())
+			col.SetVisible(savedCols[i].Visible())
+		case i >= nRowHeaderCols && i <= lastDataColIdx:
+			// Data columns: each cell descriptor uses its own template column.
+			cellOffset := (i - nRowHeaderCols) % nCells
+			tIdx := dataCellTemplateCol(cellOffset)
+			if tIdx < len(savedCols) {
+				col.SetMaxWidth(savedCols[tIdx].MaxWidth())
+				col.SetWidth(savedCols[tIdx].Width())
+				col.SetAutoSize(savedCols[tIdx].AutoSize())
+			}
+		case hasTotals && i >= totalColStartIdx:
+			// Total columns: each cell descriptor uses its own total template.
+			cellOffset := (i - totalColStartIdx) % nCells
+			tIdx := totalCellTemplateCol(cellOffset)
+			if tIdx < len(savedCols) {
+				col.SetMaxWidth(savedCols[tIdx].MaxWidth())
+				col.SetWidth(savedCols[tIdx].Width())
+				col.SetAutoSize(savedCols[tIdx].AutoSize())
+			}
 		}
 		m.TableBase.AddColumn(col)
 	}
@@ -278,48 +311,12 @@ func (m *MatrixObject) BuildTemplateMultiLevel() {
 
 	// hasTotals and nCols already set above with the Total column included.
 
-	// Helper: get a template cell by row and column index.
 	savedRows := m.savedTemplateRows
-	templateCell := func(rowIdx, colIdx int) *table.TableCell {
-		if rowIdx >= 0 && rowIdx < len(savedRows) {
-			row := savedRows[rowIdx]
-			if row != nil && colIdx < len(row.Cells()) {
-				return row.Cells()[colIdx]
-			}
-		}
-		return nil
-	}
 
-	// Helper: create a cell with visual properties copied from a template cell.
-	// Mirrors C# RunTimeAssign: copies font, fill, border, alignment, format.
-	// Helper: format a value using the cell's format, falling back to m.cellFormat.
-	fmtVal := func(cell *table.TableCell, v any) string {
-		if f := cell.Format(); f != nil {
-			if _, isGen := f.(*format.GeneralFormat); !isGen {
-				return f.FormatValue(v)
-			}
-		}
-		if m.cellFormat != nil {
-			return m.cellFormat.FormatValue(v)
-		}
-		return fmt.Sprintf("%g", v)
-	}
-
-	newCell := func(rowIdx, colIdx int) *table.TableCell {
-		c := table.NewTableCell()
-		if tc := templateCell(rowIdx, colIdx); tc != nil {
-			c.SetFont(tc.Font())
-			c.SetFill(tc.Fill())
-			c.SetBorder(tc.Border())
-			c.SetHorzAlign(tc.HorzAlign())
-			c.SetVertAlign(tc.VertAlign())
-			c.SetTextColor(tc.TextColor())
-			if tc.Format() != nil {
-				c.SetFormat(tc.Format())
-			}
-		}
-		return c
-	}
+	// Use the method-level helpers for template cell creation.
+	templateCell := m.templateCellAt
+	fmtVal := m.fmtCellVal
+	newCell := m.newStyledCell
 
 	// Helper: create a row with template height/autosize when available.
 	newRow := func(templateRowIdx int) *table.TableRow {
@@ -331,41 +328,159 @@ func (m *MatrixObject) BuildTemplateMultiLevel() {
 		return r
 	}
 
-	for level := 0; level < nColHeaderRows; level++ {
-		row := newRow(0) // header row uses template row 0
-		// Corner cells with row descriptor names (e.g. "Year", "Month").
-		// C# uses template Row1 cells for these labels.
+	// Template column indices:
+	//   0..nRowHeaderCols-1                   = row-header columns (corner / row labels)
+	//   nRowHeaderCols..nRowHeaderCols+nCells-1 = data cell columns (one per cell descriptor)
+	//   nRowHeaderCols+nCells..                 = total cell columns (one per cell descriptor)
+	// C# ref: MatrixHelper.UpdateDescriptors maps template cells by these offsets.
+	dataColTemplate := nRowHeaderCols
+	totalColTemplate := nRowHeaderCols + nCells
+
+	// ── Build title row (when ShowTitle is true) ─────────────────────────────
+	// C# ref: MatrixHelper.PrintTitle — row 0 contains the title cell spanning
+	// all data columns, plus a corner cell spanning all row-header columns.
+	if m.ShowTitle {
+		titleRow := newRow(0) // title uses template row 0
+		// Corner cell(s) of the title row.
+		cornerCell := newCell(0, 0) // template: Row0/Col0
+		if nRowHeaderCols > 1 {
+			cornerCell.SetColSpan(nRowHeaderCols)
+		}
+		titleRow.AddCell(cornerCell)
+		for c := 1; c < nRowHeaderCols; c++ {
+			titleRow.AddCell(nil) // spanned placeholders
+		}
+		// Title cell spanning all data + total columns.
+		// C# ref: PrintTitle sets ColSpan = ResultTable.ColumnCount - HeaderWidth.
+		titleCell := newCell(0, dataColTemplate)
+		if tc := m.templateCellAt(0, dataColTemplate); tc != nil {
+			titleCell.SetText(tc.Text())
+		}
+		titleSpan := nCols - nRowHeaderCols
+		if titleSpan > 1 {
+			titleCell.SetColSpan(titleSpan)
+		}
+		titleRow.AddCell(titleCell)
+		for c := 1; c < titleSpan; c++ {
+			titleRow.AddCell(nil) // spanned placeholders
+		}
+		m.TableBase.AddRow(titleRow)
+	}
+
+	// ── Build column-header rows ──────────────────────────────────────────────
+	// C# ref: PrintColumnHeader starts at row ShowTitle ? 1 : 0.
+	// Template row index for column headers = titleOffset (0 without title, 1 with).
+	colHdrTemplate := titleOffset // template row index for column header cells
+
+	// Resolve EvenStyle fill for column header cells.
+	// C# ref: PrintHeaderCell calls templateCell.ApplyEvenStyle() for even-indexed headers.
+	var colHdrEvenFill style.Fill
+	if tc := templateCell(colHdrTemplate, dataColTemplate); tc != nil && tc.EvenStyleName() != "" && m.StyleLookup != nil {
+		se := m.StyleLookup.FindStyle(tc.EvenStyleName())
+		if se != nil {
+			if se.Fill != nil {
+				colHdrEvenFill = se.Fill
+			} else if se.FillColor.A > 0 {
+				colHdrEvenFill = style.NewSolidFill(se.FillColor)
+			}
+		}
+	}
+
+	for level := 0; level < origColHeaderRows; level++ {
+		row := newRow(colHdrTemplate) // header row uses template row after title
+		// Corner cells with row descriptor names (e.g. "Employee").
+		// C# ref: PrintCorner — corner cell at the last column-header level gets the
+		// row descriptor name. When CellsSideBySide, RowSpan covers the cell header row.
 		for c := 0; c < nRowHeaderCols; c++ {
-			cell := newCell(0, 0) // template: Cell1 (corner)
-			if level == nColHeaderRows-1 && c < len(m.Data.Rows) {
-				if len(m.savedTemplateRows) > 0 {
-					templateRow := m.savedTemplateRows[0]
+			cell := newCell(colHdrTemplate, c) // template: column header row corner
+			if level == origColHeaderRows-1 && c < len(m.Data.Rows) {
+				if len(m.savedTemplateRows) > colHdrTemplate {
+					templateRow := m.savedTemplateRows[colHdrTemplate]
 					if templateRow != nil && c < len(templateRow.Cells()) && templateRow.Cells()[c] != nil {
 						cell.SetText(templateRow.Cells()[c].Text())
 					}
+				}
+				// C# ref: PrintCorner — RowSpan is clamped to corner area height.
+				// When CellsSideBySide, the corner spans the cell header row too.
+				if nColHeaderRows-level > 1 {
+					cell.SetRowSpan(nColHeaderRows - level)
 				}
 			}
 			row.AddCell(cell)
 		}
 		// Column header cells for this level.
+		// C# ref: PrintColumnHeader — when CellsSideBySide, span is multiplied by nCells.
+		evenIdx := 0
 		for _, item := range levelNodes[level] {
-			cell := newCell(0, 1) // template: Cell2 (column header)
+			cell := newCell(colHdrTemplate, dataColTemplate) // template: column header data cell
 			cell.SetText(item.Value)
-			if item.CellSize > 1 {
-				cell.SetColSpan(item.CellSize)
+			// Apply EvenStyle fill for even-indexed column headers.
+			if evenIdx%2 != 0 && colHdrEvenFill != nil {
+				cell.SetFill(colHdrEvenFill)
+			}
+			evenIdx++
+			span := item.CellSize * nCells // multiply by nCells for side-by-side
+			if span > 1 {
+				cell.SetColSpan(span)
 			}
 			row.AddCell(cell)
-			for s := 1; s < item.CellSize; s++ {
+			for s := 1; s < span; s++ {
 				row.AddCell(nil)
 			}
 		}
 		// Total column header.
-		if hasTotals && level == nColHeaderRows-1 {
-			cell := newCell(0, 2) // template: Cell7 (total header)
+		// C# ref: PrintColumnHeader — total header at last column level.
+		if hasTotals && level == origColHeaderRows-1 {
+			cell := newCell(colHdrTemplate, totalColTemplate) // template: total column header
 			cell.SetText("Total")
+			// Apply EvenStyle to Total header if index is even.
+			if evenIdx%2 != 0 && colHdrEvenFill != nil {
+				cell.SetFill(colHdrEvenFill)
+			}
+			if nCells > 1 {
+				cell.SetColSpan(nCells)
+			}
 			row.AddCell(cell)
+			for s := 1; s < nCells; s++ {
+				row.AddCell(nil)
+			}
 		}
 		m.TableBase.AddRow(row)
+	}
+
+	// ── Build cell header row (when CellsSideBySide) ─────────────────────────
+	// C# ref: PrintColumnHeader — at leaf level, emits cell descriptor names
+	// (e.g. "Items Sold", "Revenue") for each column leaf and total.
+	if sideBySide {
+		cellHdrTemplate := titleOffset + origColHeaderRows // template row with cell labels
+		cellHdrRow := newRow(cellHdrTemplate)
+		// Corner cells: nil placeholders (spanned by RowSpan of corner cell above).
+		for c := 0; c < nRowHeaderCols; c++ {
+			cellHdrRow.AddCell(nil)
+		}
+		// Cell descriptor labels for each column leaf.
+		for range colLeaves {
+			for ci := 0; ci < nCells; ci++ {
+				tCol := dataCellTemplateCol(ci)
+				cell := newCell(cellHdrTemplate, tCol)
+				if tc := templateCell(cellHdrTemplate, tCol); tc != nil {
+					cell.SetText(tc.Text())
+				}
+				cellHdrRow.AddCell(cell)
+			}
+		}
+		// Cell descriptor labels for total columns.
+		if hasTotals {
+			for ci := 0; ci < nCells; ci++ {
+				tCol := totalCellTemplateCol(ci)
+				cell := newCell(cellHdrTemplate, tCol)
+				if tc := templateCell(cellHdrTemplate, tCol); tc != nil {
+					cell.SetText(tc.Text())
+				}
+				cellHdrRow.AddCell(cell)
+			}
+		}
+		m.TableBase.AddRow(cellHdrRow)
 	}
 
 	// ── Build data rows ───────────────────────────────────────────────────────
@@ -427,10 +542,20 @@ func (m *MatrixObject) BuildTemplateMultiLevel() {
 	// groupLeaves collects leaves in the current level-0 group for subtotals.
 	var groupLeaves []*HeaderItem
 
+	// Template row index for data rows (after title + column headers).
+	// C# ref: UpdateCellDescriptors uses Rows[HeaderHeight] for the data template.
+	dataTemplate := titleOffset + nColHeaderRows // typically 1 (no title) or 2 (with title)
+	if dataTemplate >= len(savedRows) && len(savedRows) > 0 {
+		dataTemplate = len(savedRows) - 2 // fallback: second-to-last row
+		if dataTemplate < 0 {
+			dataTemplate = 0
+		}
+	}
+
 	// Resolve EvenStyle fill for alternating data rows.
 	// C# ref: MatrixHelper.PrintData applies EvenStyle to even rows.
 	var evenFill style.Fill
-	if tc := templateCell(1, 0); tc != nil && tc.EvenStyleName() != "" && m.StyleLookup != nil {
+	if tc := templateCell(dataTemplate, 0); tc != nil && tc.EvenStyleName() != "" && m.StyleLookup != nil {
 		se := m.StyleLookup.FindStyle(tc.EvenStyleName())
 		if se != nil {
 			if se.Fill != nil {
@@ -446,20 +571,20 @@ func (m *MatrixObject) BuildTemplateMultiLevel() {
 		// Detect level-0 group boundary (e.g. year change) and insert subtotal row.
 		curLevel0Node := findNodeAtLevel(m.rowRoot, rowLeafPaths[rLeaf], 0)
 		if hasTotals && nRowHeaderCols > 1 && prevLevel0Node != nil && curLevel0Node != prevLevel0Node {
-			m.addSubtotalRow(prevLevel0Node, groupLeaves, colLeaves, nRowHeaderCols, nCols)
+			m.addSubtotalRow(prevLevel0Node, groupLeaves, colLeaves, nRowHeaderCols, nCells)
 			groupLeaves = nil
 		}
 		prevLevel0Node = curLevel0Node
 		groupLeaves = append(groupLeaves, rLeaf)
 
 		_ = ri
-		tableRow := newRow(1) // data rows use template row 1
+		tableRow := newRow(dataTemplate) // data rows use template row after headers
 		rPath := rowLeafPaths[rLeaf]
 
 		// Row-header columns with RowSpan support.
 		for level := 0; level < nRowHeaderCols; level++ {
 			if level >= len(rPath) {
-				tableRow.AddCell(newCell(1, 0))
+				tableRow.AddCell(newCell(dataTemplate, level))
 				continue
 			}
 			// Find the HeaderItem at this level in the path.
@@ -470,11 +595,13 @@ func (m *MatrixObject) BuildTemplateMultiLevel() {
 				continue
 			}
 			// First occurrence — emit the cell with proper RowSpan.
-			cell := newCell(1, 0) // template: Cell3 (row header)
+			cell := newCell(dataTemplate, level) // template: row header cell at this column
 			cell.SetText(rPath[level])
 			span := node.CellSize
 			// Add 1 for the subtotal row that follows this group.
-			if hasTotals && nRowHeaderCols > 1 && level == 0 && span > 1 {
+			// Applies to all level-0 groups, even those with a single leaf,
+			// because the subtotal row is always emitted.
+			if hasTotals && nRowHeaderCols > 1 && level == 0 {
 				span++
 			}
 			if span > 1 {
@@ -485,54 +612,65 @@ func (m *MatrixObject) BuildTemplateMultiLevel() {
 		}
 
 		// Data cells — try runtime cell store first, fall back to mlAccumulators.
+		// C# ref: MatrixHelper.PrintData — when CellsSideBySide, iterates cell
+		// descriptors for each column, placing them in consecutive columns.
 		for _, cLeaf := range colLeaves {
 			cPath := colLeafPaths[cLeaf]
-			cell := newCell(1, 1) // template: Cell4 (data cell)
-			if len(m.Data.Cells) > 0 {
-				var cellText string
-				var found bool
-				// Try runtime store (populated by GetDataWithCalc).
-				rt := m.Data.Runtime()
-				if rt != nil {
-					raw := rt.GetCellValue(ItemIndex(cLeaf), ItemIndex(rLeaf), 0)
-					if raw != nil {
-						f := toFloat(raw)
-						if f != 0 { // suppress zero values (C# shows empty)
-							cellText = fmtVal(cell, f)
+			for ci := 0; ci < nCells; ci++ {
+				tCol := dataCellTemplateCol(ci)
+				cell := newCell(dataTemplate, tCol) // template: data cell for descriptor ci
+				if len(m.Data.Cells) > 0 {
+					var cellText string
+					var found bool
+					// Try runtime store (populated by GetDataWithCalc).
+					rt := m.Data.Runtime()
+					if rt != nil {
+						raw := rt.GetCellValue(ItemIndex(cLeaf), ItemIndex(rLeaf), ci)
+						if raw != nil {
+							f := toFloat(raw)
+							if f != 0 { // suppress zero values (C# shows empty)
+								cellText = fmtVal(cell, f)
+								found = true
+							}
+						}
+					}
+					// Fall back to mlAccumulators (populated by AddDataMultiLevel).
+					if !found {
+						val, err := m.CellResultMultiLevel(rPath, cPath, ci)
+						if err == nil {
+							cellText = fmtVal(cell, val)
 							found = true
 						}
 					}
-				}
-				// Fall back to mlAccumulators (populated by AddDataMultiLevel).
-				if !found {
-					val, err := m.CellResultMultiLevel(rPath, cPath, 0)
-					if err == nil {
-						cellText = fmtVal(cell, val)
-						found = true
+					if found {
+						cell.SetText(cellText)
 					}
 				}
-				if found {
-					cell.SetText(cellText)
-				}
+				tableRow.AddCell(cell)
 			}
-			tableRow.AddCell(cell)
 		}
 
-		// Row total cell (sum across all columns for this row).
+		// Row total cells (sum across all columns for this row, per cell descriptor).
+		// C# ref: PrintData — when CellsSideBySide, emits nCells total cells.
 		if hasTotals {
-			cell := newCell(1, 2) // template: Cell8 (row total)
-			rowSum := 0.0
-			rt := m.Data.Runtime()
-			if rt != nil {
-				for _, cLeaf := range colLeaves {
-					raw := rt.GetCellValue(ItemIndex(cLeaf), ItemIndex(rLeaf), 0)
-					if raw != nil {
-						rowSum += toFloat(raw)
+			for ci := 0; ci < nCells; ci++ {
+				tCol := totalCellTemplateCol(ci)
+				cell := newCell(dataTemplate, tCol) // template: row total for descriptor ci
+				rowSum := 0.0
+				rt := m.Data.Runtime()
+				if rt != nil {
+					for _, cLeaf := range colLeaves {
+						raw := rt.GetCellValue(ItemIndex(cLeaf), ItemIndex(rLeaf), ci)
+						if raw != nil {
+							rowSum += toFloat(raw)
+						}
 					}
 				}
+				if rowSum != 0 {
+					cell.SetText(fmtVal(cell, rowSum))
+				}
+				tableRow.AddCell(cell)
 			}
-			cell.SetText(fmtVal(cell, rowSum))
-			tableRow.AddCell(cell)
 		}
 
 		// Apply EvenStyle fill to even-indexed data rows.
@@ -550,14 +688,17 @@ func (m *MatrixObject) BuildTemplateMultiLevel() {
 
 	// Insert subtotal for the last group.
 	if hasTotals && nRowHeaderCols > 1 && prevLevel0Node != nil {
-		m.addSubtotalRow(prevLevel0Node, groupLeaves, colLeaves, nRowHeaderCols, nCols)
+		m.addSubtotalRow(prevLevel0Node, groupLeaves, colLeaves, nRowHeaderCols, nCells)
 	}
 
 	// Grand total row (sum per column + grand total).
+	// C# ref: MatrixHelper uses the last template row (Row7) for the grand total.
+	// When CellsSideBySide, emits nCells cells per column leaf.
 	if hasTotals {
-		totalRow := newRow(len(savedRows) - 1) // grand total uses last template row
+		grandTotalTemplateRow := len(savedRows) - 1
+		totalRow := newRow(grandTotalTemplateRow) // grand total uses last template row
 		// Total label spanning all row-header columns.
-		labelCell := newCell(2, 0) // template: Cell5 (total label)
+		labelCell := newCell(grandTotalTemplateRow, 0) // template: grand total label cell
 		labelCell.SetText("Total")
 		if nRowHeaderCols > 1 {
 			labelCell.SetColSpan(nRowHeaderCols)
@@ -567,27 +708,37 @@ func (m *MatrixObject) BuildTemplateMultiLevel() {
 			totalRow.AddCell(nil) // spanned placeholders
 		}
 
-		grandTotal := 0.0
+		grandTotals := make([]float64, nCells)
 		for _, cLeaf := range colLeaves {
-			cell := newCell(2, 1) // template: Cell6 (column total)
-			colSum := 0.0
-			rt := m.Data.Runtime()
-			if rt != nil {
-				for _, rLeaf := range rowLeaves {
-					raw := rt.GetCellValue(ItemIndex(cLeaf), ItemIndex(rLeaf), 0)
-					if raw != nil {
-						colSum += toFloat(raw)
+			for ci := 0; ci < nCells; ci++ {
+				tCol := dataCellTemplateCol(ci)
+				cell := newCell(grandTotalTemplateRow, tCol) // template: grand total data cell
+				colSum := 0.0
+				rt := m.Data.Runtime()
+				if rt != nil {
+					for _, rLeaf := range rowLeaves {
+						raw := rt.GetCellValue(ItemIndex(cLeaf), ItemIndex(rLeaf), ci)
+						if raw != nil {
+							colSum += toFloat(raw)
+						}
 					}
 				}
+				grandTotals[ci] += colSum
+				if colSum != 0 {
+					cell.SetText(fmtVal(cell, colSum))
+				}
+				totalRow.AddCell(cell)
 			}
-			grandTotal += colSum
-			cell.SetText(fmtVal(cell, colSum))
-			totalRow.AddCell(cell)
 		}
-		// Grand total cell.
-		gtCell := newCell(2, 2) // template: Cell9 (grand total)
-		gtCell.SetText(fmtVal(gtCell, grandTotal))
-		totalRow.AddCell(gtCell)
+		// Grand total cells (one per cell descriptor).
+		for ci := 0; ci < nCells; ci++ {
+			tCol := totalCellTemplateCol(ci)
+			gtCell := newCell(grandTotalTemplateRow, tCol) // template: grand total cell
+			if grandTotals[ci] != 0 {
+				gtCell.SetText(fmtVal(gtCell, grandTotals[ci]))
+			}
+			totalRow.AddCell(gtCell)
+		}
 		m.TableBase.AddRow(totalRow)
 	}
 
@@ -615,6 +766,13 @@ func (m *MatrixObject) BuildTemplateMultiLevel() {
 							cellFont = tc.Font()
 						}
 						w, _ := utils.MeasureText(text, cellFont, 0)
+						// MeasureText includes GDI+ MeasureString padding
+						// (≈ fontSize*96/72/3 = 1/3 em). Subtract it since we
+						// add Padding.Horizontal (4px) separately below.
+						// C# ref: CalcWidth = MeasureString.Width + Padding.Horizontal.
+						// MeasureString already includes GDI pad; we must not double-count.
+						gdiPad := cellFont.Size * 96.0 / 72.0 / 3.0
+						w -= gdiPad
 						if w > maxW {
 							maxW = w
 						}
@@ -622,7 +780,7 @@ func (m *MatrixObject) BuildTemplateMultiLevel() {
 				}
 			}
 			if maxW > 0 {
-				// Add cell padding so text doesn't wrap prematurely.
+				// Add cell padding: Padding.Horizontal = left(2) + right(2) = 4.
 				// C# CalcWidth: MeasureString width + Padding.Horizontal.
 				cols[ci].SetWidth(maxW + 4)
 			}
@@ -821,9 +979,62 @@ func findNodeAtLevel(root *HeaderItem, path []string, level int) *HeaderItem {
 	return cur
 }
 
+// templateCellAt returns the template cell at (rowIdx, colIdx) from savedTemplateRows,
+// or nil if out of bounds.
+func (m *MatrixObject) templateCellAt(rowIdx, colIdx int) *table.TableCell {
+	if rowIdx >= 0 && rowIdx < len(m.savedTemplateRows) {
+		row := m.savedTemplateRows[rowIdx]
+		if row != nil && colIdx < len(row.Cells()) {
+			return row.Cells()[colIdx]
+		}
+	}
+	return nil
+}
+
+// newStyledCell creates a new table cell with visual properties copied from the
+// template cell at (rowIdx, colIdx). Mirrors C# RunTimeAssign: copies font, fill,
+// border, alignment, format.
+func (m *MatrixObject) newStyledCell(rowIdx, colIdx int) *table.TableCell {
+	c := table.NewTableCell()
+	if tc := m.templateCellAt(rowIdx, colIdx); tc != nil {
+		c.SetFont(tc.Font())
+		c.SetFill(tc.Fill())
+		c.SetBorder(tc.Border())
+		c.SetHorzAlign(tc.HorzAlign())
+		c.SetVertAlign(tc.VertAlign())
+		c.SetTextColor(tc.TextColor())
+		if tc.Format() != nil {
+			c.SetFormat(tc.Format())
+		}
+	}
+	return c
+}
+
+// fmtCellVal formats a value using the cell's format, falling back to m.cellFormat.
+// When there are multiple cell descriptors, each descriptor's template cell carries
+// its own format (or no format), so the blanket m.cellFormat fallback is suppressed
+// to avoid applying e.g. Currency to an "Items Sold" column that has no format.
+func (m *MatrixObject) fmtCellVal(cell *table.TableCell, v any) string {
+	if f := cell.Format(); f != nil {
+		if _, isGen := f.(*format.GeneralFormat); !isGen {
+			return f.FormatValue(v)
+		}
+	}
+	// Only use the blanket cellFormat fallback for single-cell matrices where
+	// all data cells share one template. For multi-cell matrices, the per-cell
+	// template already has the correct format (or no format for plain numbers).
+	if m.cellFormat != nil && len(m.Data.Cells) <= 1 {
+		return m.cellFormat.FormatValue(v)
+	}
+	return fmt.Sprintf("%g", v)
+}
+
 // addSubtotalRow inserts a subtotal row for a level-0 group (e.g. per-year subtotal).
 // It sums the cell values for all leaves in the group across all column leaves.
-func (m *MatrixObject) addSubtotalRow(groupNode *HeaderItem, groupLeaves, colLeaves []*HeaderItem, nRowHeaderCols, nCols int) {
+// nCells is the number of cell descriptors (>1 when CellsSideBySide).
+// Template row index 2 (Row5) provides styling for the subtotal cells.
+// C# ref: MatrixHelper.PrintRowHeader — total items use TemplateTotalRow cells.
+func (m *MatrixObject) addSubtotalRow(_ *HeaderItem, groupLeaves, colLeaves []*HeaderItem, nRowHeaderCols, nCells int) {
 	row := table.NewTableRow()
 	// Use subtotal template row height (Row5 = index 2 in template).
 	if len(m.savedTemplateRows) > 2 {
@@ -832,49 +1043,48 @@ func (m *MatrixObject) addSubtotalRow(groupNode *HeaderItem, groupLeaves, colLea
 	}
 	// First cell: empty (year cell already has RowSpan covering this row).
 	row.AddCell(nil)
-	// Second cell: "Total" label.
+	// Second cell: "Total" label — styled from template Cell6 (row 2, col 1).
 	if nRowHeaderCols > 1 {
-		cell := table.NewTableCell()
+		cell := m.newStyledCell(2, 1) // template: Row5/Cell6
 		cell.SetText("Total")
 		row.AddCell(cell)
 	}
 	for c := 2; c < nRowHeaderCols; c++ {
-		row.AddCell(table.NewTableCell())
+		row.AddCell(m.newStyledCell(2, c))
 	}
-	// Subtotal per column.
-	subtotalGrand := 0.0
+	// Template column helpers for subtotal cells.
+	dataCellCol := func(ci int) int { return nRowHeaderCols + ci }
+	totalCellCol := func(ci int) int { return nRowHeaderCols + nCells + ci }
+	// Subtotal per column — one cell per cell descriptor per column leaf.
+	subtotalGrands := make([]float64, nCells)
 	rt := m.Data.Runtime()
 	for _, cLeaf := range colLeaves {
-		cell := table.NewTableCell()
-		colSum := 0.0
-		if rt != nil {
-			for _, rLeaf := range groupLeaves {
-				raw := rt.GetCellValue(ItemIndex(cLeaf), ItemIndex(rLeaf), 0)
-				if raw != nil {
-					colSum += toFloat(raw)
+		for ci := 0; ci < nCells; ci++ {
+			cell := m.newStyledCell(2, dataCellCol(ci))
+			colSum := 0.0
+			if rt != nil {
+				for _, rLeaf := range groupLeaves {
+					raw := rt.GetCellValue(ItemIndex(cLeaf), ItemIndex(rLeaf), ci)
+					if raw != nil {
+						colSum += toFloat(raw)
+					}
 				}
 			}
-		}
-		subtotalGrand += colSum
-		if colSum != 0 {
-			if m.cellFormat != nil {
-				cell.SetText(m.cellFormat.FormatValue(colSum))
-			} else {
-				cell.SetText(fmt.Sprintf("%g", colSum))
+			subtotalGrands[ci] += colSum
+			if colSum != 0 {
+				cell.SetText(m.fmtCellVal(cell, colSum))
 			}
-		}
-		row.AddCell(cell)
-	}
-	// Subtotal grand total.
-	gtCell := table.NewTableCell()
-	if subtotalGrand != 0 {
-		if m.cellFormat != nil {
-			gtCell.SetText(m.cellFormat.FormatValue(subtotalGrand))
-		} else {
-			gtCell.SetText(fmt.Sprintf("%g", subtotalGrand))
+			row.AddCell(cell)
 		}
 	}
-	row.AddCell(gtCell)
+	// Subtotal grand total — one per cell descriptor.
+	for ci := 0; ci < nCells; ci++ {
+		gtCell := m.newStyledCell(2, totalCellCol(ci))
+		if subtotalGrands[ci] != 0 {
+			gtCell.SetText(m.fmtCellVal(gtCell, subtotalGrands[ci]))
+		}
+		row.AddCell(gtCell)
+	}
 	m.TableBase.AddRow(row)
 }
 

@@ -207,22 +207,16 @@ func calcBandLayout(bb *band.BandBase, baseHeight float32, evalFn func(string) s
 		textToMeasure = strings.TrimRight(textToMeasure, "\n")
 
 		var textH float32
-		// C# TextObject.CalcSize uses two paths (TextObject.cs line 803-847):
-		//   - IsAdvancedRendererNeeded (HorzAlign==Justify || Wysiwyg || LineHeight!=0 || HasHtmlTags):
-		//     uses AdvancedTextRenderer.CalcHeight() which returns pure line-height sum
-		//   - else: uses g.MeasureString which adds GDI+ cell padding (fontSize_pt / 6 px)
-		advancedNeeded := txt.HorzAlign() == object.HorzAlignJustify ||
-			txt.Wysiwyg() || txt.LineHeight() != 0 ||
-			txt.TextRenderType() == object.TextRenderTypeHtmlTags
 		switch txt.TextRenderType() {
 		case object.TextRenderTypeHtmlTags, object.TextRenderTypeHtmlParagraph:
 			renderer := utils.NewHtmlTextRenderer(textToMeasure, txt.Font(), defaultTextColor)
 			textH = renderer.MeasureHeight(objWidth)
 		default:
 			_, textH = utils.MeasureText(textToMeasure, txt.Font(), objWidth)
-			if !advancedNeeded {
-				textH += utils.GDIMeasureStringPadding(txt.Font())
-			}
+			// C# cross-platform build (CROSSPLATFORM && !SKIA, !IsWindows) always
+			// uses AdvancedTextRenderer.CalcHeight() which returns pure line-height
+			// without GDI+ MeasureString padding. Go matches this path.
+			// C# ref: TextObject.cs line 821 — IsAdvancedRendererNeeded || !Config.IsWindows.
 		}
 		// Add top+bottom padding back into the measured height.
 		// C# CalcSize adds Padding.Vertical + 1 (a 1px tolerance).
@@ -613,6 +607,13 @@ func (e *ReportEngine) showFullBandOnce(b *band.BandBase) {
 		// Must be called AFTER AddBand so the PreparedBand exists in pg.Bands
 		// and can be found by RenderInnerSubreport's backward search.
 		e.RenderInnerSubreports(b)
+
+		// Horizontal page splitting for wide matrices.
+		// C# ref: TableResult.GeneratePages splits columns across pages.
+		if e.pendingHSplit != nil {
+			e.splitBandHorizontallyForMatrix(pb)
+			e.pendingHSplit = nil
+		}
 	}
 	e.AdvanceY(height)
 	b.FireAfterLayout()

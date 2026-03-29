@@ -340,7 +340,13 @@ func (e *Exporter) ExportBand(b *preview.PreparedBand) error {
 func (e *Exporter) renderBandBackground(b *preview.PreparedBand, scale float32) {
 	left := b.Left * scale
 	w := b.Width * scale
-	h := b.Height * scale
+	// Use BackgroundHeight if set (table/matrix bands where the section
+	// background handles the table area separately).
+	bgH := b.Height
+	if b.BackgroundHeight > 0 {
+		bgH = b.BackgroundHeight
+	}
+	h := bgH * scale
 	top := b.Top * scale
 
 	// Build CSS class matching C# GetStyle(null, White, FillColor, ...) for non-text objects.
@@ -364,6 +370,13 @@ func (e *Exporter) renderBandBackground(b *preview.PreparedBand, scale float32) 
 		))
 	} else {
 		className := e.css.Register(css.String())
+		// Add background image class for non-solid fills (GlassFill, etc.).
+		// C# ref: HTMLExportLayers.cs LayerPicture → GetStyleTag(index1, index2)
+		// emits dual-class "s{i1} s{i2}" when an additional background CSS is present.
+		if b.BackgroundCSS != "" {
+			bgClass := e.css.Register(b.BackgroundCSS)
+			className = className + " " + bgClass
+		}
 		e.sb.WriteString(fmt.Sprintf(
 			"<div class=\"%s\" style=\"left:%spx;top:%spx;width:%spx;height:%spx;\">&nbsp;</div>\n",
 			className, pxVal(left), pxVal(top), pxVal(w), pxVal(h),
@@ -538,87 +551,35 @@ func (e *Exporter) renderObject(obj preview.PreparedObject, scale float32) {
 			break
 			}
 		}
-		// No image data — empty placeholder.
-		e.sb.WriteString(fmt.Sprintf(`<div %s></div>`, styleAttr("")))
+		// No image data — render as a positioned background div (section background).
+		// C# renders these as LayerBack elements: text-align:center, color:white,
+		// background-color:transparent, border:none, with absolute positioning.
+		var bgCSS strings.Builder
+		bgCSS.WriteString("text-align:center;position:absolute;color:rgb(255, 255, 255);")
+		if obj.FillColor.A == 0 {
+			bgCSS.WriteString("background-color:transparent;")
+		} else {
+			bgCSS.WriteString(fmt.Sprintf("background-color:%s;", rgbColor(obj.FillColor)))
+		}
+		bgCSS.WriteString("border:none;")
+		bgCSS.WriteString(fmt.Sprintf("width:%spx;height:%spx;", pxVal(w), pxVal(h)))
+
+		if e.InlineStyles {
+			e.sb.WriteString(fmt.Sprintf(
+				"<div style=\"%sleft:%spx;top:%spx;width:%spx;height:%spx;\">&nbsp;</div>\n",
+				bgCSS.String(), pxVal(left), pxVal(top), pxVal(w), pxVal(h)))
+		} else {
+			bgClass := e.css.Register(bgCSS.String())
+			e.sb.WriteString(fmt.Sprintf(
+				"<div class=\"%s\" style=\"left:%spx;top:%spx;width:%spx;height:%spx;\">&nbsp;</div>\n",
+				bgClass, pxVal(left), pxVal(top), pxVal(w), pxVal(h)))
+		}
 
 	case preview.ObjectTypeLine:
-		// Extract line color and width from Border.Lines[0], mirroring SVG exporter renderLine.
-		lineColor := color.RGBA{A: 255}
-		lineWidth := float32(1)
-		if obj.Border.Lines[0] != nil {
-			if obj.Border.Lines[0].Color.A > 0 {
-				lineColor = obj.Border.Lines[0].Color
-			}
-			if obj.Border.Lines[0].Width > 0 {
-				lineWidth = obj.Border.Lines[0].Width * scale
-			}
-		}
-		strokeCSS := rgbColor(lineColor)
-		hasCaps := obj.LineStartCap.Style != preview.LineCapStyleNone || obj.LineEndCap.Style != preview.LineCapStyleNone
-
-		if obj.LineDiagonal || hasCaps {
-			// Render as inline SVG for diagonal lines or when caps are needed.
-			// Include a <defs> block with markers when caps are present.
-			e.sb.WriteString(fmt.Sprintf(
-				`<div %s><svg width="%.2f" height="%.2f" style="overflow:visible;">`,
-				styleAttr(""), w, h,
-			))
-			if hasCaps {
-				e.sb.WriteString(htmlLineCapDefs(obj))
-			}
-			var markerAttrs string
-			if obj.LineStartCap.Style != preview.LineCapStyleNone {
-				markerAttrs += fmt.Sprintf(` marker-start="url(#%s)"`, htmlCapMarkerID(obj.LineStartCap.Style))
-			}
-			if obj.LineEndCap.Style != preview.LineCapStyleNone {
-				markerAttrs += fmt.Sprintf(` marker-end="url(#%s)"`, htmlCapMarkerID(obj.LineEndCap.Style))
-			}
-			if obj.LineDiagonal {
-				e.sb.WriteString(fmt.Sprintf(
-					`<line x1="0" y1="0" x2="%.2f" y2="%.2f" stroke="%s" stroke-width="%.2f"%s/>`,
-					w, h, strokeCSS, lineWidth, markerAttrs,
-				))
-			} else if h <= w {
-				// Horizontal line.
-				midY := h / 2
-				e.sb.WriteString(fmt.Sprintf(
-					`<line x1="0" y1="%.2f" x2="%.2f" y2="%.2f" stroke="%s" stroke-width="%.2f"%s/>`,
-					midY, w, midY, strokeCSS, lineWidth, markerAttrs,
-				))
-			} else {
-				// Vertical line.
-				midX := w / 2
-				e.sb.WriteString(fmt.Sprintf(
-					`<line x1="%.2f" y1="0" x2="%.2f" y2="%.2f" stroke="%s" stroke-width="%.2f"%s/>`,
-					midX, midX, h, strokeCSS, lineWidth, markerAttrs,
-				))
-			}
-			e.sb.WriteString(`</svg></div>`)
-		} else {
-			// Horizontal or vertical without caps: use CSS border (fast path).
-			colorStr := rgbColor(lineColor)
-			widthStr := fmt.Sprintf("%.2fpx", lineWidth)
-			// Map LineStyle to CSS border-style, matching C# HTMLBorderStyle()
-			// (HTMLExportDraw.cs:46-61).
-			cssStyle := "solid"
-			if obj.Border.Lines[0] != nil {
-				switch obj.Border.Lines[0].Style {
-				case style.LineStyleDot:
-					cssStyle = "dotted"
-				case style.LineStyleDash, style.LineStyleDashDot, style.LineStyleDashDotDot:
-					cssStyle = "dashed"
-				case style.LineStyleDouble:
-					cssStyle = "double"
-				}
-			}
-			var lineExtra string
-			if h <= w {
-				lineExtra = fmt.Sprintf("border-bottom:%s %s %s;height:1px;", widthStr, cssStyle, colorStr)
-			} else {
-				lineExtra = fmt.Sprintf("border-left:%s %s %s;width:1px;", widthStr, cssStyle, colorStr)
-			}
-			e.sb.WriteString(fmt.Sprintf(`<div %s></div>`, styleAttr(lineExtra)))
-		}
+		// C# renders all LineObjects as PNG images via LayerPicture (one div, two
+		// CSS classes: base style + background image). Match that approach.
+		// Reference: HTMLExportLayers.cs:939-941
+		e.renderObjectAsImage(obj, left, top, w, h, scale)
 
 	case preview.ObjectTypeShape:
 		// C# renders all ShapeObjects as inline-style divs with base64 PNG images.
@@ -647,8 +608,16 @@ func (e *Exporter) renderObject(obj preview.PreparedObject, scale float32) {
 			adjW := w - bRight/2 - bLeft/2
 			adjH := h - bBottom/2 - bTop/2
 
+			// Build CSS matching C# GetStyleFromObject for non-text objects:
+			// GetStyle(null, Color.White, obj.FillColor, false, HorzAlign.Center, ...)
+			// Reference: HTMLExportStyles.cs:31-32
 			var picCSS strings.Builder
-			picCSS.WriteString("text-align:center;position:absolute;color:rgb(255, 255, 255);background-color:transparent;")
+			picCSS.WriteString("text-align:center;position:absolute;color:rgb(255, 255, 255);")
+			if obj.FillColor.A == 0 {
+				picCSS.WriteString("background-color:transparent;")
+			} else {
+				picCSS.WriteString(fmt.Sprintf("background-color:%s;", rgbColor(obj.FillColor)))
+			}
 			if bs := borderCSS(&obj.Border, scale); bs != "" {
 				picCSS.WriteString(bs)
 			} else {
@@ -859,7 +828,11 @@ func (e *Exporter) renderTextObject(obj preview.PreparedObject, scale float32) {
 	}
 	outerCSS.WriteString(fmt.Sprintf("color:%s;", rgbColor(tc)))
 	fc := obj.FillColor
-	if fc.A > 0 {
+	// C# ref: when a glass fill background image is present, the outer div uses
+	// background-color:transparent since the fill is entirely in the PNG image.
+	if obj.BackgroundCSS != "" {
+		outerCSS.WriteString("background-color:transparent;")
+	} else if fc.A > 0 {
 		outerCSS.WriteString(fmt.Sprintf("background-color:%s;", rgbColor(fc)))
 	} else {
 		outerCSS.WriteString("background-color:transparent;")
@@ -1003,6 +976,12 @@ func (e *Exporter) renderTextObject(obj preview.PreparedObject, scale float32) {
 	// C# flow: inner registered first via GetSpanText, then outer via LayerBack→GetStyle.
 	innerClass := e.cssClass(innerCSS.String())
 	outerClass := e.cssClass(outerCSS.String())
+	// Add background image class for non-solid fills (GlassFill, etc.).
+	// C# ref: HTMLExportLayers.cs LayerPicture → GetStyleTag creates dual-class CSS.
+	if obj.BackgroundCSS != "" && !e.InlineStyles {
+		bgClass := e.css.Register(obj.BackgroundCSS)
+		outerClass = outerClass + " " + bgClass
+	}
 
 	// ── Format text content ──
 	var innerText string
@@ -1605,72 +1584,3 @@ func imageMIME(data []byte) string {
 // Ensure math is used (for future use in vertical alignment calculations).
 var _ = math.Round
 
-// htmlCapMarkerID returns a stable SVG marker element ID for the given cap style.
-// IDs are unique per style (Arrow/Circle/Square/Diamond) scoped to the inline SVG.
-func htmlCapMarkerID(s preview.LineCapStyle) string {
-	switch s {
-	case preview.LineCapStyleArrow:
-		return "hcap_arrow"
-	case preview.LineCapStyleCircle:
-		return "hcap_circle"
-	case preview.LineCapStyleSquare:
-		return "hcap_square"
-	case preview.LineCapStyleDiamond:
-		return "hcap_diamond"
-	default:
-		return "hcap_none"
-	}
-}
-
-// htmlLineCapDefs returns the SVG <defs> XML block containing marker definitions
-// for all cap styles used on the given line object.
-// Each marker uses markerUnits="strokeWidth" for stroke-relative sizing,
-// matching the approach used by the SVG exporter (export/svg/svg.go).
-func htmlLineCapDefs(obj preview.PreparedObject) string {
-	needed := make(map[preview.LineCapStyle]bool)
-	if obj.LineStartCap.Style != preview.LineCapStyleNone {
-		needed[obj.LineStartCap.Style] = true
-	}
-	if obj.LineEndCap.Style != preview.LineCapStyleNone {
-		needed[obj.LineEndCap.Style] = true
-	}
-	if len(needed) == 0 {
-		return ""
-	}
-	var sb strings.Builder
-	sb.WriteString("<defs>")
-	for s := range needed {
-		sb.WriteString(htmlCapMarkerDef(s))
-	}
-	sb.WriteString("</defs>")
-	return sb.String()
-}
-
-// htmlCapMarkerDef returns one SVG <marker> definition for the given cap style.
-func htmlCapMarkerDef(s preview.LineCapStyle) string {
-	id := htmlCapMarkerID(s)
-	switch s {
-	case preview.LineCapStyleArrow:
-		return fmt.Sprintf(
-			`<marker id="%s" markerWidth="6" markerHeight="6" refX="6" refY="3" orient="auto" markerUnits="strokeWidth">`+
-				`<path d="M0,0 L6,3 L0,6 Z" fill="context-stroke"/>`+
-				`</marker>`, id)
-	case preview.LineCapStyleCircle:
-		return fmt.Sprintf(
-			`<marker id="%s" markerWidth="4" markerHeight="4" refX="2" refY="2" orient="auto" markerUnits="strokeWidth">`+
-				`<circle cx="2" cy="2" r="2" fill="context-stroke"/>`+
-				`</marker>`, id)
-	case preview.LineCapStyleSquare:
-		return fmt.Sprintf(
-			`<marker id="%s" markerWidth="4" markerHeight="4" refX="2" refY="2" orient="auto" markerUnits="strokeWidth">`+
-				`<rect x="0" y="0" width="4" height="4" fill="context-stroke"/>`+
-				`</marker>`, id)
-	case preview.LineCapStyleDiamond:
-		return fmt.Sprintf(
-			`<marker id="%s" markerWidth="4" markerHeight="4" refX="2" refY="2" orient="auto" markerUnits="strokeWidth">`+
-				`<polygon points="2,0 4,2 2,4 0,2" fill="context-stroke"/>`+
-				`</marker>`, id)
-	default:
-		return ""
-	}
-}

@@ -401,10 +401,16 @@ func (e *Exporter) renderObject(obj preview.PreparedObject, bandTop float32) {
 
 	case preview.ObjectTypeCheckBox:
 		if !bounds.Empty() {
-			white := color.RGBA{R: 255, G: 255, B: 255, A: 255}
-			draw.Draw(e.curPage, bounds, &image.Uniform{white}, image.Point{}, draw.Over)
-			boxColor := color.RGBA{A: 255}
-			e.drawRect(bounds, boxColor)
+			// C# CheckBoxObject.Draw: base.Draw() → DrawBackground → Fill.Draw().
+			// Default fill is SolidFill(Color.Transparent) so the background is
+			// transparent unless the object has an explicit FillColor (e.g. from
+			// EvenStyle). No box outline is drawn; Border.Draw handles borders
+			// separately. In GetLayerPicture, borders are set to None.
+			// Reference: CheckBoxObject.cs:290-296, ReportComponentBase.cs:773-778,
+			//            Fills.cs:173, HTMLExportLayers.cs:516-519.
+			if obj.FillColor.A > 0 {
+				draw.Draw(e.curPage, bounds, &image.Uniform{obj.FillColor}, image.Point{}, draw.Over)
+			}
 
 			// Determine symbol to draw using obj.Checked/CheckedSymbol/UncheckedSymbol.
 			cc := obj.CheckColor
@@ -427,17 +433,26 @@ func (e *Exporter) renderObject(obj preview.PreparedObject, bandTop float32) {
 				}
 			}
 
-			pad := int(float64(w) * 0.15)
-			if pad < 2 {
-				pad = 2
+			// Match C# DrawCheck padding: ratio = Width / (5mm * 3.78), pad = 4 * ratio.
+			// C# reference: CheckBoxObject.cs:210-211
+			ratio := float64(w) / 18.9
+			padF := 4.0 * ratio
+			pad := int(math.Round(padF))
+			if pad < 1 {
+				pad = 1
 			}
 			switch symbol {
 			case 0: // checkmark
-				// Draw check: down-right then up-right
-				mx := x + int(float64(w)*0.4)
-				my := y + int(float64(h)*0.75)
-				e.drawLine(x+int(float64(w)*0.15), y+int(float64(h)*0.5), mx, my, cc)
-				e.drawLine(mx, my, x+int(float64(w)*0.85), y+int(float64(h)*0.25), cc)
+				// Match C# DrawCheck: lines from (Left, Top+H*5/10) to (Left+W*4/10, Bottom-H/10)
+				// to (Right, Top+H/10). Reference: CheckBoxObject.cs:222-225.
+				dx := int(padF)
+				dy := int(padF)
+				dw := w - 2*dx
+				dh := h - 2*dy
+				mx := x + dx + int(float64(dw)*0.4)
+				my := y + dy + dh - int(float64(dh)*0.1)
+				e.drawLine(x+dx, y+dy+int(float64(dh)*0.5), mx, my, cc)
+				e.drawLine(mx, my, x+dx+dw, y+dy+int(float64(dh)*0.1), cc)
 			case 1: // cross (X)
 				e.drawLine(x+pad, y+pad, x+w-pad, y+h-pad, cc)
 				e.drawLine(x+w-pad, y+pad, x+pad, y+h-pad, cc)

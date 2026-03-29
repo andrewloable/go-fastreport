@@ -175,6 +175,8 @@ func (r *Report) deserializeReportBody(rdr *serial.Reader, baseDir string) error
 			deserializeStyles(rdr, r.Styles())
 		case "Dictionary":
 			deserializeDictionary(rdr, r.Dictionary(), baseDir)
+		case "ScriptText":
+			r.ScriptText = rdr.ReadInnerText()
 		default:
 			// Unknown top-level child — skip.
 			_ = rdr.SkipElement()

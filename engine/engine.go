@@ -174,6 +174,11 @@ type ReportEngine struct {
 	// outer groups are appended as showGroupTree recurses. getAllFooters uses
 	// this to include GroupFooterBands in the keep-with-data height calculation.
 	groupStack []*band.GroupHeaderBand
+
+	// pendingHSplit is set during matrix processing when the matrix table is
+	// wider than the page. Consumed after the band is built to split columns
+	// across pages. Cleared after use.
+	pendingHSplit *matrixHSplitInfo
 }
 
 // New creates a ReportEngine for the given report.

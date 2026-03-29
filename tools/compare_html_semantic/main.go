@@ -74,44 +74,27 @@ func normStyle(sd map[string]string) map[string]string {
 
 // Element is a positioned element extracted from an HTML page.
 type Element struct {
-	Tag       string
-	Cls       string
-	RawStyle  string
-	Text      string
-	Left      string
-	Top       string
-	Width     string
-	Height    string
-	BgColor   string
-	Color     string
-	Font      string
-	Border    string
-	TextAlign string
-	VertAlign string
-	HasSVG    bool // true if this element contains an <svg> child
+	Tag      string
+	Cls      string
+	RawStyle string
+	Style    map[string]string // full normalized inline style map
+	Text     string
+	HasSVG   bool // true if this element contains an <svg> child
+}
+
+// positionProps are CSS properties used for layout matching — compared with
+// pixel tolerance rather than exact string equality.
+var positionProps = map[string]bool{
+	"left": true, "top": true, "width": true, "height": true,
 }
 
 func newElement(tag, cls, styleStr string) *Element {
-	sd := parseStyle(styleStr)
-	nsd := normStyle(sd)
-	font := nsd["font"]
-	if font == "" {
-		font = nsd["font-family"]
-	}
+	nsd := normStyle(parseStyle(styleStr))
 	return &Element{
-		Tag:       tag,
-		Cls:       cls,
-		RawStyle:  styleStr,
-		Left:      nsd["left"],
-		Top:       nsd["top"],
-		Width:     nsd["width"],
-		Height:    nsd["height"],
-		BgColor:   nsd["background-color"],
-		Color:     nsd["color"],
-		Font:      font,
-		Border:    nsd["border"],
-		TextAlign: nsd["text-align"],
-		VertAlign: nsd["vertical-align"],
+		Tag:      tag,
+		Cls:      cls,
+		RawStyle: styleStr,
+		Style:    nsd,
 	}
 }
 
@@ -136,7 +119,7 @@ func roundedPosKey(left, top string) string {
 }
 
 func (e *Element) posKey() string {
-	return roundedPosKey(e.Left, e.Top)
+	return roundedPosKey(e.Style["left"], e.Style["top"])
 }
 
 // sig returns a short identity tag for the element: "tag" or "tag.cssClass".
@@ -154,7 +137,7 @@ func (e *Element) String() string {
 	if len(t) > 30 {
 		t = t[:30]
 	}
-	return fmt.Sprintf("%s(%s,%s %sx%s %q)", e.sig(), e.Left, e.Top, e.Width, e.Height, t)
+	return fmt.Sprintf("%s(%s,%s %sx%s %q)", e.sig(), e.Style["left"], e.Style["top"], e.Style["width"], e.Style["height"], t)
 }
 
 // Page is a parsed page from HTML output.
@@ -675,9 +658,10 @@ func comparePages(name string, expPages, actPages []*Page, expCSS, actCSS map[st
 				ee := expElems[j]
 				ae := actElems[j]
 				// Size comparison (with rounding tolerance).
-				if !pxClose(ee.Width, ae.Width) || !pxClose(ee.Height, ae.Height) {
+				if !pxClose(ee.Style["width"], ae.Style["width"]) || !pxClose(ee.Style["height"], ae.Style["height"]) {
 					d.PositionDiffs = append(d.PositionDiffs,
-						fmt.Sprintf("Page %d @%s [%s]: size C#=%sx%s Go=%sx%s", i, pos, ee.sig(), ee.Width, ee.Height, ae.Width, ae.Height))
+						fmt.Sprintf("Page %d @%s [%s]: size C#=%sx%s Go=%sx%s", i, pos, ee.sig(),
+							ee.Style["width"], ee.Style["height"], ae.Style["width"], ae.Style["height"]))
 				}
 				// Text at same position.
 				if ee.Text != "" && ae.Text != "" && ee.Text != ae.Text {
@@ -692,10 +676,34 @@ func comparePages(name string, expPages, actPages []*Page, expCSS, actCSS map[st
 					d.TextContentDiffs = append(d.TextContentDiffs,
 						fmt.Sprintf("Page %d @%s [%s]: C#=%q Go=%q", i, pos, ee.sig(), eeText, aeText))
 				}
-				// Background color.
-				if ee.BgColor != "" && ae.BgColor != "" && ee.BgColor != ae.BgColor {
+				// Compare all non-position CSS properties.
+				allProps := map[string]struct{}{}
+				for k := range ee.Style {
+					allProps[k] = struct{}{}
+				}
+				for k := range ae.Style {
+					allProps[k] = struct{}{}
+				}
+				sortedProps := make([]string, 0, len(allProps))
+				for k := range allProps {
+					if positionProps[k] {
+						continue
+					}
+					sortedProps = append(sortedProps, k)
+				}
+				sort.Strings(sortedProps)
+				for _, prop := range sortedProps {
+					ev := ee.Style[prop]
+					av := ae.Style[prop]
+					if ev == av {
+						continue
+					}
+					// Only report when both sides have the property.
+					if ev == "" || av == "" {
+						continue
+					}
 					d.StyleDiffs = append(d.StyleDiffs,
-						fmt.Sprintf("Page %d @%s [%s]: bg C#=%s Go=%s", i, pos, ee.sig(), ee.BgColor, ae.BgColor))
+						fmt.Sprintf("Page %d @%s [%s]: %s C#=%s Go=%s", i, pos, ee.sig(), prop, ev, av))
 				}
 			}
 

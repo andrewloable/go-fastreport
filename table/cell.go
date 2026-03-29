@@ -71,6 +71,12 @@ type TableCell struct {
 	// savedText / savedObjectCount for SaveState/RestoreState.
 	savedText        string
 	savedObjectCount int
+
+	// originalCellName tracks the FRX Name of the template cell this result
+	// cell was cloned from during ManualBuild (e.g. "Cell12"). Used by table
+	// aggregate functions (Sum, Min, Max) to identify matching cells.
+	// Mirrors C# TableCellData.OriginalCell concept.
+	originalCellName string
 }
 
 // TypeName returns the FRX element name.
@@ -109,6 +115,12 @@ func (c *TableCell) SetRowSpan(v int) {
 	}
 	c.rowSpan = v
 }
+
+// OriginalCellName returns the FRX Name of the template cell this was cloned from.
+func (c *TableCell) OriginalCellName() string { return c.originalCellName }
+
+// SetOriginalCellName sets the template cell name.
+func (c *TableCell) SetOriginalCellName(name string) { c.originalCellName = name }
 
 // Duplicates returns the cell's duplicate-value handling mode.
 func (c *TableCell) Duplicates() CellDuplicates { return c.duplicates }

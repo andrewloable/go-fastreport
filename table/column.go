@@ -23,6 +23,12 @@ type TableColumn struct {
 	// savedWidth / savedVisible store state for SaveState/RestoreState.
 	savedWidth   float32
 	savedVisible bool
+
+	// originalIndex tracks which template column index this result column
+	// was cloned from during ManualBuild. Used by table aggregate functions
+	// to determine grouping boundaries.
+	// Mirrors C# TableColumn.OriginalComponent concept.
+	originalIndex int
 }
 
 // NewTableColumn creates a TableColumn with defaults matching the C# constructor.
@@ -36,6 +42,12 @@ func NewTableColumn() *TableColumn {
 	c.SetWidth(66.15)
 	return c
 }
+
+// OriginalIndex returns the template column index this result column was cloned from.
+func (c *TableColumn) OriginalIndex() int { return c.originalIndex }
+
+// SetOriginalIndex sets the template column index.
+func (c *TableColumn) SetOriginalIndex(v int) { c.originalIndex = v }
 
 // SetWidth overrides ComponentBase.SetWidth to enforce min/max bounds.
 // If width < minWidth (and minWidth > 0), it is clamped up.

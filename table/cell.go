@@ -77,12 +77,15 @@ type TableCell struct {
 func (c *TableCell) TypeName() string { return "TableCell" }
 
 // NewTableCell creates a TableCell with default spans of 1.
+// Padding defaults to (2,1,2,1) matching C# TableCell (TableCell.cs line 508).
 func NewTableCell() *TableCell {
-	return &TableCell{
+	c := &TableCell{
 		TextObject: *object.NewTextObject(),
 		colSpan:    1,
 		rowSpan:    1,
 	}
+	c.SetPadding(object.Padding{Left: 2, Top: 1, Right: 2, Bottom: 1})
+	return c
 }
 
 // ColSpan returns the column span (number of columns this cell covers).

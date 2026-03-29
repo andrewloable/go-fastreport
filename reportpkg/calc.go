@@ -2,6 +2,7 @@ package reportpkg
 
 import (
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -80,6 +81,10 @@ func (r *Report) Calc(expression string) (any, error) {
 	// This handles patterns like Engine.GetBookmarkPage(Categories_CategoryName).
 	// C# ref: Script context exposes Engine property (ReportEngine).
 	goExpr = rewriteEnginePrefix(goExpr)
+
+	// Strip C# type casts like (decimal), (int), (float), etc.
+	// These have no equivalent in expr-lang/expr.
+	goExpr = stripCSharpCasts(goExpr)
 
 	// If the expression is a simple dotted identifier (e.g. "Report.ReportInfo.Description"),
 	// sanitize dots to underscores so it matches keys in the environment.
@@ -279,6 +284,17 @@ func isSimpleDottedIdent(s string) bool {
 // boundaries to avoid false positives.
 func rewriteEnginePrefix(s string) string {
 	return strings.ReplaceAll(s, "Engine.", "Engine_")
+}
+
+// csharpCastRE matches C# type cast expressions like (decimal), (int), (float), etc.
+// These are prefix casts that have no equivalent in expr-lang/expr and must be
+// stripped so the expression evaluates correctly.
+// C# ref: these appear in FRX expressions such as "(decimal)(1 - [Order Details.Discount])".
+var csharpCastRE = regexp.MustCompile(`\((?:decimal|int|float|double|long|short|byte|uint|ulong|ushort|sbyte|char|bool|object)\)`)
+
+// stripCSharpCasts removes C# type cast syntax from expressions.
+func stripCSharpCasts(s string) string {
+	return csharpCastRE.ReplaceAllString(s, "")
 }
 
 // sanitizeIdent converts a token like "DataSource.Field" into a valid Go

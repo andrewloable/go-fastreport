@@ -5,6 +5,7 @@ import (
 	"unicode/utf8"
 
 	"golang.org/x/image/font"
+	"golang.org/x/image/font/basicfont"
 	"golang.org/x/image/math/fixed"
 
 	"github.com/andrewloable/go-fastreport/style"
@@ -20,7 +21,30 @@ func MeasureText(text string, f style.Font, maxWidth float32) (width, height flo
 		return 0, lineH
 	}
 
-	lines := wrapLines(text, face, scaleMaxWidth(maxWidth, f))
+	// Determine if we're using a real font or the basicfont fallback.
+	isRealFont := face != basicfont.Face7x13
+
+	// GDI+ MeasureString (GenericDefault StringFormat) adds extra horizontal
+	// padding of approximately fontSize/6 on each side (total ≈ fontSize/3).
+	// C# ref: MSDN "StringFormat.GenericDefault includes trailing space".
+	gdiPadW := float32(0)
+	if isRealFont {
+		gdiPadW = f.Size * 96.0 / 72.0 / 3.0 // ~1/3 em total padding
+	}
+
+	// For wrapping: use the real maxWidth with real fonts, scale for basicfont.
+	wrapW := maxWidth
+	if !isRealFont {
+		wrapW = scaleMaxWidth(maxWidth, f)
+	} else if maxWidth > 0 {
+		// Subtract GDI padding from available wrap width.
+		wrapW = maxWidth - gdiPadW
+		if wrapW < 0 {
+			wrapW = maxWidth
+		}
+	}
+
+	lines := wrapLines(text, face, wrapW)
 	var maxW float32
 	for _, line := range lines {
 		w := measureLine(line, face)
@@ -28,6 +52,8 @@ func MeasureText(text string, f style.Font, maxWidth float32) (width, height flo
 			maxW = w
 		}
 	}
+	// Add GDI+ MeasureString horizontal padding.
+	maxW += gdiPadW
 	return maxW, lineH * float32(len(lines))
 }
 
@@ -47,8 +73,19 @@ func MeasureLines(text string, f style.Font, maxWidth float32) int {
 	if text == "" {
 		return 1
 	}
-	face := faceForStyle(f)
-	return len(wrapLines(text, face, scaleMaxWidth(maxWidth, f)))
+	if maxWidth <= 0 {
+		// No wrapping — count explicit line breaks only.
+		face := faceForStyle(f)
+		return len(wrapLines(text, face, 0))
+	}
+	// Compute lines from full text width vs available width.
+	// The wrapLines/scaleMaxWidth approach uses a monospace fallback that
+	// underestimates proportional text widths, so we calculate directly.
+	fullW, _ := MeasureText(text, f, 0)
+	if fullW <= maxWidth {
+		return 1
+	}
+	return int(fullW/maxWidth) + 1
 }
 
 // scaleMaxWidth adjusts maxWidth for the basicfont fallback.
@@ -88,6 +125,7 @@ func faceForStyle(f style.Font) font.Face {
 	desc := FontDescriptor{
 		Family: f.Name,
 		Size:   f.Size,
+		Style:  FontStyle(f.Style),
 	}
 	return DefaultFontManager.GetFace(desc)
 }

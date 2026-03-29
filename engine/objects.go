@@ -134,12 +134,31 @@ func (e *ReportEngine) populateBandObjects2(parentBand *band.BandBase, objs *rep
 				mx.GetDataWithCalc(calc)
 				// Bridge runtime store to multi-level trees for BuildTemplateMultiLevel.
 				mx.SyncRuntimeToMultiLevel()
+				// Provide style lookup for EvenStyle alternation.
+				if e.report != nil {
+					mx.StyleLookup = e.report
+				}
 				// Build the result table from collected data.
 				mx.BuildTemplateMultiLevel()
 				// Apply AutoSize and render cells.
 				mx.TableBase.CalcWidth()
 				mx.TableBase.CalcHeight()
 				e.populateTableObjects(&mx.TableBase, mx.Left(), mx.Top(), pb)
+				// Compute fixed header height for page break repetition.
+				// The height is the absolute Y in the PreparedBand below which
+				// data rows start (accounts for matrix offset + row heights).
+				// C# ref: TableBase.FixedRows → rows repeated on each continuation page.
+				fixedRows := mx.TableBase.FixedRows()
+				if fixedRows > 0 {
+					fixedH := mx.Top() // matrix offset within the band
+					for ri, row := range mx.TableBase.Rows() {
+						if ri >= fixedRows {
+							break
+						}
+						fixedH += row.Height()
+					}
+					pb.FixedHeaderHeight = fixedH
+				}
 				// Shrink band height to the matrix's Top offset (space above matrix).
 				// The matrix cells extend beyond the band. Mirrors C# GeneratePages.
 				if mx.Top() > 0 {
@@ -434,23 +453,32 @@ func (e *ReportEngine) populateTableObjects(tbl *table.TableBase, originX, origi
 				if f, ok := cell.Fill().(*style.SolidFill); ok {
 					cellFill = f.Color
 				}
+				textColor := cell.TextColor()
+				if textColor.A == 0 {
+					textColor = color.RGBA{A: 255} // default opaque black
+				}
+				pad := cell.Padding()
 				po := preview.PreparedObject{
-					Name:      cell.Name(),
-					Kind:      preview.ObjectTypeText,
-					Left:      absLeft,
-					Top:       absTop,
-					Width:     cellW,
-					Height:    cellH,
-					Text:      cellText,
-					BlobIdx:   -1,
-					Font:      cell.Font(),
-					TextColor: color.RGBA{A: 255},
-					FillColor: cellFill,
-					HorzAlign: int(cell.HorzAlign()),
-					VertAlign: int(cell.VertAlign()),
-					WordWrap:  cell.WordWrap(),
-					Clip:      true, // C# TableCell defaults to Clip=true
-					Border:    cell.Border(),
+					Name:         cell.Name(),
+					Kind:         preview.ObjectTypeText,
+					Left:         absLeft,
+					Top:          absTop,
+					Width:        cellW,
+					Height:       cellH,
+					Text:         cellText,
+					BlobIdx:      -1,
+					Font:         cell.Font(),
+					TextColor:    textColor,
+					FillColor:    cellFill,
+					HorzAlign:    int(cell.HorzAlign()),
+					VertAlign:    int(cell.VertAlign()),
+					WordWrap:     cell.WordWrap(),
+					Clip:         true, // C# TableCell defaults to Clip=true
+					Border:       cell.Border(),
+					PaddingLeft:  pad.Left,
+					PaddingTop:   pad.Top,
+					PaddingRight: pad.Right,
+					PaddingBottom: pad.Bottom,
 				}
 				pb.Objects = append(pb.Objects, po)
 

@@ -587,7 +587,27 @@ func (e *ReportEngine) showFullBandOnce(b *band.BandBase) {
 				pb.Objects[i].Left += e.hierarchyIndent
 			}
 		}
-		_ = e.preparedPages.AddBand(pb)
+
+		// If objects extend beyond the declared band height (e.g. matrix
+		// table cells), grow the band and split across pages.
+		// C# ref: Band grows to fit expanded objects; BreakBand splits.
+		maxBottom := pb.Height
+		for _, po := range pb.Objects {
+			if bot := po.Top + po.Height; bot > maxBottom {
+				maxBottom = bot
+			}
+		}
+		if maxBottom > pb.Height {
+			pb.Height = maxBottom
+		}
+
+		// Split the band across pages if it exceeds available space.
+		// Use FreeSpace() which deducts page footer height, matching C#.
+		if pb.Height > e.FreeSpace() && e.FreeSpace() > 0 && e.pageHeight > 0 {
+			e.splitPreparedBandAcrossPages(pb)
+		} else {
+			_ = e.preparedPages.AddBand(pb)
+		}
 		// Render inner subreports (PrintOnParent=true) into this prepared band.
 		// Mirrors C# PrepareBandShared → RenderInnerSubreports (Bands.cs line 31).
 		// Must be called AFTER AddBand so the PreparedBand exists in pg.Bands

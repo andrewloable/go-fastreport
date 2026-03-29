@@ -94,6 +94,120 @@ func (e *ReportEngine) BreakBand(b *band.BandBase) {
 	}
 }
 
+// splitPreparedBandAcrossPages splits a PreparedBand whose content exceeds
+// the current page's free space into multiple pages. Objects are partitioned
+// by their vertical position: those fitting above the break line stay on the
+// current page, the rest shift to subsequent pages.
+// C# ref: BreakBand → TableBase.Break() row-level splitting.
+func (e *ReportEngine) splitPreparedBandAcrossPages(pb *preview.PreparedBand) {
+	remaining := pb.Height
+	offset := float32(0) // cumulative Y offset into the original band
+	fixedH := pb.FixedHeaderHeight
+
+	// Collect fixed header objects (objects within the fixed header area).
+	var headerObjs []preview.PreparedObject
+	if fixedH > 0 {
+		for _, po := range pb.Objects {
+			if po.Top+po.Height <= fixedH {
+				headerObjs = append(headerObjs, po)
+			}
+		}
+	}
+
+	isFirst := true
+	for remaining > 0 {
+		avail := e.FreeSpace() // already deducts footer height
+		if avail <= 0 {
+			avail = e.pageHeight - e.PageFooterHeight()
+		}
+
+		// On continuation pages, reserve space for the repeated header.
+		headerOffset := float32(0)
+		if !isFirst && fixedH > 0 {
+			avail -= fixedH
+			headerOffset = fixedH
+		}
+		if avail <= 0 {
+			avail = 1 // safety: at least 1px to avoid infinite loop
+		}
+
+		breakLine := offset + avail
+		if breakLine > offset+remaining {
+			breakLine = offset + remaining
+		}
+
+		// Snap break line to row boundaries: if any object straddles the
+		// break line, pull it down to that object's top so rows aren't cut.
+		// This matches C# TableBase.Break() which breaks at row boundaries.
+		for _, po := range pb.Objects {
+			objTop := po.Top
+			objBot := po.Top + po.Height
+			if objTop > offset && objTop < breakLine && objBot > breakLine {
+				breakLine = objTop
+			}
+		}
+		if breakLine <= offset {
+			// Safety: if we can't find a good break point, use the original.
+			breakLine = offset + avail
+			if breakLine > offset+remaining {
+				breakLine = offset + remaining
+			}
+		}
+
+		sliceH := breakLine - offset
+
+		// Build a PreparedBand for this page's slice.
+		slice := &preview.PreparedBand{
+			Name:          pb.Name,
+			Left:          pb.Left,
+			Top:           e.curY,
+			Height:        sliceH + headerOffset,
+			Width:         pb.Width,
+			NotExportable: pb.NotExportable,
+		}
+
+		// On continuation pages, prepend fixed header objects.
+		if !isFirst && fixedH > 0 {
+			for _, hpo := range headerObjs {
+				slice.Objects = append(slice.Objects, hpo)
+			}
+		}
+
+		for _, po := range pb.Objects {
+			objTop := po.Top
+			objBot := po.Top + po.Height
+			if objBot <= offset || objTop >= breakLine {
+				continue // entirely outside this slice
+			}
+			clone := po
+			if objTop < offset {
+				clone.Height -= offset - objTop
+				clone.Top = headerOffset
+			} else {
+				clone.Top = objTop - offset + headerOffset
+			}
+			if objBot > breakLine {
+				clone.Height = breakLine - objTop
+				if objTop < offset {
+					clone.Height = sliceH
+				}
+			}
+			slice.Objects = append(slice.Objects, clone)
+		}
+
+		_ = e.preparedPages.AddBand(slice)
+		e.AdvanceY(sliceH + headerOffset)
+
+		offset = breakLine
+		remaining = pb.Height - offset
+		isFirst = false
+
+		if remaining > 0 {
+			e.startNewPageForCurrent()
+		}
+	}
+}
+
 // objTopBottom returns the Top and Bottom (Top+Height) of any report object
 // that exposes Top() and Height() via the ComponentBase interface.
 func objTopBottom(obj report.Base) (top, bottom float32) {

@@ -316,6 +316,11 @@ type PreparedBand struct {
 	// Set by the engine when band.Exportable()==false.
 	// C# ref: ExportBase.cs line 542 "if (band.Exportable || webPreview) ExportBand(band)".
 	NotExportable bool
+	// FixedHeaderHeight is the height of the fixed header rows (FixedRows)
+	// in a table/matrix that should be repeated on each continuation page
+	// when the band is split across pages. Zero means no repetition.
+	// C# ref: TableBase.FixedRows → repeated header rows on page breaks.
+	FixedHeaderHeight float32
 }
 
 // ObjectType distinguishes the kind of report object stored in PreparedObject.

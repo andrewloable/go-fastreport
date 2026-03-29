@@ -284,6 +284,9 @@ type MatrixObject struct {
 	ModifyResultHandler func(*MatrixObject) // C#: MatrixObject.ModifyResult event
 	AfterTotalsHandler  func(*MatrixObject) // C#: MatrixObject.AfterTotals event
 
+	// StyleLookup resolves named styles (e.g. EvenStyle) during template building.
+	// Set by the engine before calling BuildTemplateMultiLevel.
+	StyleLookup report.StyleLookup
 	// cellFormat is applied to data cell values during BuildTemplateMultiLevel.
 	// Populated from the template data cell's Format (e.g. Currency).
 	cellFormat format.Format

@@ -131,7 +131,15 @@
       "Bash(echo:*)",
       "Bash(sort -t: -k2 -n -u)",
       "Bash(sort -t',' -k1 -rn)",
-      "Bash(grep -n \"Sort\\(\\)\" /Volumes/mandark-1Tb/projects/loabletech/go-fastreport/band/*.go)"
+      "Bash(grep -n \"Sort\\(\\)\" /Volumes/mandark-1Tb/projects/loabletech/go-fastreport/band/*.go)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:list.winehq.org)",
+      "WebFetch(domain:doxygen.reactos.org)",
+      "Bash(curl -sL \"https://raw.githubusercontent.com/wine-mirror/wine/master/dlls/gdiplus/graphics.c\" -o wine_graphics.c)",
+      "Bash(curl -sL \"https://raw.githubusercontent.com/wine-mirror/wine/master/dlls/gdiplus/gdiplus_private.h\" -o wine_gdiplus_private.h)",
+      "Bash(curl -sL \"https://raw.githubusercontent.com/wine-mirror/wine/master/dlls/gdiplus/gdiplus.c\" -o wine_gdiplus.c)",
+      "Bash(curl -sL \"https://raw.githubusercontent.com/wine-mirror/wine/master/dlls/gdiplus/stringformat.c\" -o wine_stringformat.c)",
+      "Read(//System/Library/Fonts/Supplemental/**)"
     ]
   }
 }

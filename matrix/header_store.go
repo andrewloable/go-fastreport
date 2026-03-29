@@ -39,8 +39,12 @@ type MatrixHeader struct {
 
 // NewMatrixHeader creates an empty MatrixHeader.
 func NewMatrixHeader() *MatrixHeader {
+	root := newHeaderItem("")
+	// C# MatrixHeaderItem.Index defaults to 0 (int field).
+	// When Find returns the root for an empty address, Index must be 0, not -1.
+	SetItemIndex(root, 0)
 	return &MatrixHeader{
-		Root: newHeaderItem(""),
+		Root: root,
 	}
 }
 

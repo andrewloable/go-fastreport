@@ -2,8 +2,8 @@ package matrix
 
 import (
 	"fmt"
-	"math"
 
+	"github.com/andrewloable/go-fastreport/format"
 	"github.com/andrewloable/go-fastreport/style"
 	"github.com/andrewloable/go-fastreport/table"
 	"github.com/andrewloable/go-fastreport/utils"
@@ -178,6 +178,8 @@ func (m *MatrixObject) BuildTemplateMultiLevel() {
 	savedWidth := m.Width()
 	savedHeight := m.Height()
 	savedBorder := m.Border()
+	savedFixedRows := m.TableBase.FixedRows()
+	savedFixedCols := m.TableBase.FixedColumns()
 
 	m.rowRoot.computeSizes()
 	m.colRoot.computeSizes()
@@ -208,6 +210,8 @@ func (m *MatrixObject) BuildTemplateMultiLevel() {
 	m.SetWidth(savedWidth)
 	m.SetHeight(savedHeight)
 	m.SetBorder(savedBorder)
+	m.TableBase.SetFixedRows(savedFixedRows)
+	m.TableBase.SetFixedColumns(savedFixedCols)
 
 	// Determine if we need a Total column.
 	hasTotals := len(m.Data.Rows) > 0 && len(m.Data.Columns) > 0
@@ -232,14 +236,17 @@ func (m *MatrixObject) BuildTemplateMultiLevel() {
 		switch {
 		case i < nRowHeaderCols && i < len(savedCols):
 			// Fixed row-header columns: use template widths directly.
+			col.SetMaxWidth(savedCols[i].MaxWidth())
 			col.SetWidth(savedCols[i].Width())
 			col.SetAutoSize(savedCols[i].AutoSize())
 		case i >= nRowHeaderCols && i <= lastDataColIdx && dataColTemplateIdx < len(savedCols):
 			// Expanded data columns: all use the data column template width.
+			col.SetMaxWidth(savedCols[dataColTemplateIdx].MaxWidth())
 			col.SetWidth(savedCols[dataColTemplateIdx].Width())
 			col.SetAutoSize(savedCols[dataColTemplateIdx].AutoSize())
 		case hasTotals && i == totalColIdx && totalColTemplateIdx < len(savedCols):
 			// Total column: use total column template width.
+			col.SetMaxWidth(savedCols[totalColTemplateIdx].MaxWidth())
 			col.SetWidth(savedCols[totalColTemplateIdx].Width())
 			col.SetAutoSize(savedCols[totalColTemplateIdx].AutoSize())
 		}
@@ -271,8 +278,50 @@ func (m *MatrixObject) BuildTemplateMultiLevel() {
 
 	// hasTotals and nCols already set above with the Total column included.
 
-	// Helper: create a row with template height/autosize when available.
+	// Helper: get a template cell by row and column index.
 	savedRows := m.savedTemplateRows
+	templateCell := func(rowIdx, colIdx int) *table.TableCell {
+		if rowIdx >= 0 && rowIdx < len(savedRows) {
+			row := savedRows[rowIdx]
+			if row != nil && colIdx < len(row.Cells()) {
+				return row.Cells()[colIdx]
+			}
+		}
+		return nil
+	}
+
+	// Helper: create a cell with visual properties copied from a template cell.
+	// Mirrors C# RunTimeAssign: copies font, fill, border, alignment, format.
+	// Helper: format a value using the cell's format, falling back to m.cellFormat.
+	fmtVal := func(cell *table.TableCell, v any) string {
+		if f := cell.Format(); f != nil {
+			if _, isGen := f.(*format.GeneralFormat); !isGen {
+				return f.FormatValue(v)
+			}
+		}
+		if m.cellFormat != nil {
+			return m.cellFormat.FormatValue(v)
+		}
+		return fmt.Sprintf("%g", v)
+	}
+
+	newCell := func(rowIdx, colIdx int) *table.TableCell {
+		c := table.NewTableCell()
+		if tc := templateCell(rowIdx, colIdx); tc != nil {
+			c.SetFont(tc.Font())
+			c.SetFill(tc.Fill())
+			c.SetBorder(tc.Border())
+			c.SetHorzAlign(tc.HorzAlign())
+			c.SetVertAlign(tc.VertAlign())
+			c.SetTextColor(tc.TextColor())
+			if tc.Format() != nil {
+				c.SetFormat(tc.Format())
+			}
+		}
+		return c
+	}
+
+	// Helper: create a row with template height/autosize when available.
 	newRow := func(templateRowIdx int) *table.TableRow {
 		r := table.NewTableRow()
 		if templateRowIdx >= 0 && templateRowIdx < len(savedRows) {
@@ -287,9 +336,8 @@ func (m *MatrixObject) BuildTemplateMultiLevel() {
 		// Corner cells with row descriptor names (e.g. "Year", "Month").
 		// C# uses template Row1 cells for these labels.
 		for c := 0; c < nRowHeaderCols; c++ {
-			cell := table.NewTableCell()
+			cell := newCell(0, 0) // template: Cell1 (corner)
 			if level == nColHeaderRows-1 && c < len(m.Data.Rows) {
-				// Use the template header label from the first template row's cells.
 				if len(m.savedTemplateRows) > 0 {
 					templateRow := m.savedTemplateRows[0]
 					if templateRow != nil && c < len(templateRow.Cells()) && templateRow.Cells()[c] != nil {
@@ -301,7 +349,7 @@ func (m *MatrixObject) BuildTemplateMultiLevel() {
 		}
 		// Column header cells for this level.
 		for _, item := range levelNodes[level] {
-			cell := table.NewTableCell()
+			cell := newCell(0, 1) // template: Cell2 (column header)
 			cell.SetText(item.Value)
 			if item.CellSize > 1 {
 				cell.SetColSpan(item.CellSize)
@@ -313,7 +361,7 @@ func (m *MatrixObject) BuildTemplateMultiLevel() {
 		}
 		// Total column header.
 		if hasTotals && level == nColHeaderRows-1 {
-			cell := table.NewTableCell()
+			cell := newCell(0, 2) // template: Cell7 (total header)
 			cell.SetText("Total")
 			row.AddCell(cell)
 		}
@@ -379,6 +427,21 @@ func (m *MatrixObject) BuildTemplateMultiLevel() {
 	// groupLeaves collects leaves in the current level-0 group for subtotals.
 	var groupLeaves []*HeaderItem
 
+	// Resolve EvenStyle fill for alternating data rows.
+	// C# ref: MatrixHelper.PrintData applies EvenStyle to even rows.
+	var evenFill style.Fill
+	if tc := templateCell(1, 0); tc != nil && tc.EvenStyleName() != "" && m.StyleLookup != nil {
+		se := m.StyleLookup.FindStyle(tc.EvenStyleName())
+		if se != nil {
+			if se.Fill != nil {
+				evenFill = se.Fill
+			} else if se.FillColor.A > 0 {
+				// Legacy: Fill.Color stored as FillColor (not a Fill interface).
+				evenFill = style.NewSolidFill(se.FillColor)
+			}
+		}
+	}
+
 	for ri, rLeaf := range rowLeaves {
 		// Detect level-0 group boundary (e.g. year change) and insert subtotal row.
 		curLevel0Node := findNodeAtLevel(m.rowRoot, rowLeafPaths[rLeaf], 0)
@@ -396,7 +459,7 @@ func (m *MatrixObject) BuildTemplateMultiLevel() {
 		// Row-header columns with RowSpan support.
 		for level := 0; level < nRowHeaderCols; level++ {
 			if level >= len(rPath) {
-				tableRow.AddCell(table.NewTableCell())
+				tableRow.AddCell(newCell(1, 0))
 				continue
 			}
 			// Find the HeaderItem at this level in the path.
@@ -407,7 +470,7 @@ func (m *MatrixObject) BuildTemplateMultiLevel() {
 				continue
 			}
 			// First occurrence — emit the cell with proper RowSpan.
-			cell := table.NewTableCell()
+			cell := newCell(1, 0) // template: Cell3 (row header)
 			cell.SetText(rPath[level])
 			span := node.CellSize
 			// Add 1 for the subtotal row that follows this group.
@@ -424,7 +487,7 @@ func (m *MatrixObject) BuildTemplateMultiLevel() {
 		// Data cells — try runtime cell store first, fall back to mlAccumulators.
 		for _, cLeaf := range colLeaves {
 			cPath := colLeafPaths[cLeaf]
-			cell := table.NewTableCell()
+			cell := newCell(1, 1) // template: Cell4 (data cell)
 			if len(m.Data.Cells) > 0 {
 				var cellText string
 				var found bool
@@ -435,11 +498,7 @@ func (m *MatrixObject) BuildTemplateMultiLevel() {
 					if raw != nil {
 						f := toFloat(raw)
 						if f != 0 { // suppress zero values (C# shows empty)
-							if m.cellFormat != nil {
-								cellText = m.cellFormat.FormatValue(raw)
-							} else {
-								cellText = fmt.Sprintf("%v", raw)
-							}
+							cellText = fmtVal(cell, f)
 							found = true
 						}
 					}
@@ -448,11 +507,7 @@ func (m *MatrixObject) BuildTemplateMultiLevel() {
 				if !found {
 					val, err := m.CellResultMultiLevel(rPath, cPath, 0)
 					if err == nil {
-						if m.cellFormat != nil {
-							cellText = m.cellFormat.FormatValue(val)
-						} else {
-							cellText = fmt.Sprintf("%g", val)
-						}
+						cellText = fmtVal(cell, val)
 						found = true
 					}
 				}
@@ -465,7 +520,7 @@ func (m *MatrixObject) BuildTemplateMultiLevel() {
 
 		// Row total cell (sum across all columns for this row).
 		if hasTotals {
-			cell := table.NewTableCell()
+			cell := newCell(1, 2) // template: Cell8 (row total)
 			rowSum := 0.0
 			rt := m.Data.Runtime()
 			if rt != nil {
@@ -476,12 +531,18 @@ func (m *MatrixObject) BuildTemplateMultiLevel() {
 					}
 				}
 			}
-			if m.cellFormat != nil {
-				cell.SetText(m.cellFormat.FormatValue(rowSum))
-			} else {
-				cell.SetText(fmt.Sprintf("%g", rowSum))
-			}
+			cell.SetText(fmtVal(cell, rowSum))
 			tableRow.AddCell(cell)
+		}
+
+		// Apply EvenStyle fill to even-indexed data rows.
+		// C# ref: MatrixHelper.PrintData applies EvenStyle on even rows.
+		if ri%2 == 1 && evenFill != nil {
+			for _, cell := range tableRow.Cells() {
+				if cell != nil {
+					cell.SetFill(evenFill)
+				}
+			}
 		}
 
 		m.TableBase.AddRow(tableRow)
@@ -496,7 +557,7 @@ func (m *MatrixObject) BuildTemplateMultiLevel() {
 	if hasTotals {
 		totalRow := newRow(len(savedRows) - 1) // grand total uses last template row
 		// Total label spanning all row-header columns.
-		labelCell := table.NewTableCell()
+		labelCell := newCell(2, 0) // template: Cell5 (total label)
 		labelCell.SetText("Total")
 		if nRowHeaderCols > 1 {
 			labelCell.SetColSpan(nRowHeaderCols)
@@ -508,7 +569,7 @@ func (m *MatrixObject) BuildTemplateMultiLevel() {
 
 		grandTotal := 0.0
 		for _, cLeaf := range colLeaves {
-			cell := table.NewTableCell()
+			cell := newCell(2, 1) // template: Cell6 (column total)
 			colSum := 0.0
 			rt := m.Data.Runtime()
 			if rt != nil {
@@ -520,20 +581,12 @@ func (m *MatrixObject) BuildTemplateMultiLevel() {
 				}
 			}
 			grandTotal += colSum
-			if m.cellFormat != nil {
-				cell.SetText(m.cellFormat.FormatValue(colSum))
-			} else {
-				cell.SetText(fmt.Sprintf("%g", colSum))
-			}
+			cell.SetText(fmtVal(cell, colSum))
 			totalRow.AddCell(cell)
 		}
 		// Grand total cell.
-		gtCell := table.NewTableCell()
-		if m.cellFormat != nil {
-			gtCell.SetText(m.cellFormat.FormatValue(grandTotal))
-		} else {
-			gtCell.SetText(fmt.Sprintf("%g", grandTotal))
-		}
+		gtCell := newCell(2, 2) // template: Cell9 (grand total)
+		gtCell.SetText(fmtVal(gtCell, grandTotal))
 		totalRow.AddCell(gtCell)
 		m.TableBase.AddRow(totalRow)
 	}
@@ -550,9 +603,10 @@ func (m *MatrixObject) BuildTemplateMultiLevel() {
 		}
 
 		cols := m.TableBase.Columns()
+		allRows := m.TableBase.Rows()
 		for ci := range cols {
 			maxW := float32(0)
-			for _, row := range m.TableBase.Rows() {
+			for _, row := range allRows {
 				if ci < len(row.Cells()) && row.Cells()[ci] != nil {
 					text := row.Cells()[ci].Text()
 					if text != "" {
@@ -568,7 +622,59 @@ func (m *MatrixObject) BuildTemplateMultiLevel() {
 				}
 			}
 			if maxW > 0 {
-				cols[ci].SetWidth(float32(math.Round(float64(maxW))))
+				// Add cell padding so text doesn't wrap prematurely.
+				// C# CalcWidth: MeasureString width + Padding.Horizontal.
+				cols[ci].SetWidth(maxW + 4)
+			}
+		}
+
+		// Auto-size row heights based on text content.
+		// C# CalcHeight measures text at cell width, adds Padding.Vertical + 1.
+		// C# ref: TableBase.CalcHeight() (two-pass for non-spanned, then spanned cells).
+		cols = m.TableBase.Columns()
+		for _, row := range m.TableBase.Rows() {
+			if !row.AutoSize() {
+				continue
+			}
+			bestH := float32(0)
+			for ci, cell := range row.Cells() {
+				if cell == nil {
+					continue
+				}
+				text := cell.Text()
+				if text == "" {
+					continue
+				}
+				cellFont := templateFont
+				if cell.Font().Name != "" {
+					cellFont = cell.Font()
+				}
+				cellW := float32(0)
+				if ci < len(cols) {
+					cellW = cols[ci].Width()
+				}
+				// Compute how many lines are needed. Use MeasureText for
+				// the full width including GDI padding, and compare against
+				// the full column width (which also includes padding space).
+				// This avoids double-counting padding in the comparison.
+				fullW, lineH := utils.MeasureText(text, cellFont, 0)
+				nLines := 1
+				if cellW > 0 && fullW > cellW {
+					nLines = int(fullW/cellW) + 1
+				}
+				h := lineH * float32(nLines)
+				// Add padding matching C# CalcSize: Padding.Vertical(2 for TableCell) + 1.
+				// The HTML exporter subtracts border widths (bTop/2 + bBottom/2 = 1 for
+				// 1px "All" border), so we add an extra 1 to compensate.
+				// C# ref: TextObject.CalcSize → size.Height + Padding.Vertical + 1.
+				// C# TableCell default padding = (2,1,2,1), Vertical = 2.
+				h += 3
+				if h > bestH {
+					bestH = h
+				}
+			}
+			if bestH > 0 {
+				row.SetHeight(bestH)
 			}
 		}
 	}

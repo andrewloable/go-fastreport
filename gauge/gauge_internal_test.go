@@ -242,8 +242,8 @@ func TestLinearGauge_Deserialize_AllNonDefaults(t *testing.T) {
 // TestRadialGauge_Serialize_NonDefaultAngles exercises StartAngle/EndAngle branches.
 func TestRadialGauge_Serialize_NonDefaultAngles(t *testing.T) {
 	g := NewRadialGauge()
-	g.StartAngle = -45
-	g.EndAngle = 45
+	g.StartAngle = -45 // != default 135
+	g.EndAngle = 90    // != default 45
 	xml := serializeToXML(t, "RadialGauge", g)
 
 	if !strings.Contains(xml, "StartAngle") {
@@ -258,17 +258,17 @@ func TestRadialGauge_Serialize_NonDefaultAngles(t *testing.T) {
 // no angles are serialized.
 func TestRadialGauge_Deserialize_DefaultAngles(t *testing.T) {
 	orig := NewRadialGauge()
-	// Default angles (-135, 135) should NOT be serialized.
+	// Default angles (135, 45) should NOT be serialized.
 	xml := serializeToXML(t, "RadialGauge", orig)
 
 	got := NewRadialGauge()
 	deserializeFromXML(t, xml, got)
 
-	if got.StartAngle != -135 {
-		t.Errorf("StartAngle: got %v, want -135", got.StartAngle)
+	if got.StartAngle != 135 {
+		t.Errorf("StartAngle: got %v, want 135", got.StartAngle)
 	}
-	if got.EndAngle != 135 {
-		t.Errorf("EndAngle: got %v, want 135", got.EndAngle)
+	if got.EndAngle != 45 {
+		t.Errorf("EndAngle: got %v, want 45", got.EndAngle)
 	}
 }
 
@@ -485,7 +485,7 @@ func TestGaugeObject_Pointer_Width_Zero(t *testing.T) {
 // ── GaugeObject Pointer.Color branch for default and empty string ─────────────
 
 // TestGaugeObject_Pointer_Color_EmptyString verifies empty Pointer.Color is
-// not serialized (the condition is Color != "" && Color != "#CC0000").
+// not serialized (the condition is Color != "" && Color != "Orange").
 func TestGaugeObject_Pointer_Color_EmptyString(t *testing.T) {
 	g := NewGaugeObject()
 	g.Pointer.Color = ""

@@ -147,6 +147,27 @@ func parseXML(raw []byte, rootPath, rowElem string) ([]map[string]any, []string,
 	var colOrder []string
 	var rows []map[string]any
 
+	// Pre-seed colOrder from any embedded XSD schema so that columns with
+	// no value in the first data row (e.g. "Region" in nwind.xml) appear in
+	// schema-defined order rather than being appended at the end when first seen.
+	// C# XmlDataConnection reads schema definitions to establish column order.
+	schemaTable := rowElem
+	if schemaTable == "" && len(pathSegs) > 0 {
+		schemaTable = pathSegs[len(pathSegs)-1]
+	}
+	if schemaTable == "" && len(pathSegs) == 0 {
+		// rootPath is empty; table name unknown at this point — skip schema scan.
+		schemaTable = ""
+	}
+	if schemaTable != "" {
+		for _, col := range extractXSDColumnOrder(raw, schemaTable) {
+			if !colSet[col] {
+				colSet[col] = true
+				colOrder = append(colOrder, col)
+			}
+		}
+	}
+
 	for {
 		tok, err := dec.Token()
 		if err == io.EOF {
@@ -259,6 +280,95 @@ func readChildren(dec *xml.Decoder, parentLocal string, row map[string]any, colS
 			}
 		}
 	}
+}
+
+// extractXSDColumnOrder scans raw XML for an embedded W3C XML Schema (xs:schema)
+// and returns the column names defined for the named table element in declaration order.
+// Returns nil when no schema or matching element is found.
+// This ensures that columns absent from the first data row (e.g. nullable fields like
+// "Region" in nwind.xml) appear in schema order rather than being appended at the end.
+// C# ref: XmlDataConnection reads schema definitions to establish column order.
+func extractXSDColumnOrder(raw []byte, tableName string) []string {
+	dec := xml.NewDecoder(strings.NewReader(string(raw)))
+	// Scan forward looking for <xs:schema ...> (or <schema ...> in any namespace).
+	for {
+		tok, err := dec.Token()
+		if err != nil {
+			return nil
+		}
+		start, ok := tok.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		if start.Name.Local == "schema" {
+			// Found a schema element — look for xs:element name=tableName inside.
+			cols := xsdFindTableColumns(dec, tableName)
+			return cols
+		}
+	}
+}
+
+// xsdFindTableColumns searches inside an already-entered xs:schema element for
+// an xs:element whose name matches tableName, then returns the names of its
+// child xs:element declarations (the column names).
+func xsdFindTableColumns(dec *xml.Decoder, tableName string) []string {
+	depth := 1 // we are inside <xs:schema>
+	for depth > 0 {
+		tok, err := dec.Token()
+		if err != nil {
+			break
+		}
+		switch t := tok.(type) {
+		case xml.StartElement:
+			depth++
+			if t.Name.Local == "element" {
+				name := xsdAttr(t, "name")
+				if strings.EqualFold(name, tableName) {
+					// Found the table element — extract its column sequence.
+					return xsdExtractSequenceElements(dec)
+				}
+			}
+		case xml.EndElement:
+			depth--
+		}
+	}
+	return nil
+}
+
+// xsdAttr returns the value of attribute attrName from a StartElement.
+func xsdAttr(se xml.StartElement, attrName string) string {
+	for _, a := range se.Attr {
+		if a.Name.Local == attrName {
+			return a.Value
+		}
+	}
+	return ""
+}
+
+// xsdExtractSequenceElements collects xs:element names from inside an already-entered
+// table xs:element, descending into xs:complexType > xs:sequence (or xs:all).
+// It returns as soon as the table element's end tag is encountered.
+func xsdExtractSequenceElements(dec *xml.Decoder) []string {
+	var cols []string
+	depth := 1 // inside the table's <xs:element>
+	for depth > 0 {
+		tok, err := dec.Token()
+		if err != nil {
+			break
+		}
+		switch t := tok.(type) {
+		case xml.StartElement:
+			depth++
+			if t.Name.Local == "element" {
+				if name := xsdAttr(t, "name"); name != "" {
+					cols = append(cols, name)
+				}
+			}
+		case xml.EndElement:
+			depth--
+		}
+	}
+	return cols
 }
 
 // readElementText reads all character data inside an element and returns it.

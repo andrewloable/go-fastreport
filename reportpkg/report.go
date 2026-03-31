@@ -365,6 +365,10 @@ type Report struct {
 	// Keys are function names as they appear in report expressions.
 	customFunctions map[string]func(args []any) (any, error)
 
+	// extraCalcEnv holds extra variables injected by the engine (e.g. Matrix1_RowIndex).
+	// These are merged into the expression environment on every Calc call.
+	extraCalcEnv map[string]any
+
 	// aborted is set to true when Abort() is called; the engine checks this
 	// to stop processing.
 	// Mirrors C# Report.aborted field (Report.cs line 247).
@@ -411,6 +415,18 @@ func (r *Report) RegisterFunction(name string, fn func(args []any) (any, error))
 		r.customFunctions = make(map[string]func(args []any) (any, error))
 	}
 	r.customFunctions[name] = fn
+}
+
+// SetExtraCalcVar injects a variable into the expression evaluation environment.
+// Used by the engine to expose matrix properties (e.g. Matrix1 with RowIndex/ColumnIndex)
+// during highlight condition evaluation. The variable persists across Calc calls
+// until overwritten.
+// C# ref: Matrix.RowIndex / Matrix.ColumnIndex accessed from script context during PrintData.
+func (r *Report) SetExtraCalcVar(name string, value any) {
+	if r.extraCalcEnv == nil {
+		r.extraCalcEnv = make(map[string]any)
+	}
+	r.extraCalcEnv[name] = value
 }
 
 // CustomFunctions returns a copy of the registered custom function map.

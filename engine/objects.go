@@ -14,6 +14,7 @@ import (
 
 	"github.com/andrewloable/go-fastreport/band"
 	"github.com/andrewloable/go-fastreport/barcode"
+	"github.com/andrewloable/go-fastreport/data"
 	"github.com/andrewloable/go-fastreport/crossview"
 	"github.com/andrewloable/go-fastreport/expr"
 	"github.com/andrewloable/go-fastreport/format"
@@ -156,15 +157,56 @@ func (e *ReportEngine) populateBandObjects2(parentBand *band.BandBase, objs *rep
 				base.CalcWidth()
 				base.CalcHeight()
 				base.ProcessDuplicates()
-				e.populateTableObjects(base, tbl.Left(), tbl.Top(), pb)
-				// For ManualBuild tables, the C# code shrinks the parent band
-				// to the table's Top offset and renders the table separately
-				// via GeneratePages. In Go, the table cells are inside the band
-				// so we use BackgroundHeight for the band's visual div height.
-				// Mirrors C# TableObject.SaveState: parent.Height = Top
-				// (TableObject.cs line 313).
-				if tbl.IsManualBuild() && tbl.Top() > 0 {
-					pb.BackgroundHeight = tbl.Top()
+				// For AcrossThenDown layout (the default), check whether the
+				// table is wider than the page. If so, render it directly as
+				// separate PreparedBands (one per row_group × col_group) and
+				// signal showBand to skip its normal AddBand/split path.
+				// C# ref: TableResult.GeneratePagesAcrossThenDown (TableResult.cs).
+				tableW := float32(0)
+				for _, col := range base.Columns() {
+					if col.Visible() {
+						tableW += col.Width()
+					}
+				}
+				isAcrossDown := base.Layout() == table.TableLayoutAcrossThenDown
+				needsHSplit := isAcrossDown && e.pageWidth > 0 &&
+					tableW > e.pageWidth-tbl.Left()+0.1
+				if needsHSplit {
+					// Defer rendering until after the containing band's header portion
+					// is placed on the page. Mirrors C# TableObject.SaveState which
+					// registers parent.AfterPrint += ResultTable.GeneratePages so the
+					// table renders at the correct curY (after the band's header height).
+					// C# ref: TableObject.cs line 316.
+					e.pendingAcrossTable = &pendingAcrossTableInfo{
+						base:     base,
+						originX:  tbl.Left(),
+						originY:  0,
+						bandName: pb.Name,
+					}
+					if tbl.IsManualBuild() && tbl.Top() > 0 {
+						pb.BackgroundHeight = tbl.Top()
+					}
+					// The table anchor placeholder (added by buildPreparedObject) has
+					// the template's full Width/Height (e.g. 198.45px for Table3).
+					// If left with IgnoreForRowSnap=false, it inflates maxBottom in
+					// showFullBandOnce, causing the containing band to split prematurely.
+					// Mark it IgnoreForRowSnap so the band height stays at bandManualBuildTableTop.
+					// C# equivalent: SaveState sets parent.Height = table.Top, so only the
+					// header area (above the table) is counted for the free-space check.
+					if idx < len(pb.Objects) {
+						pb.Objects[idx].IgnoreForRowSnap = true
+					}
+				} else {
+					e.populateTableObjects(base, tbl.Left(), tbl.Top(), pb)
+					// For ManualBuild tables, the C# code shrinks the parent band
+					// to the table's Top offset and renders the table separately
+					// via GeneratePages. In Go, the table cells are inside the band
+					// so we use BackgroundHeight for the band's visual div height.
+					// Mirrors C# TableObject.SaveState: parent.Height = Top
+					// (TableObject.cs line 313).
+					if tbl.IsManualBuild() && tbl.Top() > 0 {
+						pb.BackgroundHeight = tbl.Top()
+					}
 				}
 			}
 			// Render AdvMatrixObject physical cells as individual PreparedObjects.
@@ -212,6 +254,21 @@ func (e *ReportEngine) populateBandObjects2(parentBand *band.BandBase, objs *rep
 				// Provide style lookup for EvenStyle alternation.
 				if e.report != nil {
 					mx.StyleLookup = e.report
+				}
+				// Set up highlight condition evaluation for matrix cells.
+				// C# ref: templateCell.GetData() in PrintData evaluates highlight conditions
+				// with Matrix.RowIndex / Matrix.ColumnIndex accessible from the script context.
+				// In Go, we inject the matrix object as a map into the expression environment
+				// so "Matrix1.RowIndex % 2 != 0" resolves to the current row index value.
+				if e.report != nil && mx.Name() != "" {
+					mxForHighlight := mx // capture pointer for closure
+					mx.HighlightCalc = func(expr string) (any, error) {
+						e.report.SetExtraCalcVar(mxForHighlight.Name(), map[string]any{
+							"RowIndex":    mxForHighlight.RowIndex,
+							"ColumnIndex": mxForHighlight.ColumnIndex,
+						})
+						return e.report.Calc(expr)
+					}
 				}
 				// Save original width before building so we can track growth.
 				origWidth := mx.Width()
@@ -490,28 +547,30 @@ func (e *ReportEngine) populateTableObjects(tbl *table.TableBase, originX, origi
 			// Use ObjectTypePicture for section bg — its LayerBack CSS matches
 			// C#'s band background: text-align:center, color:white, border:none.
 			sectionBg := preview.PreparedObject{
-				Kind:    preview.ObjectTypePicture,
-				Left:    0,
-				Top:     originY + sec.wrapY,
-				Width:   pageWidth,
-				Height:  remainingH,
-				BlobIdx: -1,
+				Kind:             preview.ObjectTypePicture,
+				Left:             0,
+				Top:              originY + sec.wrapY,
+				Width:            pageWidth,
+				Height:           remainingH,
+				BlobIdx:          -1,
+				IgnoreForRowSnap: true,
 			}
 			pb.Objects = append(pb.Objects, sectionBg)
 
 			// Table border container per section.
 			sectionW := fixedWidth + sec.chunkW
 			sectionBorder := preview.PreparedObject{
-				Kind:     preview.ObjectTypeText,
-				Left:     originX,
-				Top:      originY + sec.wrapY,
-				Width:    sectionW,
-				Height:   tableH,
-				BlobIdx:  -1,
-				Font:     style.DefaultFont(), // C#: TextObjectBase default = Arial 10pt
-				WordWrap: true,
-				Clip:     true,
-				Border:   tbl.Border(),
+				Kind:             preview.ObjectTypeText,
+				Left:             originX,
+				Top:              originY + sec.wrapY,
+				Width:            sectionW,
+				Height:           tableH,
+				BlobIdx:          -1,
+				Font:             style.DefaultFont(), // C#: TextObjectBase default = Arial 10pt
+				WordWrap:         true,
+				Clip:             true,
+				Border:           tbl.Border(),
+				IgnoreForRowSnap: true,
 			}
 			pb.Objects = append(pb.Objects, sectionBorder)
 
@@ -534,12 +593,13 @@ func (e *ReportEngine) populateTableObjects(tbl *table.TableBase, originX, origi
 		}
 		if remainingH > 0 {
 			sectionBg := preview.PreparedObject{
-				Kind:    preview.ObjectTypePicture,
-				Left:    0,
-				Top:     originY,
-				Width:   pageWidth,
-				Height:  remainingH,
-				BlobIdx: -1,
+				Kind:             preview.ObjectTypePicture,
+				Left:             0,
+				Top:              originY,
+				Width:            pageWidth,
+				Height:           remainingH,
+				BlobIdx:          -1,
+				IgnoreForRowSnap: true,
 			}
 			pb.Objects = append(pb.Objects, sectionBg)
 		}
@@ -547,16 +607,17 @@ func (e *ReportEngine) populateTableObjects(tbl *table.TableBase, originX, origi
 		// Mirrors C# where each section has a text div with the table border.
 		totalTableW := colX[nCols]
 		sectionBorder := preview.PreparedObject{
-			Kind:     preview.ObjectTypeText,
-			Left:     originX,
-			Top:      originY,
-			Width:    totalTableW,
-			Height:   tableH,
-			BlobIdx:  -1,
-			Font:     style.DefaultFont(),
-			WordWrap: true,
-			Clip:     true,
-			Border:   tbl.Border(),
+			Kind:             preview.ObjectTypeText,
+			Left:             originX,
+			Top:              originY,
+			Width:            totalTableW,
+			Height:           tableH,
+			BlobIdx:          -1,
+			Font:             style.DefaultFont(),
+			WordWrap:         true,
+			Clip:             true,
+			Border:           tbl.Border(),
+			IgnoreForRowSnap: true,
 		}
 		pb.Objects = append(pb.Objects, sectionBorder)
 		sections = append(sections, colRange{0, nCols, 0, 0})
@@ -571,6 +632,18 @@ func (e *ReportEngine) populateTableObjects(tbl *table.TableBase, originX, origi
 			acc += float64(row.Height())
 			rowY[i+1] = float32(acc)
 		}
+	}
+
+	// Set FixedHeaderHeight so splitPreparedBandAcrossPages repeats the
+	// fixed header rows on each continuation page.
+	// Mirrors C# TableBase.FixedRows repeated in GeneratePagesAcrossThenDown.
+	fixedRows := tbl.FixedRows()
+	if fixedRows > 0 && pb.FixedHeaderHeight == 0 {
+		fixedH := originY // table origin within the band
+		for ri := 0; ri < fixedRows && ri < len(rows); ri++ {
+			fixedH += rows[ri].Height()
+		}
+		pb.FixedHeaderHeight = fixedH
 	}
 
 	// Render cells for each section.
@@ -705,11 +778,27 @@ func (e *ReportEngine) autoManualBuild(tbl *table.TableObject) *table.TableBase 
 	}
 
 	nCols := tbl.ColumnCount()
+	fixedCols := tbl.FixedColumns()
+
+	// Handle "datasource columns as table columns" pattern:
+	// FixedRows > 0, no FixedColumns, single column template (e.g. "Print DataTable").
+	// The C# script iterates datasource.Columns.Count, printing header aliases and
+	// data values via repeated PrintRow + PrintColumn(0) calls.
+	if tbl.FixedRows() > 0 && fixedCols == 0 && nCols == 1 {
+		return e.autoManualBuildDataTable(tbl)
+	}
+
 	if nCols < 2 {
 		return nil
 	}
 
-	fixedCols := tbl.FixedColumns()
+	// Simple row-first pattern: no FixedColumns, no FixedRows, ≥2 rows.
+	// C# pattern: PrintRow(0); PrintColumns(); foreach DS: PrintRow(1); PrintColumns()
+	// This covers tables like Table2 in Table.frx (Categories with images).
+	if fixedCols == 0 && tbl.FixedRows() == 0 && tbl.RowCount() >= 2 {
+		return e.autoManualBuildSimpleRowFirst(tbl)
+	}
+
 	if fixedCols <= 0 {
 		return nil // only handle column-first pattern
 	}
@@ -945,6 +1034,118 @@ func parseManualBuildScript(scriptText, eventName string) *scriptBuildInfo {
 	}
 }
 
+// autoManualBuildSimpleRowFirst handles the simple row-first ManualBuild pattern
+// for tables with no FixedRows and no FixedColumns:
+//
+//	PrintRow(0); PrintColumns()                 // header row once
+//	for each DS row: PrintRow(1); PrintColumns() // data row per record
+//
+// This covers tables like Table2 in Table.frx (Categories rows with images).
+// Mirrors the C# ManualBuild script pattern for row-first tables without fixed axes.
+func (e *ReportEngine) autoManualBuildSimpleRowFirst(tbl *table.TableObject) *table.TableBase {
+	nRows := tbl.RowCount()
+	nCols := tbl.ColumnCount()
+	if nRows < 2 || nCols < 1 {
+		return nil
+	}
+
+	// Detect DS alias from row 1 cells — text expressions or PictureObject DataColumn.
+	dsAlias := ""
+	for ci := 0; ci < nCols && dsAlias == ""; ci++ {
+		cell := tbl.Cell(1, ci)
+		if cell == nil {
+			continue
+		}
+		if a := tableExtractDSAlias(cell.Text()); a != "" {
+			dsAlias = a
+			break
+		}
+		// Also check embedded PictureObjects whose DataColumn contains "DS.Field".
+		for _, childObj := range cell.Objects() {
+			if pic, ok := childObj.(*object.PictureObject); ok {
+				col := pic.DataColumn()
+				if idx := strings.Index(col, "."); idx > 0 {
+					dsAlias = col[:idx]
+				}
+			}
+		}
+	}
+	if dsAlias == "" {
+		return nil
+	}
+
+	dict := e.report.Dictionary()
+	if dict == nil {
+		return nil
+	}
+	ds := dict.FindDataSourceByAlias(dsAlias)
+	if ds == nil {
+		ds = dict.FindDataSourceByName(dsAlias)
+	}
+	if ds == nil {
+		return nil
+	}
+	if err := ds.Init(); err != nil {
+		return nil
+	}
+	if err := ds.First(); err != nil {
+		return nil
+	}
+
+	h := table.NewTableHelper(tbl)
+
+	// Print header row (row 0) once — no data binding needed.
+	h.PrintRow(0)
+	h.PrintColumns()
+
+	// Print data row (row 1) for each DS record.
+	for !ds.EOF() {
+		e.report.SetCalcContext(ds)
+		h.CellTextEval = func(text string) string { return e.evalText(text) }
+		h.CellObjectEval = func(cell *table.TableCell) {
+			objs := cell.Objects()
+			for i, childObj := range objs {
+				if pic, ok := childObj.(*object.PictureObject); ok {
+					col := pic.DataColumn()
+					if col == "" {
+						continue
+					}
+					val, err := e.report.Calc("[" + col + "]")
+					if err != nil {
+						continue
+					}
+					s, ok2 := val.(string)
+					if !ok2 || len(s) == 0 {
+						continue
+					}
+					decoded, decErr := base64.StdEncoding.DecodeString(s)
+					if decErr != nil {
+						decoded, decErr = base64.RawStdEncoding.DecodeString(s)
+					}
+					if decErr != nil || len(decoded) == 0 {
+						continue
+					}
+					newPic := object.NewPictureObject()
+					newPic.SetName(pic.Name())
+					newPic.SetLeft(pic.Left())
+					newPic.SetTop(pic.Top())
+					newPic.SetWidth(pic.Width())
+					newPic.SetHeight(pic.Height())
+					newPic.SetImageData(decoded)
+					cell.ReplaceObject(i, newPic)
+				}
+			}
+		}
+		h.PrintRow(1)
+		h.PrintColumns()
+		h.CellTextEval = nil
+		h.CellObjectEval = nil
+		_ = ds.Next()
+	}
+
+	return h.Result()
+}
+
 // autoManualBuildRowFirst handles ManualBuild tables that have both FixedRows > 0
 // and FixedColumns > 0. It first tries to parse the C# ManualBuild script for
 // exact row/column indices. If parsing succeeds, it drives the table build with
@@ -1139,6 +1340,147 @@ func (e *ReportEngine) autoManualBuildRowFirst(tbl *table.TableObject) *table.Ta
 	e.evaluateTableAggregates(tbl, result)
 
 	return result
+}
+
+// autoManualBuildDataTable handles the "datasource columns become table columns" pattern.
+//
+// Detection criteria:
+//   - FixedRows > 0, FixedColumns == 0, single column template (nCols == 1)
+//   - Script body contains "Columns.Count" (column-iteration indicator)
+//   - Script body references a datasource via Report.GetDataSource("X")
+//
+// The C# ManualBuild handler for this pattern:
+//  1. Calls PrintRow(headerIdx) once, then PrintColumn(0) per datasource column
+//     with cell text = column alias (header row)
+//  2. For each data row: calls PrintRow(dataIdx) then PrintColumn(0) per column
+//     with cell text = column value
+//
+// Example: "Print DataTable" FastReport demo report.
+// Mirrors C# ManualBuild script behavior using TableHelper row-first + column-expansion.
+func (e *ReportEngine) autoManualBuildDataTable(tbl *table.TableObject) *table.TableBase {
+	if tbl.RowCount() < 2 {
+		return nil
+	}
+
+	// Extract the script function body for the ManualBuildEvent.
+	scriptText := e.report.ScriptText
+	eventName := tbl.ManualBuildEvent
+	if scriptText == "" || eventName == "" {
+		return nil
+	}
+	funcIdx := strings.Index(scriptText, eventName)
+	if funcIdx < 0 {
+		return nil
+	}
+	bodyStart := strings.Index(scriptText[funcIdx:], "{")
+	if bodyStart < 0 {
+		return nil
+	}
+	bodyStart += funcIdx + 1
+	depth := 1
+	bodyEnd := bodyStart
+	for i := bodyStart; i < len(scriptText) && depth > 0; i++ {
+		switch scriptText[i] {
+		case '{':
+			depth++
+		case '}':
+			depth--
+		}
+		bodyEnd = i
+	}
+	body := scriptText[bodyStart:bodyEnd]
+
+	// Must contain "Columns.Count" to confirm column-iteration pattern.
+	if !strings.Contains(body, "Columns.Count") {
+		return nil
+	}
+
+	// Extract datasource alias from Report.GetDataSource("X").
+	dsRe := regexp.MustCompile(`Report\.GetDataSource\(\s*"([^"]+)"\s*\)`)
+	dsMatches := dsRe.FindAllStringSubmatch(body, -1)
+	if len(dsMatches) == 0 {
+		return nil
+	}
+	dsAlias := dsMatches[0][1]
+
+	dict := e.report.Dictionary()
+	if dict == nil {
+		return nil
+	}
+	ds := dict.FindDataSourceByAlias(dsAlias)
+	if ds == nil {
+		ds = dict.FindDataSourceByName(dsAlias)
+	}
+	if ds == nil {
+		return nil
+	}
+
+	// Columns() is not in the DataSource interface; use structural assertion.
+	type hasColumns interface{ Columns() []data.Column }
+	colProvider, ok := ds.(hasColumns)
+	if !ok {
+		return nil
+	}
+
+	if err := ds.Init(); err != nil {
+		return nil
+	}
+
+	cols := colProvider.Columns()
+	if len(cols) == 0 {
+		return nil
+	}
+
+	h := table.NewTableHelper(tbl)
+
+	// Determine header vs data row indices from FixedRows.
+	fixedRows := tbl.FixedRows()
+	dataRowIdx := fixedRows // template row index for data rows
+
+	// Print header rows: once per fixed-row template, one column per datasource column.
+	// Cell text = datasource column alias.
+	for ri := 0; ri < fixedRows; ri++ {
+		h.PrintRow(ri)
+		for _, col := range cols {
+			alias := col.Alias
+			if alias == "" {
+				alias = col.Name
+			}
+			capturedAlias := alias
+			h.CellTextEval = func(_ string) string { return capturedAlias }
+			h.PrintColumn(0)
+			h.CellTextEval = nil
+		}
+	}
+
+	// Print data rows: one per datasource row, one column per datasource column.
+	// Cell text = datasource column value for current row.
+	if err := ds.First(); err != nil {
+		// Empty datasource — return header-only table.
+		return h.Result()
+	}
+
+	for !ds.EOF() {
+		e.report.SetCalcContext(ds)
+		h.PrintRow(dataRowIdx)
+		for _, col := range cols {
+			colName := col.Name
+			val, _ := ds.GetValue(colName)
+			valStr := ""
+			if val != nil {
+				valStr = fmt.Sprint(val)
+			}
+			capturedVal := valStr
+			h.CellTextEval = func(_ string) string { return capturedVal }
+			h.PrintColumn(0)
+			h.CellTextEval = nil
+		}
+		if err := ds.Next(); err != nil {
+			break
+		}
+	}
+
+	return h.Result()
 }
 
 // evaluateTableAggregates scans the result table for cells containing aggregate
@@ -1981,10 +2323,16 @@ func (e *ReportEngine) buildPreparedObject(obj report.Base) *preview.PreparedObj
 		if f, ok := v.Fill().(*style.SolidFill); ok {
 			po.FillColor = f.Color
 		}
+		// C# GetPath: pixel = (pt.X + left + center.X) * scaleX, where left=AbsLeft.
+		// Store points as (pt.X + CenterX, pt.Y + CenterY) so they are relative to
+		// the object's top-left corner (AbsLeft, AbsTop), matching C# rendering.
+		// Ref: PolyLineObject.cs GetPath lines 246, 287.
+		cx := v.CenterX()
+		cy := v.CenterY()
 		pts := v.Points()
 		for i := 0; i < pts.Len(); i++ {
 			pt := pts.Get(i)
-			po.Points = append(po.Points, [2]float32{pt.X, pt.Y})
+			po.Points = append(po.Points, [2]float32{pt.X + cx, pt.Y + cy})
 		}
 
 	case *object.PolygonObject:
@@ -1993,10 +2341,13 @@ func (e *ReportEngine) buildPreparedObject(obj report.Base) *preview.PreparedObj
 		if f, ok := v.Fill().(*style.SolidFill); ok {
 			po.FillColor = f.Color
 		}
+		// Same CenterX/CenterY offset as PolyLineObject — see comment above.
+		cx := v.CenterX()
+		cy := v.CenterY()
 		pts := v.Points()
 		for i := 0; i < pts.Len(); i++ {
 			pt := pts.Get(i)
-			po.Points = append(po.Points, [2]float32{pt.X, pt.Y})
+			po.Points = append(po.Points, [2]float32{pt.X + cx, pt.Y + cy})
 		}
 
 	case *object.LineObject:
@@ -2188,6 +2539,7 @@ func (e *ReportEngine) buildPreparedObject(obj report.Base) *preview.PreparedObj
 		po.CheckedSymbol = int(v.CheckedSymbol())
 		po.UncheckedSymbol = int(v.UncheckedSymbol())
 		po.CheckColor = v.CheckColor()
+		po.CheckWidthRatio = v.CheckWidthRatio()
 
 	case *gauge.LinearGauge:
 		e.evalGaugeValue(&v.GaugeObject)

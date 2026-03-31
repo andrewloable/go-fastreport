@@ -25,15 +25,16 @@ import (
 // by the engine because they require access to data source rows.
 func BuiltinFunctions() map[string]any {
 	return map[string]any{
-		"IIF":      iif,
-		"Format":   formatValue,
-		"DateDiff": dateDiff,
-		"Str":      str,
-		"Int":      toInt,
-		"Float":    toFloat,
-		"Len":      strLen,
-		"Upper":    upper,
-		"Lower":    lower,
+		"IIF":       iif,
+		"Format":    formatValue,
+		"DateDiff":  dateDiff,
+		"Str":       str,
+		"Int":       toInt,
+		"Float":     toFloat,
+		"Len":       strLen,
+		"Upper":     upper,
+		"Lower":     lower,
+		"Substring": substring,
 	}
 }
 
@@ -200,4 +201,21 @@ func lower(s string) string {
 		result = append(result, r)
 	}
 	return string(result)
+}
+
+// substring returns a substring of s starting at startIndex with the given
+// length. Mirrors the C# String.Substring(startIndex, length) method.
+// Both startIndex and length are rune-based (Unicode-aware).
+// If startIndex is out of bounds it returns ""; if length exceeds the
+// remaining runes it is clamped to the available length.
+func substring(s string, startIndex, length int) string {
+	runes := []rune(s)
+	if startIndex < 0 || startIndex >= len(runes) {
+		return ""
+	}
+	end := startIndex + length
+	if end > len(runes) {
+		end = len(runes)
+	}
+	return string(runes[startIndex:end])
 }

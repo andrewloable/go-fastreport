@@ -98,6 +98,7 @@ func newTableHelper(src *TableObject) *TableHelper {
 	// Mirrors C# TableHelper which inherits Layout/WrappedGap/FixedColumns.
 	res.SetLayout(src.Layout())
 	res.SetWrappedGap(src.WrappedGap())
+	res.SetFixedRows(src.FixedRows())
 	res.SetFixedColumns(src.FixedColumns())
 	res.SetBorder(src.Border()) // C# propagates table border to result
 	return &TableHelper{

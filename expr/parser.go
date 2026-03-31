@@ -43,17 +43,12 @@ func ParseWithBrackets(text, open, close string) []Token {
 		}
 		openIdx += pos // absolute index
 
-		// Check for escaped open bracket "[[" (doubled open bracket).
-		if open == "[" && openIdx+1 < n && text[openIdx+1] == '[' {
-			// Emit text before the escape as literal, then a single "[".
-			lit := UnescapeBrackets(text[pos:openIdx])
-			if lit != "" {
-				tokens = append(tokens, Token{IsExpr: false, Value: lit})
-			}
-			tokens = append(tokens, Token{IsExpr: false, Value: "["})
-			pos = openIdx + 2
-			continue
-		}
+		// Note: "[[" is NOT an escape sequence in FastReport template text.
+		// In FastReport .NET, "[[expr1] op [expr2]]" is a compound expression where
+		// the outer "[...]" marks the expression and the inner "[...]" are field
+		// references within it (mirrors C# CodeUtils.FindMatchingBrackets depth
+		// tracking — no special handling for "[["). Pure depth tracking below
+		// correctly finds the outermost matching "]" for any nesting level.
 
 		// Emit any literal text before this open bracket.
 		if openIdx > pos {

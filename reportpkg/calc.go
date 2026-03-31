@@ -86,6 +86,11 @@ func (r *Report) Calc(expression string) (any, error) {
 	// These have no equivalent in expr-lang/expr.
 	goExpr = stripCSharpCasts(goExpr)
 
+	// Rewrite C# string method calls to registered built-in functions.
+	// e.g. Products_ProductName.Substring(0, 1) → Substring(Products_ProductName, 0, 1)
+	// C# ref: FastReport expressions support .NET string methods on field values.
+	goExpr = rewriteCSharpStringMethods(goExpr)
+
 	// If the expression is a simple dotted identifier (e.g. "Report.ReportInfo.Description"),
 	// sanitize dots to underscores so it matches keys in the environment.
 	if isSimpleDottedIdent(goExpr) {
@@ -210,6 +215,14 @@ func (r *Report) buildCalcEnv() expr.Env {
 		}
 	}
 
+	// Extra engine-injected variables (e.g. Matrix1 object with RowIndex/ColumnIndex).
+	// Set by the engine during matrix highlight condition evaluation so that
+	// expressions like "Matrix1.RowIndex % 2 != 0" resolve correctly.
+	// C# ref: script context exposes all named objects as properties.
+	for k, v := range r.extraCalcEnv {
+		env[k] = v
+	}
+
 	return env
 }
 
@@ -295,6 +308,25 @@ var csharpCastRE = regexp.MustCompile(`\((?:decimal|int|float|double|long|short|
 // stripCSharpCasts removes C# type cast syntax from expressions.
 func stripCSharpCasts(s string) string {
 	return csharpCastRE.ReplaceAllString(s, "")
+}
+
+// csharpSubstringRE matches C# .Substring(start, length) method calls on an
+// identifier or dotted-identifier. Captures (identifier, start, length).
+// C# ref: String.Substring(Int32, Int32) — 0-based start index, rune count.
+var csharpSubstringRE = regexp.MustCompile(`(\w+)\.Substring\((\d+),\s*(\d+)\)`)
+
+// rewriteCSharpStringMethods rewrites C# string method calls that have no
+// direct equivalent in expr-lang/expr to registered built-in function calls.
+//
+// Rewrites performed (C# → Go built-in):
+//
+//	identifier.Substring(start, length) → Substring(identifier, start, length)
+//
+// C# ref: FastReport compound expressions like [[Products.ProductName].Substring(0,1)]
+// rely on .NET string methods. After translateExpression converts [field] references
+// to Go identifiers, these method calls must be rewritten to registered functions.
+func rewriteCSharpStringMethods(s string) string {
+	return csharpSubstringRE.ReplaceAllString(s, "Substring($1, $2, $3)")
 }
 
 // sanitizeIdent converts a token like "DataSource.Field" into a valid Go

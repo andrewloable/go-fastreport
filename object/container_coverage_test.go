@@ -6,6 +6,7 @@ package object_test
 
 import (
 	"bytes"
+	"image/color"
 	"strings"
 	"testing"
 
@@ -102,7 +103,7 @@ func TestCheckBoxObject_RoundTrip_AllFields(t *testing.T) {
 
 func TestCheckBoxObject_Deserialize_ExplicitXML(t *testing.T) {
 	xmlStr := `<CheckBoxObject Checked="true" CheckedSymbol="2" UncheckedSymbol="3" ` +
-		`DataColumn="Col1" Expression="[X]>0" CheckWidthRatio="0.5" HideIfUnchecked="true" Editable="true"/>`
+		`DataColumn="Col1" Expression="[X]>0" CheckWidthRatio="0.5" HideIfUnchecked="true" Editable="true" CheckColor="DarkOrange"/>`
 
 	r := serial.NewReader(strings.NewReader(xmlStr))
 	_, ok := r.ReadObjectHeader()
@@ -136,6 +137,11 @@ func TestCheckBoxObject_Deserialize_ExplicitXML(t *testing.T) {
 	}
 	if !got.Editable() {
 		t.Error("Editable: want true")
+	}
+	// CheckColor="DarkOrange" → RGBA{255, 140, 0, 255}
+	wantColor := color.RGBA{R: 255, G: 140, B: 0, A: 255}
+	if got.CheckColor() != wantColor {
+		t.Errorf("CheckColor: got %v, want %v (DarkOrange)", got.CheckColor(), wantColor)
 	}
 }
 

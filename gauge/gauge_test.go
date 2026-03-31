@@ -55,8 +55,8 @@ func TestNewPointer_Defaults(t *testing.T) {
 	if p.Width != 6 {
 		t.Errorf("Width = %v, want 6", p.Width)
 	}
-	if p.Color != "#CC0000" {
-		t.Errorf("Color = %q, want #CC0000", p.Color)
+	if p.Color != "Orange" {
+		t.Errorf("Color = %q, want Orange", p.Color)
 	}
 }
 
@@ -196,36 +196,40 @@ func TestNewRadialGauge_Defaults(t *testing.T) {
 	if g.TypeName() != "RadialGauge" {
 		t.Errorf("TypeName = %q", g.TypeName())
 	}
-	if g.StartAngle != -135 {
-		t.Errorf("StartAngle = %v, want -135", g.StartAngle)
+	// C# RadialScale: minimum at lower-left (135°), maximum at lower-right (45°).
+	// Sweep = 270° clockwise, matching C# RadialScale.majorStep * sideTicksCount layout.
+	if g.StartAngle != 135 {
+		t.Errorf("StartAngle = %v, want 135", g.StartAngle)
 	}
-	if g.EndAngle != 135 {
-		t.Errorf("EndAngle = %v, want 135", g.EndAngle)
+	if g.EndAngle != 45 {
+		t.Errorf("EndAngle = %v, want 45", g.EndAngle)
 	}
 }
 
 func TestRadialGauge_NeedleAngle_AtMin(t *testing.T) {
 	g := gauge.NewRadialGauge()
 	g.SetValue(0)
-	if g.NeedleAngle() != -135 {
-		t.Errorf("NeedleAngle at min = %v, want -135", g.NeedleAngle())
+	// StartAngle=135, sweep=270, pct=0 → 135
+	if g.NeedleAngle() != 135 {
+		t.Errorf("NeedleAngle at min = %v, want 135", g.NeedleAngle())
 	}
 }
 
 func TestRadialGauge_NeedleAngle_AtMax(t *testing.T) {
 	g := gauge.NewRadialGauge()
 	g.SetValue(100)
-	if g.NeedleAngle() != 135 {
-		t.Errorf("NeedleAngle at max = %v, want 135", g.NeedleAngle())
+	// StartAngle=135, sweep=270, pct=1 → 135+270=405
+	if math.Abs(g.NeedleAngle()-405) > 1e-9 {
+		t.Errorf("NeedleAngle at max = %v, want 405", g.NeedleAngle())
 	}
 }
 
 func TestRadialGauge_NeedleAngle_AtMid(t *testing.T) {
 	g := gauge.NewRadialGauge()
 	g.SetValue(50)
-	// -135 + 270*0.5 = 0
-	if math.Abs(g.NeedleAngle()-0) > 1e-9 {
-		t.Errorf("NeedleAngle at mid = %v, want 0", g.NeedleAngle())
+	// StartAngle=135, sweep=270, pct=0.5 → 135+135=270
+	if math.Abs(g.NeedleAngle()-270) > 1e-9 {
+		t.Errorf("NeedleAngle at mid = %v, want 270", g.NeedleAngle())
 	}
 }
 

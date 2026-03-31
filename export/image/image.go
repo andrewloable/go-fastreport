@@ -368,33 +368,64 @@ func (e *Exporter) renderObject(obj preview.PreparedObject, bandTop float32) {
 		}
 
 	case preview.ObjectTypeShape:
-		if !bounds.Empty() && obj.FillColor.A > 0 {
-			draw.Draw(e.curPage, bounds, &image.Uniform{obj.FillColor}, image.Point{}, draw.Over)
-		}
+		// C# ShapeObject.Draw fills then outlines the polygon/shape.
+		// Ref: ShapeObject.cs:156-189 — g.FillAndDrawPolygon for Diamond/Triangle,
+		// g.FillAndDrawRectangle for Rectangle, g.FillAndDrawEllipse for Ellipse.
+		// Each shape fills only its geometric area (not the full bounding rect).
+		fc := obj.FillColor
 		shapeColor := color.RGBA{A: 255}
 		if obj.Border.Lines[0] != nil && obj.Border.Lines[0].Color.A > 0 {
 			shapeColor = obj.Border.Lines[0].Color
 		}
 		switch obj.ShapeKind {
-		case 2: // Ellipse
+		case 2: // Ellipse — fill ellipse, then draw outline.
+			if fc.A > 0 {
+				e.fillEllipse(x, y, w, h, fc)
+			}
 			e.drawEllipse(x, y, w, h, shapeColor)
-		case 3: // Triangle — draw as simple polygon outline
+		case 3: // Triangle — fill polygon, then draw outline.
+			// C# triangle points: (x1,y1), (x,y1), (x+dx/2,y) — ShapeObject.cs:178-180
+			triPts := []image.Point{
+				{X: x + w/2, Y: y},
+				{X: x + w, Y: y + h},
+				{X: x, Y: y + h},
+			}
+			if fc.A > 0 {
+				e.fillPolygon(triPts, fc)
+			}
 			e.drawLine(x+w/2, y, x+w, y+h, shapeColor)
 			e.drawLine(x+w, y+h, x, y+h, shapeColor)
 			e.drawLine(x, y+h, x+w/2, y, shapeColor)
-		case 4: // Diamond
+		case 4: // Diamond — fill polygon, then draw outline.
+			// C# diamond points: (x+dx/2,y), (x1,y+dy/2), (x+dx/2,y1), (x,y+dy/2)
+			// Ref: ShapeObject.cs:184-187
+			diaPts := []image.Point{
+				{X: x + w/2, Y: y},
+				{X: x + w, Y: y + h/2},
+				{X: x + w/2, Y: y + h},
+				{X: x, Y: y + h/2},
+			}
+			if fc.A > 0 {
+				e.fillPolygon(diaPts, fc)
+			}
 			e.drawLine(x+w/2, y, x+w, y+h/2, shapeColor)
 			e.drawLine(x+w, y+h/2, x+w/2, y+h, shapeColor)
 			e.drawLine(x+w/2, y+h, x, y+h/2, shapeColor)
 			e.drawLine(x, y+h/2, x+w/2, y, shapeColor)
-		case 1: // RoundRectangle — use ShapeCurve as corner radius.
+		case 1: // RoundRectangle — fill then draw outline.
+			if !bounds.Empty() && fc.A > 0 {
+				draw.Draw(e.curPage, bounds, &image.Uniform{fc}, image.Point{}, draw.Over)
+			}
 			radius := int(math.Round(float64(obj.ShapeCurve)))
 			if radius <= 0 {
 				e.drawRect(bounds, shapeColor)
 			} else {
 				e.drawRoundRect(x, y, w, h, radius, shapeColor)
 			}
-		default: // Rectangle (0).
+		default: // Rectangle (0) — fill bounding rect, then draw outline.
+			if !bounds.Empty() && fc.A > 0 {
+				draw.Draw(e.curPage, bounds, &image.Uniform{fc}, image.Point{}, draw.Over)
+			}
 			e.drawRect(bounds, shapeColor)
 		}
 		e.drawBorderLines(obj.Border, x, y, w, h)
@@ -434,12 +465,20 @@ func (e *Exporter) renderObject(obj preview.PreparedObject, bandTop float32) {
 			}
 
 			// Match C# DrawCheck padding: ratio = Width / (5mm * 3.78), pad = 4 * ratio.
-			// C# reference: CheckBoxObject.cs:210-211
+			// Pen width: 1.6 * ratio * CheckWidthRatio (C# CheckBoxObject.cs:210-212).
 			ratio := float64(w) / 18.9
 			padF := 4.0 * ratio
 			pad := int(math.Round(padF))
 			if pad < 1 {
 				pad = 1
+			}
+			checkWidthRatio := float64(obj.CheckWidthRatio)
+			if checkWidthRatio <= 0 {
+				checkWidthRatio = 1.0
+			}
+			thickness := int(math.Round(1.6 * ratio * checkWidthRatio))
+			if thickness < 1 {
+				thickness = 1
 			}
 			switch symbol {
 			case 0: // checkmark
@@ -451,23 +490,23 @@ func (e *Exporter) renderObject(obj preview.PreparedObject, bandTop float32) {
 				dh := h - 2*dy
 				mx := x + dx + int(float64(dw)*0.4)
 				my := y + dy + dh - int(float64(dh)*0.1)
-				e.drawLine(x+dx, y+dy+int(float64(dh)*0.5), mx, my, cc)
-				e.drawLine(mx, my, x+dx+dw, y+dy+int(float64(dh)*0.1), cc)
+				e.drawThickLine(x+dx, y+dy+int(float64(dh)*0.5), mx, my, thickness, cc)
+				e.drawThickLine(mx, my, x+dx+dw, y+dy+int(float64(dh)*0.1), thickness, cc)
 			case 1: // cross (X)
-				e.drawLine(x+pad, y+pad, x+w-pad, y+h-pad, cc)
-				e.drawLine(x+w-pad, y+pad, x+pad, y+h-pad, cc)
+				e.drawThickLine(x+pad, y+pad, x+w-pad, y+h-pad, thickness, cc)
+				e.drawThickLine(x+w-pad, y+pad, x+pad, y+h-pad, thickness, cc)
 			case 2: // plus (+)
-				e.drawLine(x+w/2, y+pad, x+w/2, y+h-pad, cc)
-				e.drawLine(x+pad, y+h/2, x+w-pad, y+h/2, cc)
+				e.drawThickLine(x+w/2, y+pad, x+w/2, y+h-pad, thickness, cc)
+				e.drawThickLine(x+pad, y+h/2, x+w-pad, y+h/2, thickness, cc)
 			case 3: // fill (filled rectangle)
 				fillBounds := image.Rect(x+pad, y+pad, x+w-pad, y+h-pad)
 				draw.Draw(e.curPage, fillBounds, &image.Uniform{cc}, image.Point{}, draw.Over)
 			case 10: // minus (-)
-				e.drawLine(x+pad, y+h/2, x+w-pad, y+h/2, cc)
+				e.drawThickLine(x+pad, y+h/2, x+w-pad, y+h/2, thickness, cc)
 			case 11: // slash (/)
-				e.drawLine(x+pad, y+h-pad, x+w-pad, y+pad, cc)
+				e.drawThickLine(x+pad, y+h-pad, x+w-pad, y+pad, thickness, cc)
 			case 12: // backslash (\)
-				e.drawLine(x+pad, y+pad, x+w-pad, y+h-pad, cc)
+				e.drawThickLine(x+pad, y+pad, x+w-pad, y+h-pad, thickness, cc)
 			}
 		}
 
@@ -494,18 +533,25 @@ func (e *Exporter) renderObject(obj preview.PreparedObject, bandTop float32) {
 		if len(obj.Points) < 2 {
 			return
 		}
+		// Build pixel points (engine stores them as bounding-box-relative after
+		// CenterX/CenterY transform — see engine/objects.go PolygonObject case).
+		n := len(obj.Points)
+		imgPts := make([]image.Point, n)
+		for i, p := range obj.Points {
+			imgPts[i] = image.Point{X: x + e.scaled(int(p[0])), Y: y + e.scaled(int(p[1]))}
+		}
+		// Fill polygon interior before drawing outline (mirrors C# FillPath + DrawPath).
+		// Ref: PolyLineObject.cs DoDrawPoly / PolygonObject.cs drawPoly.
+		if obj.FillColor.A > 0 {
+			e.fillPolygon(imgPts, obj.FillColor)
+		}
 		lineColor := color.RGBA{A: 255}
 		if obj.Border.Lines[0] != nil && obj.Border.Lines[0].Color.A > 0 {
 			lineColor = obj.Border.Lines[0].Color
 		}
-		n := len(obj.Points)
 		for i := 0; i < n; i++ {
 			next := (i + 1) % n
-			x0p := x + e.scaled(int(obj.Points[i][0]))
-			y0p := y + e.scaled(int(obj.Points[i][1]))
-			x1p := x + e.scaled(int(obj.Points[next][0]))
-			y1p := y + e.scaled(int(obj.Points[next][1]))
-			e.drawLine(x0p, y0p, x1p, y1p, lineColor)
+			e.drawLine(imgPts[i].X, imgPts[i].Y, imgPts[next].X, imgPts[next].Y, lineColor)
 		}
 
 	case preview.ObjectTypeDigitalSignature:
@@ -804,6 +850,60 @@ func (e *Exporter) drawPictureObject(x, y, w, h int, obj preview.PreparedObject)
 }
 
 // drawLine draws a line from (x0,y0) to (x1,y1) using Bresenham's algorithm.
+// drawThickLine draws a line from (x0,y0) to (x1,y1) with the given thickness
+// by filling a circular disk of radius r = thickness/2 at each Bresenham pixel.
+// Mirrors the effect of C# Graphics.DrawLine with a Pen of given width.
+func (e *Exporter) drawThickLine(x0, y0, x1, y1, thickness int, c color.RGBA) {
+	if thickness <= 1 {
+		e.drawLine(x0, y0, x1, y1, c)
+		return
+	}
+	r := thickness / 2
+	dx := x1 - x0
+	if dx < 0 {
+		dx = -dx
+	}
+	dy := y1 - y0
+	if dy < 0 {
+		dy = -dy
+	}
+	sx := 1
+	if x0 > x1 {
+		sx = -1
+	}
+	sy := 1
+	if y0 > y1 {
+		sy = -1
+	}
+	xerr := dx - dy
+	bounds := e.curPage.Bounds()
+	for {
+		// Fill a disk of radius r centred at (x0, y0).
+		for dy2 := -r; dy2 <= r; dy2++ {
+			for dx2 := -r; dx2 <= r; dx2++ {
+				if dx2*dx2+dy2*dy2 <= r*r {
+					px, py := x0+dx2, y0+dy2
+					if px >= bounds.Min.X && px < bounds.Max.X && py >= bounds.Min.Y && py < bounds.Max.Y {
+						e.curPage.SetRGBA(px, py, c)
+					}
+				}
+			}
+		}
+		if x0 == x1 && y0 == y1 {
+			break
+		}
+		e2 := 2 * xerr
+		if e2 > -dy {
+			xerr -= dy
+			x0 += sx
+		}
+		if e2 < dx {
+			xerr += dx
+			y0 += sy
+		}
+	}
+}
+
 func (e *Exporter) drawLine(x0, y0, x1, y1 int, c color.RGBA) {
 	dx := x1 - x0
 	if dx < 0 {
@@ -1245,14 +1345,11 @@ func RenderGenericPNG(obj preview.PreparedObject) ([]byte, error) {
 		h = 1
 	}
 	canvas := image.NewRGBA(image.Rect(0, 0, w, h))
-	// Fill with FillColor when set so the fill is baked into the PNG.
-	// C# renders filled shapes (polygons, etc.) as filled images.
-	// When no fill: use transparent so underlying page content shows through.
-	bg := color.RGBA{0, 0, 0, 0}
-	if obj.FillColor.A > 0 {
-		bg = obj.FillColor
-	}
-	draw.Draw(canvas, canvas.Bounds(), &image.Uniform{bg}, image.Point{}, draw.Src)
+	// Start with a transparent canvas. Each shape type (Rectangle, Diamond,
+	// Triangle, Ellipse, etc.) fills its own geometric area in renderObject,
+	// so we do not pre-fill the bounding rectangle here.
+	// C# also starts with a transparent/uncleared bitmap for ShapeObjects and
+	// lets obj.Draw() fill only the polygon area. Ref: HTMLExportLayers.cs:503-518.
 
 	exp := &Exporter{
 		ResolutionX: DefaultDPI,
@@ -1479,6 +1576,97 @@ func convertToGray(src *image.RGBA) *image.Gray {
 		}
 	}
 	return dst
+}
+
+// fillPolygon fills the interior of a polygon defined by pts using a scanline
+// fill algorithm. This matches C# Graphics.FillPolygon / FillAndDrawPolygon
+// used for Diamond and Triangle ShapeObjects (ShapeObject.cs:183-188).
+func (e *Exporter) fillPolygon(pts []image.Point, c color.RGBA) {
+	if len(pts) < 3 || c.A == 0 {
+		return
+	}
+	bounds := e.curPage.Bounds()
+
+	// Find y extent.
+	yMin, yMax := pts[0].Y, pts[0].Y
+	for _, p := range pts[1:] {
+		if p.Y < yMin {
+			yMin = p.Y
+		}
+		if p.Y > yMax {
+			yMax = p.Y
+		}
+	}
+	if yMin < bounds.Min.Y {
+		yMin = bounds.Min.Y
+	}
+	if yMax >= bounds.Max.Y {
+		yMax = bounds.Max.Y - 1
+	}
+
+	n := len(pts)
+	for y := yMin; y <= yMax; y++ {
+		// Find x intersections with all polygon edges at scanline y.
+		var xs []int
+		for i := 0; i < n; i++ {
+			j := (i + 1) % n
+			y0, y1 := pts[i].Y, pts[j].Y
+			x0, x1 := pts[i].X, pts[j].X
+			if (y0 <= y && y < y1) || (y1 <= y && y < y0) {
+				// Compute x intersection using linear interpolation.
+				x := x0 + (y-y0)*(x1-x0)/(y1-y0)
+				xs = append(xs, x)
+			}
+		}
+		// Sort intersections.
+		for i := 1; i < len(xs); i++ {
+			for j := i; j > 0 && xs[j] < xs[j-1]; j-- {
+				xs[j], xs[j-1] = xs[j-1], xs[j]
+			}
+		}
+		// Fill between pairs of intersections.
+		for i := 0; i+1 < len(xs); i += 2 {
+			for x := xs[i]; x <= xs[i+1]; x++ {
+				if x >= bounds.Min.X && x < bounds.Max.X {
+					e.curPage.SetRGBA(x, y, c)
+				}
+			}
+		}
+	}
+}
+
+// fillEllipse fills the interior of an ellipse inscribed in the given rect.
+// Matches C# Graphics.FillEllipse used for Ellipse ShapeObjects (ShapeObject.cs:173).
+func (e *Exporter) fillEllipse(x, y, w, h int, c color.RGBA) {
+	if w <= 0 || h <= 0 || c.A == 0 {
+		return
+	}
+	a := float64(w) / 2.0
+	b := float64(h) / 2.0
+	cx := float64(x) + a
+	cy := float64(y) + b
+	bounds := e.curPage.Bounds()
+	for row := y; row < y+h; row++ {
+		if row < bounds.Min.Y || row >= bounds.Max.Y {
+			continue
+		}
+		dy := float64(row) + 0.5 - cy
+		if math.Abs(dy) > b {
+			continue
+		}
+		dx := a * math.Sqrt(1-dy*dy/(b*b))
+		x0 := int(math.Ceil(cx - dx))
+		x1 := int(math.Floor(cx + dx))
+		if x0 < bounds.Min.X {
+			x0 = bounds.Min.X
+		}
+		if x1 >= bounds.Max.X {
+			x1 = bounds.Max.X - 1
+		}
+		for px := x0; px <= x1; px++ {
+			e.curPage.SetRGBA(px, row, c)
+		}
+	}
 }
 
 // drawRect draws a 1-pixel border around rect r in the given color.

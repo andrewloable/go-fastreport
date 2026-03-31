@@ -4,8 +4,10 @@ package table
 
 import (
 	"image"
+	"math"
 
 	"github.com/andrewloable/go-fastreport/report"
+	"github.com/andrewloable/go-fastreport/utils"
 )
 
 // TableLayout specifies the layout used when printing a large table across pages.
@@ -626,26 +628,79 @@ func (t *TableBase) CalcSpans() {
 	t.ResetSpanList()
 }
 
+// cellMeasuredWidth returns the minimum width needed to display the cell
+// text without wrapping, using font metrics for accuracy.
+// Mirrors C# TextObject.CalcSize().Width used in TableBase.CalcWidth.
+// The result is ceiling-rounded and includes a 1px GDI-compatible safety margin.
+// C# GDI+ MeasureString (GenericDefault) includes trailing whitespace (~1px),
+// ensuring text is never clipped at the cell boundary. Go's font measurement
+// omits this trailing space, so we add +1 explicitly.
+// The HTML exporter subtracts borderWidth/2 from each side (≈1px total for
+// 1px borders), so a 2px constant ensures the rendered content area always
+// has at least 1px more than the measured text width.
+func cellMeasuredWidth(cell *TableCell) float32 {
+	text := cell.Text()
+	var textW float32
+	if text != "" {
+		w, _ := utils.MeasureText(text, cell.Font(), 0)
+		textW = utils.ScaleWidth(w, cell.Font())
+	}
+	pad := cell.Padding()
+	result := textW + pad.Left + pad.Right + 2
+	return float32(math.Ceil(float64(result)))
+}
+
+// cellMeasuredHeight returns the height needed to display the cell's text,
+// accounting for word-wrap at the cell width and explicit newlines.
+// Mirrors C# TextObject.CalcHeight() / CalcSize().Height used in TableBase.CalcHeight (TableBase.cs:989).
+func cellMeasuredHeight(cell *TableCell) float32 {
+	_, lineH := utils.MeasureText("X", cell.Font(), 0)
+	pad := cell.Padding()
+	text := cell.Text()
+	if text == "" {
+		return lineH + pad.Top + pad.Bottom + 1
+	}
+	availW := cell.Width() - pad.Left - pad.Right
+	if availW <= 0 {
+		availW = 0
+	}
+	_, measH := utils.MeasureText(text, cell.Font(), availW)
+	return measH + pad.Top + pad.Bottom + 1
+}
+
 // CalcWidth returns the total width of the table by summing visible column
-// widths, applying AutoSize expansion/contraction from cell widths.
-// When AutoSize=true and MinWidth > 0, the column contracts to MinWidth
-// if content doesn't require the declared width (no text measurement
-// available in Go, so MinWidth is used as the contracted width).
-// Mirrors C# TableBase.CalcWidth (TableBase.cs).
+// widths. For AutoSize=true columns the width is computed from the maximum
+// text width across all cells in the column (mirrors C# TableBase.CalcWidth).
+// If a cell has an explicit Width() > 0 (set programmatically), that value
+// is used as a floor so existing code that sets cell widths is not broken.
 func (t *TableBase) CalcWidth() float32 {
-	if len(t.rows) > 0 {
-		for ci, col := range t.columns {
-			if col.AutoSize() {
-				cell := t.Cell(0, ci)
-				if cell != nil && cell.Width() > col.Width() {
-					// Expand to fit content.
-					col.SetWidth(cell.Width())
-				} else if col.MinWidth() > 0 && col.Width() > col.MinWidth() {
-					// Contract to MinWidth when content fits.
-					// C# measures actual text; Go approximates with MinWidth.
-				col.SetWidth(col.MinWidth())
-				}
+	for ci, col := range t.columns {
+		if !col.AutoSize() || !col.Visible() {
+			continue
+		}
+		maxW := float32(-1)
+		for ri := range t.rows {
+			cell := t.Cell(ri, ci)
+			if cell == nil || cell.ColSpan() != 1 {
+				continue
 			}
+			// Use the larger of the measured text width and any explicit cell width.
+			cw := cellMeasuredWidth(cell)
+			if explicit := cell.Width(); explicit > cw {
+				cw = explicit
+			}
+			if cw > maxW {
+				maxW = cw
+			}
+		}
+		if maxW >= 0 {
+			if col.MinWidth() > 0 && maxW < col.MinWidth() {
+				maxW = col.MinWidth()
+			}
+			if col.MaxWidth() > 0 && maxW > col.MaxWidth() {
+				maxW = col.MaxWidth()
+			}
+			col.ComponentBase.SetWidth(maxW)
 		}
 	}
 	var total float32
@@ -655,28 +710,37 @@ func (t *TableBase) CalcWidth() float32 {
 		}
 	}
 	// C# ref: TableBase.CalcWidth sets Width = total (line 983).
-	// This propagates the actual rendered width to the component so that
-	// sibling objects can be repositioned (e.g. two matrices side-by-side).
 	t.SetWidth(total)
 	return total
 }
 
 // CalcHeight returns the total height of the table by summing visible row
-// heights, applying AutoSize expansion from the tallest cell in each row.
-// Mirrors C# TableBase.CalcHeight (TableBase.cs).
+// heights. For AutoSize=true rows the height is computed from the font
+// line-spacing metrics of the tallest cell (mirrors C# TableBase.CalcHeight).
+// If a cell has an explicit Height() > 0 it is used as a floor so existing
+// code that sets cell heights is not broken.
 func (t *TableBase) CalcHeight() float32 {
 	for ri, row := range t.rows {
-		if row.AutoSize() {
-			var maxH float32
-			for ci := range t.columns {
-				cell := t.Cell(ri, ci)
-				if cell != nil && cell.Height() > maxH {
-					maxH = cell.Height()
-				}
+		if !row.AutoSize() {
+			continue
+		}
+		maxH := float32(-1)
+		for ci := range t.columns {
+			cell := t.Cell(ri, ci)
+			if cell == nil || cell.RowSpan() != 1 {
+				continue
 			}
-			if maxH > row.Height() {
-				row.ComponentBase.SetHeight(maxH)
+			// Use the larger of the measured text height and any explicit cell height.
+			ch := cellMeasuredHeight(cell)
+			if explicit := cell.Height(); explicit > ch {
+				ch = explicit
 			}
+			if ch > maxH {
+				maxH = ch
+			}
+		}
+		if maxH >= 0 {
+			row.ComponentBase.SetHeight(maxH)
 		}
 	}
 	var total float32

@@ -287,6 +287,11 @@ type MatrixObject struct {
 	// StyleLookup resolves named styles (e.g. EvenStyle) during template building.
 	// Set by the engine before calling BuildTemplateMultiLevel.
 	StyleLookup report.StyleLookup
+	// HighlightCalc evaluates a highlight condition expression in the current matrix
+	// context (with RowIndex/ColumnIndex available). Set by the engine before calling
+	// BuildTemplateMultiLevel.
+	// C# ref: templateCell.GetData() evaluates highlight conditions in PrintData.
+	HighlightCalc func(expr string) (any, error)
 	// cellFormat is applied to data cell values during BuildTemplateMultiLevel.
 	// Populated from the template data cell's Format (e.g. Currency).
 	cellFormat format.Format

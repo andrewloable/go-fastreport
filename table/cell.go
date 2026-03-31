@@ -149,8 +149,13 @@ func (c *TableCell) ObjectCount() int { return len(c.objects) }
 // DeserializeChild handles child XML elements inside a TableCell during FRX
 // deserialization. Embedded report objects (e.g. PictureObject) are created
 // via the serial registry and added to the cell's objects collection.
+// TextObject child elements (Highlight, Formats) are delegated to TextObject.
 // Mirrors C# TableCell which inherits IParent.AddChild (ReportComponentBase.cs).
 func (c *TableCell) DeserializeChild(childType string, r report.Reader) bool {
+	// Delegate Highlight and Formats to TextObject which knows how to parse them.
+	if childType == "Highlight" || childType == "Formats" {
+		return c.TextObject.DeserializeChild(childType, r)
+	}
 	obj, err := serial.DefaultRegistry.Create(childType)
 	if err != nil || obj == nil {
 		return false

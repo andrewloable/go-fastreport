@@ -23,9 +23,13 @@ type Matrix2DProvider interface {
 // DrawBarcode2D renders a boolean module matrix to an image.
 // Ported from C# Barcode2DBase.DrawBarcode which iterates over the module
 // grid and fills each dark cell with a filled rectangle.
+// Background is transparent (matching C# which does not clear the bitmap for
+// BarcodeObject, leaving it at the default transparent ARGB state).
 func DrawBarcode2D(matrix [][]bool, rows, cols, width, height int) image.Image {
 	img := image.NewRGBA(image.Rect(0, 0, width, height))
-	draw.Draw(img, img.Bounds(), image.NewUniform(color.White), image.Point{}, draw.Src)
+	// No background fill — transparent by default (image.NewRGBA zeroes all pixels).
+	// C# ref: HTMLExportLayers.GetLayerPicture does NOT call g.Clear() for BarcodeObject,
+	// leaving the GDI+ bitmap at transparent (Format32bppArgb default = 0x00000000).
 
 	if rows <= 0 || cols <= 0 || width <= 0 || height <= 0 {
 		return img
@@ -64,7 +68,7 @@ func DrawBarcode2D(matrix [][]bool, rows, cols, width, height int) image.Image {
 // angle is used only by rotational shapes (Hexagon, Star, Snowflake).
 func DrawQRCode2D(matrix [][]bool, rows, cols, width, height int, shape string, useThinModules, quietZone bool, angle int) image.Image {
 	img := image.NewRGBA(image.Rect(0, 0, width, height))
-	draw.Draw(img, img.Bounds(), image.NewUniform(color.White), image.Point{}, draw.Src)
+	// No background fill — transparent by default (matches C# behaviour).
 
 	if rows <= 0 || cols <= 0 || width <= 0 || height <= 0 {
 		return img

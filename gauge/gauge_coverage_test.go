@@ -286,7 +286,7 @@ func TestGaugeObject_SerializeDeserialize_PointerWidthPreserved(t *testing.T) {
 }
 
 func TestGaugeObject_SerializeDeserialize_PointerColorPreserved(t *testing.T) {
-	// Pointer.Color is only serialized when non-empty and != "#CC0000".
+	// Pointer.Color is only serialized when non-empty and != "Orange".
 	orig := gauge.NewGaugeObject()
 	orig.Pointer.Color = "#AABB00"
 	got := gaugeObjectRoundTrip(t, orig)
@@ -377,7 +377,7 @@ func TestRadialGauge_SerializeDeserialize_Defaults(t *testing.T) {
 	orig := gauge.NewRadialGauge()
 	got := radialRoundTrip(t, orig)
 
-	// Default angles are -135 and 135, so they are not serialized.
+	// Default angles are 135 and 45, so they are not serialized.
 	// After deserialization the defaults should be restored.
 	if got.StartAngle != orig.StartAngle {
 		t.Errorf("StartAngle: got %v, want %v", got.StartAngle, orig.StartAngle)
@@ -852,7 +852,7 @@ func TestGaugeObject_Serialize_PointerWidth_Default(t *testing.T) {
 }
 
 func TestGaugeObject_Serialize_PointerColor_Default(t *testing.T) {
-	// Pointer.Color == "#CC0000" (default) should NOT appear in the XML.
+	// Pointer.Color == "Orange" (default) should NOT appear in the XML.
 	orig := gauge.NewGaugeObject()
 	var buf bytes.Buffer
 	w := serial.NewWriter(&buf)
@@ -913,12 +913,12 @@ func TestRadialGauge_Serialize_DefaultAnglesNotWritten(t *testing.T) {
 	w.Flush()                      //nolint:errcheck
 
 	xml := buf.String()
-	// Default StartAngle=-135 and EndAngle=135 should not be serialized.
+	// Default StartAngle=135 and EndAngle=45 should not be serialized.
 	if strings.Contains(xml, `StartAngle`) {
-		t.Errorf("StartAngle should not appear for default -135, got:\n%s", xml)
+		t.Errorf("StartAngle should not appear for default 135, got:\n%s", xml)
 	}
 	if strings.Contains(xml, `EndAngle`) {
-		t.Errorf("EndAngle should not appear for default 135, got:\n%s", xml)
+		t.Errorf("EndAngle should not appear for default 45, got:\n%s", xml)
 	}
 }
 

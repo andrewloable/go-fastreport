@@ -75,26 +75,50 @@ func TestParse_UnclosedBracket(t *testing.T) {
 	}
 }
 
-func TestParse_EscapedOpenBracket(t *testing.T) {
-	// "[[" is an escape sequence for a literal "[".
-	// "Price: [[10]]" is parsed as:
-	//   - "Price: " literal
-	//   - "[[" → escape → literal "["
-	//   - "10]]" → no open bracket found; rest is literal; UnescapeBrackets("10]]") → "10]"
-	// So the whole thing yields two literal tokens: "Price: ", "[", "10]".
-	// No expression tokens should be produced.
+func TestParse_DoubleOpenBracketIsCompoundExpr(t *testing.T) {
+	// In FastReport, "[[" is NOT an escape for a literal "[". It introduces a
+	// compound expression where the outer "[...]" marks the expression and the
+	// inner "[...]" are field references within it. This mirrors C# FastReport's
+	// FindMatchingBrackets which uses pure depth tracking (no special "[[" handling).
+	//
+	// "Price: [[10]]" is parsed using depth tracking:
+	//   - Depth 1 at first "[", depth 2 at second "[", depth 1 at first "]",
+	//     depth 0 at second "]" → expression token "[10]".
+	// So one literal "Price: " and one expression "[10]" are produced.
 	tokens := Parse("Price: [[10]]")
+	var exprTokens []Token
+	var litTokens []Token
 	for _, tok := range tokens {
 		if tok.IsExpr {
-			t.Errorf("expected no expression tokens, got %+v", tok)
+			exprTokens = append(exprTokens, tok)
+		} else {
+			litTokens = append(litTokens, tok)
 		}
 	}
-	combined := ""
-	for _, tok := range tokens {
-		combined += tok.Value
+	// Must have exactly one expression token with value "[10]".
+	if len(exprTokens) != 1 {
+		t.Fatalf("expected 1 expression token, got %d: %+v", len(exprTokens), exprTokens)
 	}
-	if combined != "Price: [10]" {
-		t.Errorf("combined literals: expected %q, got %q", "Price: [10]", combined)
+	if exprTokens[0].Value != "[10]" {
+		t.Errorf("expr value: expected %q, got %q", "[10]", exprTokens[0].Value)
+	}
+	// Literal part must be "Price: ".
+	litCombined := ""
+	for _, tok := range litTokens {
+		litCombined += tok.Value
+	}
+	if litCombined != "Price: " {
+		t.Errorf("literal combined: expected %q, got %q", "Price: ", litCombined)
+	}
+
+	// Real-world compound expression: [[Products.ProductName].Substring(0,1)]
+	tokens2 := Parse("[[Products.ProductName].Substring(0,1)]")
+	if len(tokens2) != 1 || !tokens2[0].IsExpr {
+		t.Fatalf("expected exactly one expression token, got %+v", tokens2)
+	}
+	if tokens2[0].Value != "[Products.ProductName].Substring(0,1)" {
+		t.Errorf("compound expr: expected %q, got %q",
+			"[Products.ProductName].Substring(0,1)", tokens2[0].Value)
 	}
 }
 

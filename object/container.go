@@ -4,6 +4,7 @@ import (
 	"image/color"
 
 	"github.com/andrewloable/go-fastreport/report"
+	"github.com/andrewloable/go-fastreport/utils"
 )
 
 // -----------------------------------------------------------------------
@@ -266,6 +267,10 @@ func (c *CheckBoxObject) Serialize(w report.Writer) error {
 	if c.editable {
 		w.WriteBool("Editable", true)
 	}
+	// C# only serialises CheckColor when it differs from Black (ShouldSerializeCheckColor).
+	if c.checkColor != (color.RGBA{A: 255}) {
+		w.WriteStr("CheckColor", utils.FormatColor(c.checkColor))
+	}
 	return nil
 }
 
@@ -284,6 +289,11 @@ func (c *CheckBoxObject) Deserialize(r report.Reader) error {
 	c.checkWidthRatio = r.ReadFloat("CheckWidthRatio", 1.0)
 	c.hideIfUnchecked = r.ReadBool("HideIfUnchecked", false)
 	c.editable = r.ReadBool("Editable", false)
+	if cs := r.ReadStr("CheckColor", ""); cs != "" {
+		if col, err := utils.ParseColor(cs); err == nil {
+			c.checkColor = col
+		}
+	}
 	return nil
 }
 

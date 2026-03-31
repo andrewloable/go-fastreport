@@ -99,6 +99,40 @@ func (e *ReportEngine) CalcBandHeight(b report.Base) float32 {
 	return baseHeight
 }
 
+// bandManualBuildTableTop returns the Top position of the first ManualBuild
+// non-PrintOnParent TableObject found in band b, or 0 if none exists.
+//
+// This mirrors C# TableObject.SaveState (TableObject.cs line 313) which sets
+// parent.Height = Top for such tables before the free-space check runs. The
+// returned value is used as the effective band height for the free-space check,
+// ensuring the band renders on the current page when the header area fits even
+// though the full template height would not.
+func bandManualBuildTableTop(b *band.BandBase) float32 {
+	if b == nil {
+		return 0
+	}
+	objs := b.Objects()
+	if objs == nil {
+		return 0
+	}
+	for i := 0; i < objs.Len(); i++ {
+		tbl, ok := objs.Get(i).(*table.TableObject)
+		if !ok {
+			continue
+		}
+		if !tbl.IsManualBuild() {
+			continue
+		}
+		if tbl.PrintOnParent() {
+			continue
+		}
+		if tbl.Top() > 0 {
+			return tbl.Top()
+		}
+	}
+	return 0
+}
+
 // bandLayout holds the results of a band layout calculation.
 type bandLayout struct {
 	// height is the required band height (may differ from declared height when
@@ -473,6 +507,17 @@ func (e *ReportEngine) showFullBandOnce(b *band.BandBase) {
 	}
 
 	height := e.CalcBandHeight(b)
+
+	// C# ref: TableObject.SaveState (TableObject.cs line 313):
+	// For a ManualBuild non-PrintOnParent table with Top > 0, SaveState sets
+	// parent.Height = table.Top BEFORE CalcHeight runs, so the free-space check
+	// uses only the header area height (above the table), not the full band height.
+	// This allows a band whose template height is larger than the available space
+	// to still render on the current page when the actual header portion fits.
+	if manualTop := bandManualBuildTableTop(b); manualTop > 0 && manualTop < height {
+		height = manualTop
+	}
+
 	if height <= 0 {
 		b.FireAfterLayout()
 		b.FireAfterPrint()
@@ -582,37 +627,61 @@ func (e *ReportEngine) showFullBandOnce(b *band.BandBase) {
 			}
 		}
 
-		// If objects extend beyond the declared band height (e.g. matrix
-		// table cells), grow the band and split across pages.
-		// C# ref: Band grows to fit expanded objects; BreakBand splits.
-		maxBottom := pb.Height
-		for _, po := range pb.Objects {
-			if bot := po.Top + po.Height; bot > maxBottom {
-				maxBottom = bot
-			}
-		}
-		if maxBottom > pb.Height {
-			pb.Height = maxBottom
-		}
-
-		// Split the band across pages if it exceeds available space.
-		// Use FreeSpace() which deducts page footer height, matching C#.
-		if pb.Height > e.FreeSpace() && e.FreeSpace() > 0 && e.pageHeight > 0 {
-			e.splitPreparedBandAcrossPages(pb)
+		// AcrossThenDown ManualBuild tables render their own PreparedBands
+		// directly and skip the normal AddBand / splitPreparedBandAcrossPages path.
+		// C# ref: TableResult.GeneratePagesAcrossThenDown.
+		if e.acrossThenDownRendered {
+			e.acrossThenDownRendered = false
+			// Table pages already added. Skip adding the containing band pb
+			// since it has no table cells (pb.Height == template band height).
 		} else {
-			_ = e.preparedPages.AddBand(pb)
-		}
-		// Render inner subreports (PrintOnParent=true) into this prepared band.
-		// Mirrors C# PrepareBandShared → RenderInnerSubreports (Bands.cs line 31).
-		// Must be called AFTER AddBand so the PreparedBand exists in pg.Bands
-		// and can be found by RenderInnerSubreport's backward search.
-		e.RenderInnerSubreports(b)
+			// If objects extend beyond the declared band height (e.g. matrix
+			// table cells), grow the band and split across pages.
+			// C# ref: Band grows to fit expanded objects; BreakBand splits.
+			// Note: IgnoreForRowSnap objects (e.g. table section background divs
+			// that extend to the page footer) must NOT inflate band height —
+			// their height is a rendering artefact, not actual content height.
+			// This mirrors splitPreparedBandAcrossPages which also skips them.
+			maxBottom := pb.Height
+			for _, po := range pb.Objects {
+				if po.IgnoreForRowSnap {
+					continue
+				}
+				if bot := po.Top + po.Height; bot > maxBottom {
+					maxBottom = bot
+				}
+			}
+			if maxBottom > pb.Height {
+				pb.Height = maxBottom
+			}
 
-		// Horizontal page splitting for wide matrices.
-		// C# ref: TableResult.GeneratePages splits columns across pages.
-		if e.pendingHSplit != nil {
-			e.splitBandHorizontallyForMatrix(pb)
-			e.pendingHSplit = nil
+			// Split the band across pages if it exceeds available space.
+			// Use FreeSpace() which deducts page footer height, matching C#.
+			if pb.Height > e.FreeSpace() && e.FreeSpace() > 0 && e.pageHeight > 0 {
+				e.splitPreparedBandAcrossPages(pb)
+			} else {
+				_ = e.preparedPages.AddBand(pb)
+				// When table/matrix objects grew the band beyond its declared height
+				// (e.g. a ManualBuild TableObject taller than the template ChildBand),
+				// advance curY by the actual rendered height so the next band starts
+				// after all rendered content — not at the template height boundary.
+				// C# ref: BandBase.CalcHeight always returns max(template, content).
+				if pb.Height > height {
+					height = pb.Height
+				}
+			}
+			// Render inner subreports (PrintOnParent=true) into this prepared band.
+			// Mirrors C# PrepareBandShared → RenderInnerSubreports (Bands.cs line 31).
+			// Must be called AFTER AddBand so the PreparedBand exists in pg.Bands
+			// and can be found by RenderInnerSubreport's backward search.
+			e.RenderInnerSubreports(b)
+
+			// Horizontal page splitting for wide matrices.
+			// C# ref: TableResult.GeneratePages splits columns across pages.
+			if e.pendingHSplit != nil {
+				e.splitBandHorizontallyForMatrix(pb)
+				e.pendingHSplit = nil
+			}
 		}
 	}
 	e.AdvanceY(height)
@@ -620,6 +689,19 @@ func (e *ReportEngine) showFullBandOnce(b *band.BandBase) {
 	// Fire AfterPrint after the band has been added to the prepared pages,
 	// mirroring the C# ReportEngine.ShowBand which calls band.OnAfterPrint last.
 	b.FireAfterPrint()
+
+	// Render a deferred ManualBuild AcrossThenDown table that was set up in
+	// populateBandObjects. The table must render AFTER the containing band's
+	// header is placed and curY is advanced, so the table cells start at the
+	// correct position on the page.
+	// C# ref: TableObject.SaveState registers parent.AfterPrint += ResultTable.GeneratePages
+	// (TableObject.cs line 316). The AfterPrint fires in BandBase.RestoreState()
+	// (BandBase.cs line 651) after CurY has already been advanced by band.Height.
+	if e.pendingAcrossTable != nil {
+		at := e.pendingAcrossTable
+		e.pendingAcrossTable = nil
+		e.renderManualBuildAcrossThenDown(at.base, at.originX, at.originY, at.bandName)
+	}
 
 	// Render outer subreports (PrintOnParent=false) before the child band.
 	// Mirrors C# ShowBand lines 229-232:

@@ -1,7 +1,6 @@
 package barcode_test
 
 import (
-	"image/color"
 	"testing"
 
 	"github.com/andrewloable/go-fastreport/barcode"
@@ -40,13 +39,14 @@ func TestDrawBarcode2D_3x3_ImageDimensions(t *testing.T) {
 		// centre of module (row, col)
 		px := c.col*30 + 15
 		py := c.row*30 + 15
-		r, g, b, _ := img.At(px, py).RGBA()
-		isBlack := r == 0 && g == 0 && b == 0
+		r, g, b, a := img.At(px, py).RGBA()
+		isBlack := r == 0 && g == 0 && b == 0 && a > 0
+		isLight := a == 0 // transparent = light module
 		if c.dark && !isBlack {
 			t.Errorf("module (%d,%d) should be dark but pixel (%d,%d) is not black", c.row, c.col, px, py)
 		}
-		if !c.dark && isBlack {
-			t.Errorf("module (%d,%d) should be light but pixel (%d,%d) is black", c.row, c.col, px, py)
+		if !c.dark && !isLight {
+			t.Errorf("module (%d,%d) should be light but pixel (%d,%d) is not transparent", c.row, c.col, px, py)
 		}
 	}
 }
@@ -81,19 +81,20 @@ func TestDrawBarcode2D_21x21_QRLike(t *testing.T) {
 		expectDark := (r+c)%2 == 0
 		px := c*moduleSize + moduleSize/2
 		py := r*moduleSize + moduleSize/2
-		rv, gv, bv, _ := img.At(px, py).RGBA()
-		isBlack := rv == 0 && gv == 0 && bv == 0
+		rv, gv, bv, av := img.At(px, py).RGBA()
+		isBlack := rv == 0 && gv == 0 && bv == 0 && av > 0
+		isLight := av == 0
 		if expectDark && !isBlack {
 			t.Errorf("module (%d,%d) expected dark, pixel (%d,%d) not black", r, c, px, py)
 		}
-		if !expectDark && isBlack {
-			t.Errorf("module (%d,%d) expected light, pixel (%d,%d) is black", r, c, px, py)
+		if !expectDark && !isLight {
+			t.Errorf("module (%d,%d) expected light, pixel (%d,%d) is not transparent", r, c, px, py)
 		}
 	}
 }
 
 // TestDrawBarcode2D_NilMatrix verifies that passing a nil matrix
-// returns a valid (all-white) image of the requested size when
+// returns a valid (all-transparent) image of the requested size when
 // rows/cols are zero.
 func TestDrawBarcode2D_NilMatrix(t *testing.T) {
 	img := barcode.DrawBarcode2D(nil, 0, 0, 50, 50)
@@ -104,19 +105,19 @@ func TestDrawBarcode2D_NilMatrix(t *testing.T) {
 	if bounds.Dx() != 50 || bounds.Dy() != 50 {
 		t.Fatalf("expected 50x50, got %dx%d", bounds.Dx(), bounds.Dy())
 	}
-	// The image should be entirely white.
+	// The image should be entirely transparent (no background fill).
 	for y := 0; y < 50; y += 10 {
 		for x := 0; x < 50; x += 10 {
-			r, g, b, a := img.At(x, y).RGBA()
-			if r != 0xFFFF || g != 0xFFFF || b != 0xFFFF || a != 0xFFFF {
-				t.Fatalf("pixel (%d,%d) should be white, got RGBA(%d,%d,%d,%d)", x, y, r, g, b, a)
+			_, _, _, a := img.At(x, y).RGBA()
+			if a != 0 {
+				t.Fatalf("pixel (%d,%d) should be transparent, got alpha %d", x, y, a)
 			}
 		}
 	}
 }
 
 // TestDrawBarcode2D_EmptyMatrix verifies that an empty (non-nil) matrix
-// with positive rows/cols still returns a valid white image.
+// with positive rows/cols still returns a valid transparent image.
 func TestDrawBarcode2D_EmptyMatrix(t *testing.T) {
 	matrix := [][]bool{} // non-nil but empty
 	img := barcode.DrawBarcode2D(matrix, 3, 3, 60, 60)
@@ -127,10 +128,10 @@ func TestDrawBarcode2D_EmptyMatrix(t *testing.T) {
 	if bounds.Dx() != 60 || bounds.Dy() != 60 {
 		t.Fatalf("expected 60x60, got %dx%d", bounds.Dx(), bounds.Dy())
 	}
-	// Should be all-white since matrix has no actual rows to render.
-	r, g, b, _ := img.At(30, 30).RGBA()
-	if r != 0xFFFF || g != 0xFFFF || b != 0xFFFF {
-		t.Error("centre pixel should be white for empty matrix")
+	// Should be all-transparent since matrix has no actual rows to render.
+	_, _, _, a := img.At(30, 30).RGBA()
+	if a != 0 {
+		t.Error("centre pixel should be transparent for empty matrix")
 	}
 }
 
@@ -158,10 +159,10 @@ func TestDrawBarcode2D_JaggedMatrix(t *testing.T) {
 	if r0 != 0 || g0 != 0 || b0 != 0 {
 		t.Error("module (1,0) should be dark for jagged row")
 	}
-	// Centre of module (1,1) should be white (beyond row's column count).
-	r1, g1, b1, _ := img.At(30, 30).RGBA()
-	if r1 != 0xFFFF || g1 != 0xFFFF || b1 != 0xFFFF {
-		t.Error("module (1,1) should be white for jagged row (column missing)")
+	// Centre of module (1,1) should be transparent (beyond row's column count).
+	_, _, _, a1 := img.At(30, 30).RGBA()
+	if a1 != 0 {
+		t.Error("module (1,1) should be transparent for jagged row (column missing)")
 	}
 }
 
@@ -188,10 +189,10 @@ func TestDrawBarcode2D_RowsColsLargerThanMatrix(t *testing.T) {
 	if r0 != 0 || g0 != 0 || b0 != 0 {
 		t.Error("module (0,0) should be dark")
 	}
-	// Module (3,3) should be white (row 3 doesn't exist in matrix).
-	r3, g3, b3, _ := img.At(70, 70).RGBA()
-	if r3 != 0xFFFF || g3 != 0xFFFF || b3 != 0xFFFF {
-		t.Error("module (3,3) should be white (beyond matrix)")
+	// Module (3,3) should be transparent (row 3 doesn't exist in matrix).
+	_, _, _, a3 := img.At(70, 70).RGBA()
+	if a3 != 0 {
+		t.Error("module (3,3) should be transparent (beyond matrix)")
 	}
 }
 
@@ -226,10 +227,10 @@ func TestDrawBarcode2D_NonSquare(t *testing.T) {
 	if r0 != 0 || g0 != 0 || b0 != 0 {
 		t.Error("module (0,0) should be dark in non-square image")
 	}
-	// Module (0,1): x=100..200, y=0..50. Centre = (150, 25). Should be light.
-	r1, g1, b1, _ := img.At(150, 25).RGBA()
-	if r1 != 0xFFFF || g1 != 0xFFFF || b1 != 0xFFFF {
-		t.Error("module (0,1) should be light in non-square image")
+	// Module (0,1): x=100..200, y=0..50. Centre = (150, 25). Should be transparent (light).
+	_, _, _, a1 := img.At(150, 25).RGBA()
+	if a1 != 0 {
+		t.Error("module (0,1) should be transparent in non-square image")
 	}
 	// Module (1,1): x=100..200, y=50..100. Centre = (150, 75). Should be dark.
 	r2, g2, b2, _ := img.At(150, 75).RGBA()
@@ -259,7 +260,7 @@ func TestDrawBarcode2D_AllDark(t *testing.T) {
 }
 
 // TestDrawBarcode2D_AllLight verifies that a fully-light matrix produces
-// an all-white image.
+// an all-transparent image.
 func TestDrawBarcode2D_AllLight(t *testing.T) {
 	matrix := [][]bool{
 		{false, false},
@@ -270,9 +271,9 @@ func TestDrawBarcode2D_AllLight(t *testing.T) {
 		t.Fatal("expected non-nil image")
 	}
 	for _, pt := range [][2]int{{0, 0}, {25, 25}, {50, 50}, {75, 75}, {99, 99}} {
-		r, g, b, a := img.At(pt[0], pt[1]).RGBA()
-		if r != 0xFFFF || g != 0xFFFF || b != 0xFFFF || a != 0xFFFF {
-			t.Errorf("pixel (%d,%d) should be white in all-light matrix", pt[0], pt[1])
+		_, _, _, a := img.At(pt[0], pt[1]).RGBA()
+		if a != 0 {
+			t.Errorf("pixel (%d,%d) should be transparent in all-light matrix", pt[0], pt[1])
 		}
 	}
 }
@@ -345,14 +346,14 @@ func TestMatrix2DProvider_Interface(t *testing.T) {
 	if img == nil {
 		t.Fatal("expected non-nil image")
 	}
-	// Module (0,0) dark, (0,1) light.
-	r0, _, _, _ := img.At(25, 25).RGBA()
-	r1, _, _, _ := img.At(75, 25).RGBA()
-	if r0 != 0 {
-		t.Error("module (0,0) should be dark")
+	// Module (0,0) dark, (0,1) light (transparent).
+	r0, g0, b0, a0 := img.At(25, 25).RGBA()
+	_, _, _, a1 := img.At(75, 25).RGBA()
+	if r0 != 0 || g0 != 0 || b0 != 0 || a0 == 0 {
+		t.Error("module (0,0) should be dark (opaque black)")
 	}
-	if r1 == 0 {
-		t.Error("module (0,1) should be light")
+	if a1 != 0 {
+		t.Error("module (0,1) should be transparent (light)")
 	}
 }
 
@@ -381,31 +382,31 @@ func TestDrawBarcode2D_ModuleBoundaryPixels(t *testing.T) {
 	}
 
 	isBlack := func(x, y int) bool {
-		r, g, b, _ := img.At(x, y).RGBA()
-		return r == 0 && g == 0 && b == 0
+		r, g, b, a := img.At(x, y).RGBA()
+		return r == 0 && g == 0 && b == 0 && a > 0
 	}
-	isWhite := func(x, y int) bool {
-		rv, gv, bv, av := img.At(x, y).RGBA()
-		return rv == 0xFFFF && gv == 0xFFFF && bv == 0xFFFF && av == 0xFFFF
+	isTransparent := func(x, y int) bool {
+		_, _, _, av := img.At(x, y).RGBA()
+		return av == 0
 	}
 
 	// Last pixel of dark module (0,0) at x=49, y=49 should be black.
 	if !isBlack(49, 49) {
 		t.Error("pixel (49,49) should be black (last pixel of module 0,0)")
 	}
-	// First pixel of light module (0,1) at x=50, y=0 should be white.
-	if !isWhite(50, 0) {
-		t.Error("pixel (50,0) should be white (first pixel of module 0,1)")
+	// First pixel of light module (0,1) at x=50, y=0 should be transparent.
+	if !isTransparent(50, 0) {
+		t.Error("pixel (50,0) should be transparent (first pixel of module 0,1)")
 	}
 	// First pixel of dark module (1,1) at x=50, y=50 should be black.
 	if !isBlack(50, 50) {
 		t.Error("pixel (50,50) should be black (first pixel of module 1,1)")
 	}
 
-	// Verify background color (alpha channel) is opaque.
+	// Verify light module (0,1) pixel is transparent.
 	_, _, _, a := img.At(75, 25).RGBA()
-	if a != 0xFFFF {
-		t.Errorf("expected fully opaque pixel, got alpha %d", a)
+	if a != 0 {
+		t.Errorf("expected transparent pixel in light module, got alpha %d", a)
 	}
 }
 
@@ -433,11 +434,9 @@ func TestDrawBarcode2D_NilMatrixPositiveRowsCols(t *testing.T) {
 	if img == nil {
 		t.Fatal("expected non-nil image")
 	}
-	// Should be all white since matrix is nil and loop breaks immediately.
-	rv, gv, bv, _ := img.At(50, 50).RGBA()
-	white := color.RGBA{0xFF, 0xFF, 0xFF, 0xFF}
-	wr, wg, wb, _ := white.RGBA()
-	if rv != wr || gv != wg || bv != wb {
-		t.Error("centre pixel should be white for nil matrix with positive rows/cols")
+	// Should be all transparent since matrix is nil and loop breaks immediately.
+	_, _, _, a := img.At(50, 50).RGBA()
+	if a != 0 {
+		t.Error("centre pixel should be transparent for nil matrix with positive rows/cols")
 	}
 }

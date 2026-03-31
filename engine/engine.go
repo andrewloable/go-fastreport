@@ -14,6 +14,7 @@ import (
 	"github.com/andrewloable/go-fastreport/object"
 	"github.com/andrewloable/go-fastreport/preview"
 	"github.com/andrewloable/go-fastreport/reportpkg"
+	"github.com/andrewloable/go-fastreport/table"
 )
 
 // RunOptions controls optional aspects of a report run.
@@ -179,6 +180,30 @@ type ReportEngine struct {
 	// wider than the page. Consumed after the band is built to split columns
 	// across pages. Cleared after use.
 	pendingHSplit *matrixHSplitInfo
+
+	// acrossThenDownRendered is set when renderManualBuildAcrossThenDown has
+	// already added all PreparedBands for the table directly. showBand must
+	// skip its normal AddBand / splitPreparedBandAcrossPages path.
+	acrossThenDownRendered bool
+
+	// pendingAcrossTable, when non-nil, holds a deferred ManualBuild
+	// AcrossThenDown table that must be rendered AFTER its containing band
+	// has been added to the page at the reduced "header-only" height.
+	//
+	// C# ref: TableObject.SaveState sets parent.Height = Top and registers
+	// parent.AfterPrint += ResultTable.GeneratePages (TableObject.cs line 316).
+	// This ensures the band's header (TextObjects above the table) renders at
+	// the correct page position before the table itself starts generating pages.
+	pendingAcrossTable *pendingAcrossTableInfo
+}
+
+// pendingAcrossTableInfo carries the parameters needed to defer
+// renderManualBuildAcrossThenDown until after the containing band is placed.
+type pendingAcrossTableInfo struct {
+	base     *table.TableBase
+	originX  float32
+	originY  float32
+	bandName string
 }
 
 // New creates a ReportEngine for the given report.

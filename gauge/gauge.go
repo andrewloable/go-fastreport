@@ -92,8 +92,10 @@ type Pointer struct {
 }
 
 // NewPointer creates a Pointer with defaults.
+// C# GaugePointer constructor: fill = new SolidFill(Color.Orange)
+// original-dotnet/FastReport.Base/Gauge/GaugePointer.cs line 78.
 func NewPointer() *Pointer {
-	return &Pointer{Width: 6, Color: "#CC0000"}
+	return &Pointer{Width: 6, Color: "Orange"}
 }
 
 // ── Label ─────────────────────────────────────────────────────────────────────
@@ -239,7 +241,7 @@ func (g *GaugeObject) Serialize(w report.Writer) error {
 		if g.Pointer.Height != 0 {
 			w.WriteFloat("Pointer.Height", g.Pointer.Height)
 		}
-		if g.Pointer.Color != "" && g.Pointer.Color != "#CC0000" {
+		if g.Pointer.Color != "" && g.Pointer.Color != "Orange" {
 			w.WriteStr("Pointer.Color", g.Pointer.Color)
 		}
 	}
@@ -440,9 +442,12 @@ func (g *LinearGauge) Assign(src *LinearGauge) {
 type RadialGauge struct {
 	GaugeObject
 
-	// StartAngle is the angle (degrees) at which the scale begins (default: -135).
+	// StartAngle is the angle (degrees) at which the scale begins.
+	// Default: 135 (lower-left, 7–8 o'clock), matching C# RadialScale layout where
+	// minimum is at -135° relative to the top direction = 135° in screen math.
 	StartAngle float64
-	// EndAngle is the angle (degrees) at which the scale ends (default: 135).
+	// EndAngle is the angle (degrees) at which the scale ends.
+	// Default: 45 (lower-right, 4–5 o'clock). The sweep from 135→45 is 270° clockwise.
 	EndAngle float64
 
 	// GaugeType controls the shape of the dial (Circle / Semicircle / Quadrant).
@@ -464,13 +469,15 @@ type RadialGauge struct {
 	GradientAutoRotate bool
 }
 
-// NewRadialGauge creates a RadialGauge with a 270-degree sweep (–135° to +135°).
+// NewRadialGauge creates a RadialGauge with a 270-degree clockwise sweep (135°→45°).
+// This matches the C# RadialScale layout: minimum at lower-left (135°), maximum at
+// lower-right (45°), midpoint at top (-90°/270°).
 // C# default size: Width = Height = 4cm (RadialGauge.cs:232-233).
 func NewRadialGauge() *RadialGauge {
 	g := &RadialGauge{
 		GaugeObject:           *NewGaugeObject(),
-		StartAngle:            -135,
-		EndAngle:              135,
+		StartAngle:            135,
+		EndAngle:              45,
 		GaugeType:             RadialGaugeTypeCircle,
 		Position:              RadialGaugePositionNone,
 		SemicircleOffsetRatio: 1,
@@ -489,8 +496,13 @@ func (g *RadialGauge) TypeName() string { return "RadialGauge" }
 
 // NeedleAngle returns the current needle angle in degrees.
 // It interpolates between StartAngle and EndAngle based on Percent().
+// Handles wrap-around: if EndAngle < StartAngle the sweep is treated as clockwise
+// (e.g. StartAngle=135, EndAngle=45 → sweep=270° clockwise).
 func (g *RadialGauge) NeedleAngle() float64 {
 	sweep := g.EndAngle - g.StartAngle
+	if sweep < 0 {
+		sweep += 360
+	}
 	return g.StartAngle + sweep*g.Percent()
 }
 
@@ -509,10 +521,10 @@ func (g *RadialGauge) Serialize(w report.Writer) error {
 	if err := g.GaugeObject.Serialize(w); err != nil {
 		return err
 	}
-	if g.StartAngle != -135 {
+	if g.StartAngle != 135 {
 		w.WriteFloat("StartAngle", float32(g.StartAngle))
 	}
-	if g.EndAngle != 135 {
+	if g.EndAngle != 45 {
 		w.WriteFloat("EndAngle", float32(g.EndAngle))
 	}
 	if g.GaugeType != RadialGaugeTypeCircle {
@@ -542,8 +554,8 @@ func (g *RadialGauge) Deserialize(r report.Reader) error {
 	if g.Height() == 0 {
 		g.SetHeight(4 * units.Centimeters)
 	}
-	g.StartAngle = float64(r.ReadFloat("StartAngle", -135))
-	g.EndAngle = float64(r.ReadFloat("EndAngle", 135))
+	g.StartAngle = float64(r.ReadFloat("StartAngle", 135))
+	g.EndAngle = float64(r.ReadFloat("EndAngle", 45))
 	g.GaugeType = RadialGaugeType(r.ReadInt("GaugeType", int(RadialGaugeTypeCircle)))
 	g.Position = RadialGaugePosition(r.ReadInt("Position", int(RadialGaugePositionNone)))
 	g.SemicircleOffsetRatio = float64(r.ReadFloat("SemicircleOffsetRatio", 1))

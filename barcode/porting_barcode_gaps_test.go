@@ -426,8 +426,9 @@ func countDarkPixels(img image.Image) int {
 	count := 0
 	for y := 0; y < bounds.Dy(); y++ {
 		for x := 0; x < bounds.Dx(); x++ {
-			r, g, b, _ := img.At(x, y).RGBA()
-			if r == 0 && g == 0 && b == 0 {
+			r, g, b, a := img.At(x, y).RGBA()
+			// Only count opaque black pixels; transparent pixels (a==0) are background.
+			if r == 0 && g == 0 && b == 0 && a > 0 {
 				count++
 			}
 		}

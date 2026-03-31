@@ -139,7 +139,13 @@ func (e *ReportEngine) splitPreparedBandAcrossPages(pb *preview.PreparedBand) {
 		// Snap break line to row boundaries: if any object straddles the
 		// break line, pull it down to that object's top so rows aren't cut.
 		// This matches C# TableBase.Break() which breaks at row boundaries.
+		// Objects with IgnoreForRowSnap=true (e.g. full-table-height container
+		// divs like sectionBorder/sectionBg) are excluded so they don't pull
+		// the break line to their top and create empty first-page slices.
 		for _, po := range pb.Objects {
+			if po.IgnoreForRowSnap {
+				continue
+			}
 			objTop := po.Top
 			objBot := po.Top + po.Height
 			if objTop > offset && objTop < breakLine && objBot > breakLine {

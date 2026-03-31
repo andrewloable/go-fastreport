@@ -43,6 +43,14 @@ func (e *ReportEngine) RunDataBandRowsKeep(db *band.DataBand, rows int, keepFirs
 	// check if we have only one data row that should be kept with both header and footer
 	oneRow := rows == 1 && keepFirstRow && keepLastRow
 
+	// For AcrossThenDown multi-column bands, defer EndKeep until after all
+	// column-rows are rendered, matching C# RunDataBand behavior where
+	// ShowDataBand → RenderBandAcrossThenDown processes ALL rows before EndKeep
+	// is called (C# ref: ReportEngine.DataBands.cs lines 125-129).
+	// For single-column and DownThenAcross, EndKeep is called immediately after
+	// the first row as before.
+	deferredEndKeep := false
+
 	for rowIdx := 0; rowIdx < rows; rowIdx++ {
 		isLastRow := rowIdx == rows-1
 
@@ -69,6 +77,11 @@ func (e *ReportEngine) RunDataBandRowsKeep(db *band.DataBand, rows int, keepFirs
 		e.absRowNo++
 		db.SetIsFirstRow(isFirstRow)
 		db.SetIsLastRow(isLastRow)
+		// Sync Row# / AbsRow# system variables so [Row#] expressions evaluate
+		// correctly. Mirrors RunDataBandFull which calls e.syncRowVariables()
+		// after every row increment (databands.go RunDataBandFull lines 348-349).
+		e.rowNo = db.RowNo()
+		e.syncRowVariables()
 
 		// Accumulate aggregate totals for this row, filtering by the current
 		// data band name so only totals whose Evaluator matches accumulate.
@@ -121,7 +134,17 @@ func (e *ReportEngine) RunDataBandRowsKeep(db *band.DataBand, rows int, keepFirs
 
 		// end keep header
 		if isFirstRow && keepFirstRow && !oneRow {
-			e.EndKeep()
+			if cs != nil {
+				// AcrossThenDown: defer EndKeep until after all column-rows are
+				// rendered. C# ends keep after RenderBandAcrossThenDown returns
+				// (all rows processed in one ShowDataBand call). Mirroring that
+				// here prevents premature keep termination that would leave the
+				// group header on the wrong page when the last column-row triggers
+				// a page break. C# ref: ReportEngine.DataBands.cs lines 125-129.
+				deferredEndKeep = true
+			} else {
+				e.EndKeep()
+			}
 		}
 
 		// end keep footer
@@ -169,6 +192,15 @@ func (e *ReportEngine) RunDataBandRowsKeep(db *band.DataBand, rows int, keepFirs
 
 	// Flush any partially-filled column row (AcrossThenDown only).
 	e.flushColumnRow(cs)
+
+	// For AcrossThenDown, end the keep-header block here (after all column-rows
+	// are rendered and flushed). This mirrors C# RunDataBand where EndKeep is
+	// called after RenderBandAcrossThenDown returns. If a page break occurred
+	// during column-row rendering, PasteObjects already called EndKeep, making
+	// this a no-op (keeping=false). C# ref: ReportEngine.DataBands.cs lines 128-129.
+	if deferredEndKeep {
+		e.EndKeep()
+	}
 
 	// CompleteToNRows: fill missing child rows (C# child.CompleteToNRows > rowCount).
 	if child := db.Child(); child != nil && child.CompleteToNRows > rows {
@@ -583,7 +615,16 @@ func footerBand(ftr *band.DataFooterBand) *band.BandBase {
 //     renderDownThenAcross; the caller must break after this returns.
 func (e *ReportEngine) showDataBandBody(db *band.DataBand, rowCount int, cs *dataBandColumnState) {
 	if db.Columns().Count() > 1 {
-		db.SetWidth(db.Columns().ActualWidth())
+		// C# ShowDataBand: dataBand.Width = dataBand.Columns.ActualWidth (line 196).
+		// Only update when ActualWidth is non-zero; when Columns.Width is unset and
+		// no page-width callback is registered, ActualWidth returns 0, which would
+		// corrupt the band's width for all subsequent group iterations. In that case
+		// the FRX-deserialized Width (already the per-column width) is preserved.
+		// C# ActualWidth always returns a value (falls back to page-width / count),
+		// so this guard has no C# analogue — it compensates for the missing pageWidthFn.
+		if aw := db.Columns().ActualWidth(); aw > 0 {
+			db.SetWidth(aw)
+		}
 		if db.Columns().Layout == band.ColumnLayoutDownThenAcross {
 			// DownThenAcross: handle all rows at once (C# RenderBandDownThenAcross).
 			// The outer loop must break after this call returns.

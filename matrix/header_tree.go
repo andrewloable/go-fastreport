@@ -172,7 +172,10 @@ func (m *MatrixObject) BuildTemplateMultiLevel() {
 	// Save template rows/columns before resetting TableBase.
 	m.savedTemplateRows = m.TableBase.Rows()
 	savedCols := m.TableBase.Columns()
-	// Save position — TableBase reset destroys the embedded ComponentBase.
+	// Save position and identity — TableBase reset destroys the embedded ComponentBase,
+	// clearing Name, Left, Top, Width, Height, and Border.
+	// C# ref: MatrixHelper creates a new ResultTable but keeps the MatrixObject identity.
+	savedName := m.Name()
 	savedLeft := m.Left()
 	savedTop := m.Top()
 	savedWidth := m.Width()
@@ -221,8 +224,9 @@ func (m *MatrixObject) BuildTemplateMultiLevel() {
 	// Total table rows = title (if any) + col-header rows + one per row-leaf.
 	nRows := titleOffset + nColHeaderRows + len(rowLeaves)
 
-	// Reset table and restore position.
+	// Reset table and restore position and identity.
 	m.TableBase = *table.NewTableBase()
+	m.SetName(savedName) // restore name cleared by TableBase reset
 	m.SetLeft(savedLeft)
 	m.SetTop(savedTop)
 	m.SetWidth(savedWidth)
@@ -567,16 +571,27 @@ func (m *MatrixObject) BuildTemplateMultiLevel() {
 		}
 	}
 
+	// rowIdx tracks the flat row index across data rows, subtotals, and grand total.
+	// Mirrors C# Matrix.RowIndex incremented in PrintData for every rendered row leaf.
+	rowIdx := 0
+
 	for ri, rLeaf := range rowLeaves {
 		// Detect level-0 group boundary (e.g. year change) and insert subtotal row.
 		curLevel0Node := findNodeAtLevel(m.rowRoot, rowLeafPaths[rLeaf], 0)
 		if hasTotals && nRowHeaderCols > 1 && prevLevel0Node != nil && curLevel0Node != prevLevel0Node {
+			// Set RowIndex before addSubtotalRow so highlight conditions are evaluated
+			// with the correct index.
+			m.RowIndex = rowIdx
 			m.addSubtotalRow(prevLevel0Node, groupLeaves, colLeaves, nRowHeaderCols, nCells)
+			rowIdx++
 			groupLeaves = nil
 		}
 		prevLevel0Node = curLevel0Node
 		groupLeaves = append(groupLeaves, rLeaf)
 
+		// Set RowIndex for this data row before building cells.
+		// C# ref: Matrix.RowIndex is set in PrintData before templateCell.GetData().
+		m.RowIndex = rowIdx
 		_ = ri
 		tableRow := newRow(dataTemplate) // data rows use template row after headers
 		rPath := rowLeafPaths[rLeaf]
@@ -683,18 +698,31 @@ func (m *MatrixObject) BuildTemplateMultiLevel() {
 			}
 		}
 
+		// Apply highlight conditions for each cell in this row.
+		// C# ref: templateCell.GetData() in PrintData evaluates highlights with current RowIndex.
+		for _, cell := range tableRow.Cells() {
+			if cell != nil {
+				m.applyHighlights(cell)
+			}
+		}
+
 		m.TableBase.AddRow(tableRow)
+		rowIdx++
 	}
 
 	// Insert subtotal for the last group.
 	if hasTotals && nRowHeaderCols > 1 && prevLevel0Node != nil {
+		m.RowIndex = rowIdx
 		m.addSubtotalRow(prevLevel0Node, groupLeaves, colLeaves, nRowHeaderCols, nCells)
+		rowIdx++
 	}
 
 	// Grand total row (sum per column + grand total).
 	// C# ref: MatrixHelper uses the last template row (Row7) for the grand total.
 	// When CellsSideBySide, emits nCells cells per column leaf.
 	if hasTotals {
+		// Set RowIndex for the grand total row.
+		m.RowIndex = rowIdx
 		grandTotalTemplateRow := len(savedRows) - 1
 		totalRow := newRow(grandTotalTemplateRow) // grand total uses last template row
 		// Total label spanning all row-header columns.
@@ -738,6 +766,12 @@ func (m *MatrixObject) BuildTemplateMultiLevel() {
 				gtCell.SetText(fmtVal(gtCell, grandTotals[ci]))
 			}
 			totalRow.AddCell(gtCell)
+		}
+		// Apply highlight conditions for the grand total row.
+		for _, cell := range totalRow.Cells() {
+			if cell != nil {
+				m.applyHighlights(cell)
+			}
 		}
 		m.TableBase.AddRow(totalRow)
 	}
@@ -993,7 +1027,7 @@ func (m *MatrixObject) templateCellAt(rowIdx, colIdx int) *table.TableCell {
 
 // newStyledCell creates a new table cell with visual properties copied from the
 // template cell at (rowIdx, colIdx). Mirrors C# RunTimeAssign: copies font, fill,
-// border, alignment, format.
+// border, alignment, format, and highlight conditions.
 func (m *MatrixObject) newStyledCell(rowIdx, colIdx int) *table.TableCell {
 	c := table.NewTableCell()
 	if tc := m.templateCellAt(rowIdx, colIdx); tc != nil {
@@ -1006,8 +1040,54 @@ func (m *MatrixObject) newStyledCell(rowIdx, colIdx int) *table.TableCell {
 		if tc.Format() != nil {
 			c.SetFormat(tc.Format())
 		}
+		// Copy highlight conditions so they can be evaluated during BuildTemplateMultiLevel.
+		// C# ref: RunTimeAssign copies highlight conditions; GetData() evaluates them.
+		if h := tc.Highlights(); len(h) > 0 {
+			hCopy := make([]style.HighlightCondition, len(h))
+			copy(hCopy, h)
+			c.SetHighlights(hCopy)
+		}
 	}
 	return c
+}
+
+// applyHighlights evaluates the highlight conditions on a cell using the current
+// RowIndex/ColumnIndex. The first matching condition is applied (fill, text color,
+// font). Mirrors C# templateCell.GetData() called in PrintData/PrintRowHeader.
+// The highlights are cleared after evaluation since the style is pre-baked.
+func (m *MatrixObject) applyHighlights(cell *table.TableCell) {
+	if m.HighlightCalc == nil {
+		return
+	}
+	highlights := cell.Highlights()
+	if len(highlights) == 0 {
+		return
+	}
+	for _, cond := range highlights {
+		result, err := m.HighlightCalc(cond.Expression)
+		if err != nil {
+			continue
+		}
+		matched, _ := result.(bool)
+		if !matched {
+			continue
+		}
+		if !cond.Visible {
+			break
+		}
+		if cond.ApplyFill {
+			cell.SetFill(style.NewSolidFill(cond.FillColor))
+		}
+		if cond.ApplyTextFill {
+			cell.SetTextColor(cond.TextFillColor)
+		}
+		if cond.ApplyFont {
+			cell.SetFont(cond.Font)
+		}
+		break
+	}
+	// Clear highlights — the result is pre-baked into the cell's visual properties.
+	cell.SetHighlights(nil)
 }
 
 // fmtCellVal formats a value using the cell's format, falling back to m.cellFormat.
@@ -1084,6 +1164,13 @@ func (m *MatrixObject) addSubtotalRow(_ *HeaderItem, groupLeaves, colLeaves []*H
 			gtCell.SetText(m.fmtCellVal(gtCell, subtotalGrands[ci]))
 		}
 		row.AddCell(gtCell)
+	}
+	// Apply highlight conditions using the current m.RowIndex (set by the caller).
+	// C# ref: PrintRowHeader calls templateCell.GetData() for subtotal rows too.
+	for _, cell := range row.Cells() {
+		if cell != nil {
+			m.applyHighlights(cell)
+		}
 	}
 	m.TableBase.AddRow(row)
 }

@@ -82,6 +82,7 @@ type fpxObject struct {
 	CheckedSymbol   int
 	UncheckedSymbol int
 	CheckColor      color.RGBA
+	CheckWidthRatio float32
 	Duplicates      int
 	IsBarcode       bool
 	BarcodeModules [][]bool
@@ -239,6 +240,7 @@ func encodeObjects(objs []PreparedObject) []fpxObject {
 			CheckedSymbol:   int(o.CheckedSymbol),
 			UncheckedSymbol: int(o.UncheckedSymbol),
 			CheckColor:      o.CheckColor,
+			CheckWidthRatio: o.CheckWidthRatio,
 			Duplicates:      int(o.Duplicates),
 			IsBarcode:       o.IsBarcode,
 			BarcodeModules: mods,
@@ -393,6 +395,7 @@ func decodeObjects(src []fpxObject) []PreparedObject {
 			CheckedSymbol:   fo.CheckedSymbol,
 			UncheckedSymbol: fo.UncheckedSymbol,
 			CheckColor:      fo.CheckColor,
+			CheckWidthRatio: fo.CheckWidthRatio,
 			Duplicates:      DuplicatesMode(fo.Duplicates),
 			IsBarcode:       fo.IsBarcode,
 			BarcodeModules: cloneBoolMatrix(fo.BarcodeModules),

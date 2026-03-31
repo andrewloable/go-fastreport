@@ -1438,6 +1438,7 @@ func (b *QRBarcode) GetMatrix() ([][]bool, int, int) {
 	ecLevel := qrECLevelFromString(b.ErrorCorrection)
 	if isSwissQRPayload(text) {
 		ecLevel = qrECM
+		text = normalizeSwissQRPayload(text)
 	}
 	matrix, err := encodeQR(text, ecLevel, b.Encoding)
 	if err != nil || len(matrix) == 0 {

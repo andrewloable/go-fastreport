@@ -375,11 +375,13 @@ func TestShowBandInColumn_PageBreak(t *testing.T) {
 	e := newCovEngine(t)
 
 	// Force very little free space so that the column band triggers a page break.
+	// FreeSpace() = pageHeight - footers - curY; set curY near pageHeight so FreeSpace < 50.
+	e.curY = e.pageHeight - 1.0
 	e.freeSpace = 1.0
 
 	db := band.NewDataBand()
 	db.SetName("ColPageBreakDB")
-	db.SetHeight(50) // much taller than freeSpace=1
+	db.SetHeight(50) // much taller than FreeSpace()≈1
 	db.SetVisible(true)
 	db.BandBase.FlagCheckFreeSpace = true
 

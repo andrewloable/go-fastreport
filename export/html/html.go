@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	_ "image/gif"
+	_ "image/jpeg"
 	"image/png"
 	"io"
 	"math"
@@ -1471,32 +1473,22 @@ func borderCSS(b *style.Border, scale float32) string {
 	return sb.String()
 }
 
-// resizeImagePNG resizes a PNG image to the target dimensions, matching C#'s
-// GetLayerPicture which re-renders images at Width*Zoom × Height*Zoom.
-// If the image is already the target size or decoding fails, returns the original data.
-// resizeImagePNG resizes a PNG image to the target dimensions, matching C#'s
-// GetLayerPicture which creates a Bitmap at Width*Zoom × Height*Zoom and
-// calls obj.Draw(). PictureObject default SizeMode is Zoom (preserve aspect
-// ratio, center within bounds, transparent background).
+// resizeImagePNG decodes any image format (PNG, JPEG, GIF) and scales it to
+// targetW×targetH using PictureBoxSizeMode.Zoom logic (fit within bounds
+// preserving aspect ratio, centred on a transparent canvas), then encodes
+// the result as PNG. Matches C#'s GetLayerPicture which creates a Bitmap at
+// Width*Zoom × Height*Zoom and calls obj.Draw() with SizeMode=Zoom.
 func resizeImagePNG(data []byte, targetW, targetH int) []byte {
 	if targetW <= 0 || targetH <= 0 {
 		return data
 	}
-	// Check PNG magic.
-	if len(data) < 8 || data[0] != 0x89 || data[1] != 'P' || data[2] != 'N' || data[3] != 'G' {
-		return data // not PNG, return as-is
-	}
-
-	src, err := png.Decode(bytes.NewReader(data))
+	src, _, err := image.Decode(bytes.NewReader(data))
 	if err != nil {
 		return data
 	}
 	srcBounds := src.Bounds()
 	srcW := srcBounds.Dx()
 	srcH := srcBounds.Dy()
-	if srcW == targetW && srcH == targetH {
-		return data // already correct size
-	}
 
 	// Create target bitmap with transparent background (matching C# Bitmap + clear).
 	dst := image.NewRGBA(image.Rect(0, 0, targetW, targetH))

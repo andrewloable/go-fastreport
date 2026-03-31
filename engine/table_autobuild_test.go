@@ -172,14 +172,34 @@ func TestAutoManualBuild_NoManualBuildEvent_Returns_Nil(t *testing.T) {
 	}
 }
 
-// TestAutoManualBuild_NoFixedColumns_Returns_Nil verifies that autoManualBuild
-// returns nil when FixedColumns=0 (non-column-first pattern not yet supported).
-func TestAutoManualBuild_NoFixedColumns_Returns_Nil(t *testing.T) {
+// TestAutoManualBuild_SimpleRowFirst verifies that autoManualBuild generates a
+// valid result for the simple row-first pattern (no FixedRows, no FixedColumns,
+// DS expressions in row 1):  header row printed once + one row per DS record.
+func TestAutoManualBuild_SimpleRowFirst(t *testing.T) {
 	e, tbl := buildAutoManualEngine(t)
 	tbl.SetFixedColumns(0)
 	result := e.autoManualBuild(tbl)
+	if result == nil {
+		t.Fatal("autoManualBuild should return non-nil for simple row-first pattern")
+	}
+	// 1 header row + 2 data rows (one per Employees record).
+	if result.RowCount() != 3 {
+		t.Errorf("expected 3 rows, got %d", result.RowCount())
+	}
+}
+
+// TestAutoManualBuild_NoFixedColumns_NoDS_Returns_Nil verifies that
+// autoManualBuild returns nil when FixedColumns=0 and no DS alias can be
+// detected in the data row (row 1).
+func TestAutoManualBuild_NoFixedColumns_NoDS_Returns_Nil(t *testing.T) {
+	e, tbl := buildAutoManualEngine(t)
+	tbl.SetFixedColumns(0)
+	// Clear DS expressions from row 1 so detection fails.
+	tbl.Cell(1, 1).SetText("Static value")
+	tbl.Cell(1, 0).SetText("Static 2")
+	result := e.autoManualBuild(tbl)
 	if result != nil {
-		t.Error("autoManualBuild should return nil when FixedColumns=0")
+		t.Error("autoManualBuild should return nil when FixedColumns=0 and no DS detected")
 	}
 }
 

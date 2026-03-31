@@ -275,7 +275,7 @@ func TestGaugeObject_Serialize_Pointer_AllFields(t *testing.T) {
 	g := NewGaugeObject()
 	g.Pointer.Width = 10     // != 6 (default)
 	g.Pointer.Height = 20    // != 0 (default)
-	g.Pointer.Color = "#00FF00" // != "#CC0000" and non-empty
+	g.Pointer.Color = "#00FF00" // != "Orange" and non-empty
 
 	w := newMockWriter()
 	if err := g.Serialize(w); err != nil {
@@ -288,7 +288,7 @@ func TestGaugeObject_Serialize_Pointer_AllFields(t *testing.T) {
 		t.Error("Pointer.Height should be written when != 0")
 	}
 	if !w.hasStr("Pointer.Color") {
-		t.Error("Pointer.Color should be written when non-empty and != #CC0000")
+		t.Error("Pointer.Color should be written when non-empty and != Orange")
 	}
 }
 
@@ -296,7 +296,7 @@ func TestGaugeObject_Serialize_Pointer_AllFields(t *testing.T) {
 // Pointer field values are NOT written.
 func TestGaugeObject_Serialize_Pointer_DefaultNotWritten(t *testing.T) {
 	g := NewGaugeObject()
-	// Default: Width=6, Height=0, Color="#CC0000"
+	// Default: Width=6, Height=0, Color="Orange"
 	w := newMockWriter()
 	if err := g.Serialize(w); err != nil {
 		t.Fatalf("Serialize: %v", err)
@@ -308,12 +308,12 @@ func TestGaugeObject_Serialize_Pointer_DefaultNotWritten(t *testing.T) {
 		t.Error("Pointer.Height should NOT be written when == 0")
 	}
 	if w.hasStr("Pointer.Color") {
-		t.Error("Pointer.Color should NOT be written for default (#CC0000)")
+		t.Error("Pointer.Color should NOT be written for default (Orange)")
 	}
 }
 
 // TestGaugeObject_Serialize_Pointer_EmptyColor_NotWritten verifies empty
-// Pointer.Color is not written (condition: Color != "" && Color != "#CC0000").
+// Pointer.Color is not written (condition: Color != "" && Color != "Orange").
 func TestGaugeObject_Serialize_Pointer_EmptyColor_NotWritten(t *testing.T) {
 	g := NewGaugeObject()
 	g.Pointer.Color = "" // empty → not written
@@ -524,14 +524,14 @@ func TestGaugeObject_Deserialize_PointerColor_NonEmpty(t *testing.T) {
 // does NOT overwrite the existing value.
 func TestGaugeObject_Deserialize_PointerColor_Empty(t *testing.T) {
 	g := NewGaugeObject()
-	g.Pointer.Color = "#CC0000"
+	g.Pointer.Color = "Orange"
 	r := newMockReader()
 	// Pointer.Color not in reader → ReadStr returns "" → branch not taken.
 	if err := g.Deserialize(r); err != nil {
 		t.Fatalf("Deserialize: %v", err)
 	}
-	if g.Pointer.Color != "#CC0000" {
-		t.Errorf("Pointer.Color = %q, want unchanged #CC0000", g.Pointer.Color)
+	if g.Pointer.Color != "Orange" {
+		t.Errorf("Pointer.Color = %q, want unchanged Orange", g.Pointer.Color)
 	}
 }
 
@@ -696,13 +696,13 @@ func TestRadialGauge_Serialize_ReturnsNil(t *testing.T) {
 // is written.
 func TestRadialGauge_Serialize_StartAngle_NonDefault(t *testing.T) {
 	g := NewRadialGauge()
-	g.StartAngle = -90 // != -135 (default)
+	g.StartAngle = -90 // != 135 (default)
 	w := newMockWriter()
 	if err := g.Serialize(w); err != nil {
 		t.Fatalf("Serialize: %v", err)
 	}
 	if !w.hasFloat("StartAngle") {
-		t.Error("StartAngle should be written when != -135")
+		t.Error("StartAngle should be written when != 135")
 	}
 }
 
@@ -710,13 +710,13 @@ func TestRadialGauge_Serialize_StartAngle_NonDefault(t *testing.T) {
 // StartAngle is NOT written.
 func TestRadialGauge_Serialize_StartAngle_Default_NotWritten(t *testing.T) {
 	g := NewRadialGauge()
-	// Default StartAngle = -135
+	// Default StartAngle = 135
 	w := newMockWriter()
 	if err := g.Serialize(w); err != nil {
 		t.Fatalf("Serialize: %v", err)
 	}
 	if w.hasFloat("StartAngle") {
-		t.Error("StartAngle should NOT be written for default (-135)")
+		t.Error("StartAngle should NOT be written for default (135)")
 	}
 }
 
@@ -724,13 +724,13 @@ func TestRadialGauge_Serialize_StartAngle_Default_NotWritten(t *testing.T) {
 // is written.
 func TestRadialGauge_Serialize_EndAngle_NonDefault(t *testing.T) {
 	g := NewRadialGauge()
-	g.EndAngle = 90 // != 135 (default)
+	g.EndAngle = 90 // != 45 (default)
 	w := newMockWriter()
 	if err := g.Serialize(w); err != nil {
 		t.Fatalf("Serialize: %v", err)
 	}
 	if !w.hasFloat("EndAngle") {
-		t.Error("EndAngle should be written when != 135")
+		t.Error("EndAngle should be written when != 45")
 	}
 }
 
@@ -738,13 +738,13 @@ func TestRadialGauge_Serialize_EndAngle_NonDefault(t *testing.T) {
 // is NOT written.
 func TestRadialGauge_Serialize_EndAngle_Default_NotWritten(t *testing.T) {
 	g := NewRadialGauge()
-	// Default EndAngle = 135
+	// Default EndAngle = 45
 	w := newMockWriter()
 	if err := g.Serialize(w); err != nil {
 		t.Fatalf("Serialize: %v", err)
 	}
 	if w.hasFloat("EndAngle") {
-		t.Error("EndAngle should NOT be written for default (135)")
+		t.Error("EndAngle should NOT be written for default (45)")
 	}
 }
 
@@ -784,11 +784,11 @@ func TestRadialGauge_Deserialize_DefaultAngles_Mock(t *testing.T) {
 	if err := g.Deserialize(r); err != nil {
 		t.Fatalf("Deserialize: %v", err)
 	}
-	if g.StartAngle != -135 {
-		t.Errorf("StartAngle = %v, want -135 (default)", g.StartAngle)
+	if g.StartAngle != 135 {
+		t.Errorf("StartAngle = %v, want 135 (default)", g.StartAngle)
 	}
-	if g.EndAngle != 135 {
-		t.Errorf("EndAngle = %v, want 135 (default)", g.EndAngle)
+	if g.EndAngle != 45 {
+		t.Errorf("EndAngle = %v, want 45 (default)", g.EndAngle)
 	}
 }
 

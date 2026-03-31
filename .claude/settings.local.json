@@ -144,7 +144,14 @@
       "Bash(./compare_html_semantic -report \"Two Cell Dimensions, Side-by-Side\" -out /tmp/delta/ 2>&1)",
       "Bash(./compare_html_semantic -report \"Two Cell Dimensions, Side-by-Side\" -out /tmp/delta/)",
       "Bash(./compare_html_semantic -report \"Two Cell Dimensions, Side-by-Side\" -out html-delta/)",
-      "Bash(do go:*)"
+      "Bash(do go:*)",
+      "Bash(bd prime:*)",
+      "Bash(./compare_screenshots/compare_screenshots -report Table 2>&1)",
+      "Bash(./compare_screenshots -report Table 2>&1)",
+      "Bash(command -v node)",
+      "Bash(command -v python3)",
+      "Bash(ffmpeg:*)",
+      "Bash(__NEW_LINE_f4e5c2eef88de876__ python3:*)"
     ]
   }
 }

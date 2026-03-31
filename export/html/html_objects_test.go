@@ -414,9 +414,10 @@ func TestRenderObject_Picture_JPEG_Blob(t *testing.T) {
 		},
 	})
 	out := exportHTML(t, pp)
-	// New rendering: images use CSS background (C# pattern) with capitalized MIME.
-	if !strings.Contains(out, `url('data:image/Jpeg;base64,`) {
-		t.Errorf("JPEG picture: expected CSS background url with image/Jpeg MIME, got %q", out)
+	// JPEG images are converted to PNG (zoom-to-fit) so they render at the correct
+	// container size in HTML (C# pattern: obj.Draw() always outputs a fixed-size bitmap).
+	if !strings.Contains(out, `url('data:image/Png;base64,`) {
+		t.Errorf("JPEG picture: expected CSS background url with image/Png MIME after resize, got %q", out)
 	}
 }
 

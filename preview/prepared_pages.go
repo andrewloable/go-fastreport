@@ -483,6 +483,9 @@ type PreparedObject struct {
 	UncheckedSymbol int
 	// CheckColor is the color of the check symbol.
 	CheckColor color.RGBA
+	// CheckWidthRatio scales the pen width used to draw the check symbol.
+	// Mirrors C# CheckBoxObject.CheckWidthRatio (default 1.0).
+	CheckWidthRatio float32
 	// Duplicates controls how repeated values with the same object name are handled.
 	Duplicates DuplicatesMode
 
@@ -587,6 +590,12 @@ type PreparedObject struct {
 	// Set by the engine when obj.Exportable()==false after ExportableExpression evaluation.
 	// C# ref: ReportEngine.Bands.cs lines 287-296, HTMLExportLayers.cs line 967.
 	NotExportable bool
+
+	// IgnoreForRowSnap, when true, excludes this object from the row-boundary
+	// snap calculation in splitPreparedBandAcrossPages. Used for full-table-height
+	// container objects (sectionBorder, sectionBg) that span the entire table and
+	// would otherwise pull the break line to their Top, creating empty first slices.
+	IgnoreForRowSnap bool
 }
 
 // ── PreparedWatermark ─────────────────────────────────────────────────────────

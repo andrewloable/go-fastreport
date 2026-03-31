@@ -1,6 +1,8 @@
 package engine
 
 import (
+	"image/color"
+
 	"github.com/andrewloable/go-fastreport/band"
 	"github.com/andrewloable/go-fastreport/data"
 	"github.com/andrewloable/go-fastreport/preview"
@@ -57,7 +59,10 @@ func (e *ReportEngine) showBandInColumn(db *band.DataBand, cs *dataBandColumnSta
 
 	// Check free space: if this is the first column of a new column-row and the
 	// band doesn't fit, start a new page.
-	if cs.colIdx == 0 && bb.FlagCheckFreeSpace && e.freeSpace < height {
+	// Use FreeSpace() (computed, deducts footer height) rather than e.freeSpace
+	// (raw field), mirroring C# ReportEngine.Bands.cs where FreeSpace already
+	// deducts PageFooterHeight. Mirrors ShowBand free-space check in bands.go:487.
+	if cs.colIdx == 0 && bb.FlagCheckFreeSpace && e.FreeSpace() < height {
 		e.startNewPageForCurrent()
 		cs.rowY = e.curY
 	}
@@ -76,12 +81,46 @@ func (e *ReportEngine) showBandInColumn(db *band.DataBand, cs *dataBandColumnSta
 	xOffset := float32(colPos) * cs.colWidth
 
 	if e.preparedPages != nil {
+		// C# RenderBandAcrossThenDown creates an "outputBand" wrapper per column-row
+		// (columnNo==0). outputBand.Assign(dataBand) copies properties; then the Fill
+		// is overridden to transparent and Border to empty. The wrapper is rendered
+		// BEFORE the individual column bands (via ShowBand(outputBand, false)), so its
+		// background div appears first in the HTML output.
+		// C# ref: ReportEngine.DataBands.cs lines 244-261 (outputBand setup) and 290-294
+		//         (ShowBand(outputBand, false) when all columns are filled or last row).
+		if cs.colIdx == 0 {
+			wrapper := &preview.PreparedBand{
+				Name:          bb.Name(),
+				Left:          0,
+				Top:           cs.rowY,
+				Height:        height,
+				Width:         cs.colWidth,
+				NotExportable: !bb.Exportable(),
+				// Transparent fill + no border: mirrors outputBand.Fill=new SolidFill()
+				// and outputBand.Border=new Border() after Assign(dataBand).
+				FillColor: color.RGBA{R: 0, G: 0, B: 0, A: 0},
+			}
+			_ = e.preparedPages.AddBand(wrapper)
+		}
+
 		pb := &preview.PreparedBand{
 			Name:          bb.Name(),
+			Left:          xOffset,
 			Top:           cs.rowY,
 			Height:        height,
+			Width:         cs.colWidth,
 			NotExportable: !bb.Exportable(),
 		}
+		// Populate fill/border for band background rendering.
+		// Mirrors C# RenderBandAcrossThenDown → outputBand copies DataBand properties.
+		populateBandProps(bb, pb)
+		// Restore Width/Left after populateBandProps: showDataBandBody calls
+		// db.SetWidth(ActualWidth()) which may have set the band width to 0 when
+		// Columns.Width is unset. The column width is cs.colWidth (from db.Width()
+		// before the SetWidth call), not bb.Width() (which may now be 0).
+		// C# ref: RenderBandAcrossThenDown uses dataBand.Width directly as colWidth.
+		pb.Width = cs.colWidth
+		pb.Left = xOffset
 		// Populate objects, then shift each object's Left by the column X offset.
 		e.populateBandObjects(bb, pb)
 		for i := range pb.Objects {

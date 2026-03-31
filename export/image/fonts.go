@@ -1,6 +1,8 @@
 package image
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 
@@ -70,14 +72,104 @@ func familyKeyword(name string) string {
 	return "sans"
 }
 
+// systemFontDirs lists OS-level font directories to search for TTF/OTF files.
+var systemFontDirs = []string{
+	// macOS
+	"/Library/Fonts",
+	"/System/Library/Fonts/Supplemental",
+	"/System/Library/Fonts",
+	// Linux
+	"/usr/share/fonts",
+	"/usr/local/share/fonts",
+	// Windows (for cross-platform completeness)
+	`C:\Windows\Fonts`,
+}
+
+// tryLoadSystemFont attempts to locate and load a TTF/OTF file for the given
+// font name and style. Returns nil if the font cannot be found.
+// Searches systemFontDirs with several filename conventions.
+func tryLoadSystemFont(name string, bold, italic bool, sizePt, dpi float64) xfont.Face {
+	// Build candidate filenames for this family + style, from most to least specific.
+	var candidates []string
+	switch {
+	case bold && italic:
+		candidates = []string{
+			name + " Bold Italic.ttf",
+			name + "BoldItalic.ttf",
+			name + "-BoldItalic.ttf",
+			name + "_BoldItalic.ttf",
+			name + " Bold Italic.otf",
+			name + "-BoldItalic.otf",
+			// Fallback: try bold-only, then italic-only, then regular
+			name + " Bold.ttf",
+			name + " Italic.ttf",
+			name + ".ttf",
+		}
+	case bold:
+		candidates = []string{
+			name + " Bold.ttf",
+			name + "Bold.ttf",
+			name + "-Bold.ttf",
+			name + "_Bold.ttf",
+			name + " Bold.otf",
+			name + "-Bold.otf",
+			name + ".ttf",
+		}
+	case italic:
+		candidates = []string{
+			name + " Italic.ttf",
+			name + "Italic.ttf",
+			name + "-Italic.ttf",
+			name + "_Italic.ttf",
+			name + " Italic.otf",
+			name + "-Italic.otf",
+			name + ".ttf",
+		}
+	default:
+		candidates = []string{
+			name + ".ttf",
+			name + ".otf",
+			name + " Regular.ttf",
+			name + "-Regular.ttf",
+		}
+	}
+
+	home, _ := os.UserHomeDir()
+	dirs := append([]string{filepath.Join(home, "Library", "Fonts")}, systemFontDirs...)
+
+	for _, dir := range dirs {
+		for _, fname := range candidates {
+			path := filepath.Join(dir, fname)
+			data, err := os.ReadFile(path)
+			if err != nil {
+				continue
+			}
+			parsed, err := opentype.Parse(data)
+			if err != nil {
+				continue
+			}
+			face, err := opentype.NewFace(parsed, &opentype.FaceOptions{
+				Size: sizePt,
+				DPI:  dpi,
+			})
+			if err != nil {
+				continue
+			}
+			return face
+		}
+	}
+	return nil
+}
+
 // selectFace returns a font.Face for the given style properties.
 // sizePt is the font size in points; dpi is the rendering resolution.
-// Falls back to basicfont.Face7x13 if loading fails.
+// First tries to load the named font from the system, then falls back to Go
+// built-in fonts (gobold, goitalic, etc.), then to basicfont.Face7x13.
 func selectFace(f style.Font, sizePt, dpi float64) xfont.Face {
 	bold := f.Style&style.FontStyleBold != 0
 	italic := f.Style&style.FontStyleItalic != 0
 	family := familyKeyword(f.Name)
-	key := fontCacheKey{family: family, bold: bold, italic: italic, sizePt: sizePt, dpi: dpi}
+	key := fontCacheKey{family: f.Name, bold: bold, italic: italic, sizePt: sizePt, dpi: dpi}
 
 	fontCacheMu.Lock()
 	defer fontCacheMu.Unlock()
@@ -86,6 +178,13 @@ func selectFace(f style.Font, sizePt, dpi float64) xfont.Face {
 		return face
 	}
 
+	// Attempt to load the exact named system font first.
+	if face := tryLoadSystemFont(f.Name, bold, italic, sizePt, dpi); face != nil {
+		fontCache[key] = face
+		return face
+	}
+
+	// Fall back to Go built-in fonts by family keyword.
 	fam := fontFamilies[family]
 	var ttf []byte
 	switch {

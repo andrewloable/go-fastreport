@@ -959,7 +959,10 @@ func deserializeStyleEntry(rdr *serial.Reader) *style.StyleEntry {
 		e.Fill = nil // keep legacy path for solid fills
 	}
 	// TextFill: same pattern for text colour.
-	e.TextFill = report.DeserializeFill(rdr, "TextFill", &style.SolidFill{})
+	// C# StyleBase constructor initialises TextFill to SolidFill(Color.Black),
+	// so an absent TextFill.Color in the FRX means "apply black" (not transparent).
+	// Ref: StyleBase.cs line 109 — TextFill = new SolidFill(Color.Black).
+	e.TextFill = report.DeserializeFill(rdr, "TextFill", style.NewSolidFill(style.ColorBlack))
 	if sf, ok := e.TextFill.(*style.SolidFill); ok {
 		e.TextColor = sf.Color
 		e.TextFill = nil // keep legacy path for solid text fills

@@ -292,6 +292,10 @@ type MatrixObject struct {
 	// BuildTemplateMultiLevel.
 	// C# ref: templateCell.GetData() evaluates highlight conditions in PrintData.
 	HighlightCalc func(expr string) (any, error)
+	// CurrentCellValue holds the raw numeric value of the current data cell being
+	// processed, so that HighlightCalc can expose it as "Value" in the expression
+	// context. Mirrors C# TextObject.Value passed to Report.Calc(expr, varValue).
+	CurrentCellValue any
 	// cellFormat is applied to data cell values during BuildTemplateMultiLevel.
 	// Populated from the template data cell's Format (e.g. Currency).
 	cellFormat format.Format

@@ -457,7 +457,7 @@ func TestBuildPreparedObject_TextHighlightCalcError(t *testing.T) {
 		Expression: "%%invalid_expr%%",
 		Visible:    true,
 		ApplyFill:  true,
-		FillColor:  color.RGBA{R: 255, A: 255},
+		Fill:       &style.SolidFill{Color: color.RGBA{R: 255, A: 255}},
 	}
 	txt.AddHighlight(hl)
 

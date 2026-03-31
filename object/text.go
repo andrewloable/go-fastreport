@@ -958,11 +958,9 @@ func (t *TextObject) DeserializeChild(childType string, r report.Reader) bool {
 			// Border attributes (e.g. "Border.Lines", "Border.Color" etc.)
 			// Mirrors C# StyleBase.Serialize calling Border.Serialize(writer, "Border", …).
 			report.DeserializeBorderInto(r, &c.Border)
-			if cs := r.ReadStr("Fill.Color", ""); cs != "" {
-				if col, err := utils.ParseColor(cs); err == nil {
-					c.FillColor = col
-				}
-			}
+			// Read full fill (Glass, Solid, etc.) — mirrors C# StyleBase.Deserialize
+			// which reads Fill as a FillBase (FillBase.Deserialize in Fills.cs).
+			c.Fill = report.DeserializeFill(r, "Fill", c.Fill)
 			if cs := r.ReadStr("TextFill.Color", ""); cs != "" {
 				if col, err := utils.ParseColor(cs); err == nil {
 					c.TextFillColor = col
@@ -1211,8 +1209,8 @@ func (h *highlightConditionSerializable) Serialize(w report.Writer) error {
 	if h.c.ApplyTextFill != def.ApplyTextFill {
 		w.WriteBool("ApplyTextFill", h.c.ApplyTextFill)
 	}
-	if h.c.ApplyFill && h.c.FillColor != (color.RGBA{}) {
-		w.WriteStr("Fill.Color", utils.FormatColor(h.c.FillColor))
+	if h.c.ApplyFill && h.c.Fill != nil {
+		report.SerializeFill(w, "Fill", h.c.Fill)
 	}
 	if h.c.ApplyTextFill {
 		w.WriteStr("TextFill.Color", utils.FormatColor(h.c.TextFillColor))

@@ -217,7 +217,41 @@ func wrapLines(text string, face font.Face, maxWidth float32) []string {
 	return result
 }
 
+// splitWordAtWidth splits a single word into lines at character boundaries so
+// each line fits within maxFixed. Mirrors C# GDI+ character-level wrapping for
+// words that are wider than the available column width.
+func splitWordAtWidth(word string, face font.Face, maxFixed fixed.Int26_6) []string {
+	var lines []string
+	currentLine := ""
+	currentWidth := fixed.Int26_6(0)
+	for _, r := range word {
+		adv, ok := face.GlyphAdvance(r)
+		if !ok {
+			adv = 0
+		}
+		if currentLine == "" {
+			currentLine = string(r)
+			currentWidth = adv
+		} else if currentWidth+adv <= maxFixed {
+			currentLine += string(r)
+			currentWidth += adv
+		} else {
+			lines = append(lines, currentLine)
+			currentLine = string(r)
+			currentWidth = adv
+		}
+	}
+	if currentLine != "" {
+		lines = append(lines, currentLine)
+	}
+	if len(lines) == 0 {
+		return []string{""}
+	}
+	return lines
+}
+
 // wordWrap wraps a single paragraph into lines that fit within maxWidth.
+// Words that are wider than maxWidth are character-split (matching C# GDI+ behavior).
 func wordWrap(para string, face font.Face, maxWidth float32) []string {
 	if para == "" {
 		return []string{""}
@@ -237,9 +271,19 @@ func wordWrap(para string, face font.Face, maxWidth float32) []string {
 	for i, word := range words {
 		wordWidth := font.MeasureString(face, word)
 		if currentLine == "" {
-			// First word on this line — always include it, even if it overflows.
-			currentLine = word
-			currentWidth = wordWidth
+			if wordWidth > maxFixed {
+				// Word is wider than the column — character-split it (C# GDI+ behavior).
+				parts := splitWordAtWidth(word, face, maxFixed)
+				// All parts except the last become full lines immediately.
+				for _, p := range parts[:len(parts)-1] {
+					lines = append(lines, p)
+				}
+				currentLine = parts[len(parts)-1]
+				currentWidth = font.MeasureString(face, currentLine)
+			} else {
+				currentLine = word
+				currentWidth = wordWidth
+			}
 		} else {
 			// Check if word fits on current line.
 			needed := currentWidth + spaceWidth + wordWidth
@@ -248,8 +292,20 @@ func wordWrap(para string, face font.Face, maxWidth float32) []string {
 				currentWidth = needed
 			} else {
 				lines = append(lines, currentLine)
-				currentLine = word
-				currentWidth = wordWidth
+				currentLine = ""
+				currentWidth = 0
+				// Re-process word from scratch on the new line.
+				if wordWidth > maxFixed {
+					parts := splitWordAtWidth(word, face, maxFixed)
+					for _, p := range parts[:len(parts)-1] {
+						lines = append(lines, p)
+					}
+					currentLine = parts[len(parts)-1]
+					currentWidth = font.MeasureString(face, currentLine)
+				} else {
+					currentLine = word
+					currentWidth = wordWidth
+				}
 			}
 		}
 		if i == len(words)-1 {

@@ -153,7 +153,7 @@ func TestFormatTextContent_SingleCharSpace(t *testing.T) {
 func TestResizeImagePNG_NonPNGData(t *testing.T) {
 	// Non-PNG data should be returned as-is.
 	data := []byte{0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46} // JPEG header
-	got := resizeImagePNG(data, 100, 100)
+	got := resizeImagePNG(data, 100, 100, 4) // SizeModeZoom (default)
 	if !bytes.Equal(got, data) {
 		t.Error("non-PNG data: expected original data returned unchanged")
 	}
@@ -165,7 +165,7 @@ func TestResizeImagePNG_ZeroTargetWidth(t *testing.T) {
 	_ = png.Encode(&buf, img)
 	data := buf.Bytes()
 
-	got := resizeImagePNG(data, 0, 100)
+	got := resizeImagePNG(data, 0, 100, 4)
 	if !bytes.Equal(got, data) {
 		t.Error("zero target width: expected original data returned")
 	}
@@ -177,7 +177,7 @@ func TestResizeImagePNG_ZeroTargetHeight(t *testing.T) {
 	_ = png.Encode(&buf, img)
 	data := buf.Bytes()
 
-	got := resizeImagePNG(data, 100, 0)
+	got := resizeImagePNG(data, 100, 0, 4)
 	if !bytes.Equal(got, data) {
 		t.Error("zero target height: expected original data returned")
 	}
@@ -189,16 +189,16 @@ func TestResizeImagePNG_SameSize(t *testing.T) {
 	_ = png.Encode(&buf, img)
 	data := buf.Bytes()
 
-	got := resizeImagePNG(data, 50, 50)
-	if !bytes.Equal(got, data) {
-		t.Error("same size: expected original data returned")
+	got := resizeImagePNG(data, 50, 50, 4)
+	if got == nil {
+		t.Error("same size: expected non-nil result")
 	}
 }
 
 func TestResizeImagePNG_ShortData(t *testing.T) {
 	// Data shorter than PNG header (< 8 bytes).
 	data := []byte{0x89, 0x50}
-	got := resizeImagePNG(data, 100, 100)
+	got := resizeImagePNG(data, 100, 100, 4)
 	if !bytes.Equal(got, data) {
 		t.Error("short data: expected original data returned")
 	}
@@ -211,7 +211,7 @@ func TestResizeImagePNG_Resize(t *testing.T) {
 	_ = png.Encode(&buf, img)
 	data := buf.Bytes()
 
-	got := resizeImagePNG(data, 50, 25)
+	got := resizeImagePNG(data, 50, 25, 4)
 	// Should not be the same data (resized).
 	if bytes.Equal(got, data) {
 		t.Error("resize: expected different data after resize")

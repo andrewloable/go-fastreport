@@ -55,9 +55,16 @@ func (r *Report) Calc(expression string) (any, error) {
 	// like CopyName#, Page#, TotalPages#, Row#, AbsRow#).  The expr-lang library
 	// treats '#' as invalid syntax, so we must resolve these directly from the
 	// dictionary system variables rather than passing them to the evaluator.
-	// This applies both when called with the raw name (from CalcText token) and
-	// when called with a bracketed form like "[CopyName#]".
-	if strings.Contains(unwrapped, "#") {
+	// This applies only when the expression is a single bare # variable name
+	// (no brackets, spaces, or operators). Compound expressions that reference
+	// # variables inside [brackets] are handled by translateExpression, which
+	// sanitizes # to _ producing valid identifiers, with the sanitized keys
+	// pre-populated in buildCalcEnv.
+	// C# ref: FastReport.Base/Report.cs Calc() — # variables are treated as
+	// simple named values, not as expression syntax.
+	isPureHashName := strings.Contains(unwrapped, "#") &&
+		!strings.ContainsAny(unwrapped, "[ %+*/&|!<>=(),\"'")
+	if isPureHashName {
 		if r.dictionary != nil {
 			for _, sv := range r.dictionary.SystemVariables() {
 				if strings.EqualFold(sv.Name, unwrapped) {
@@ -337,6 +344,12 @@ func sanitizeIdent(s string) string {
 	s = strings.ReplaceAll(s, ".", "_")
 	s = strings.ReplaceAll(s, " ", "_")
 	s = strings.ReplaceAll(s, "-", "_")
+	// '#' is not a valid identifier character in expr-lang.
+	// FastReport uses names like Row#, AbsRow#, Page# etc.
+	// Replacing '#' with '_' allows these to appear in compound expressions
+	// like [Row#] % 2 == 0 after bracket translation.
+	// C# ref: FastReport macro variable naming convention (RowVariable.Name = "Row#").
+	s = strings.ReplaceAll(s, "#", "_")
 	return s
 }
 

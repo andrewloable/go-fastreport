@@ -238,6 +238,7 @@ func TestTotalTypeConstants(t *testing.T) {
 func TestAggregateTotal_StartKeep_EndKeep_Sum(t *testing.T) {
 	tot := data.NewAggregateTotal("K")
 	tot.TotalType = data.TotalTypeSum
+	tot.IsPageFooter = true // StartKeep/EndKeep only act on page-footer totals
 	_ = tot.Add(10)
 	_ = tot.Add(20)
 	// sum=30 at this point
@@ -264,6 +265,7 @@ func TestAggregateTotal_StartKeep_EndKeep_Sum(t *testing.T) {
 func TestAggregateTotal_StartKeep_EndKeep_MinMax(t *testing.T) {
 	tot := data.NewAggregateTotal("K")
 	tot.TotalType = data.TotalTypeMin
+	tot.IsPageFooter = true // StartKeep/EndKeep only act on page-footer totals
 	_ = tot.Add(5)
 	_ = tot.Add(3)
 	// min=3
@@ -285,6 +287,7 @@ func TestAggregateTotal_StartKeep_EndKeep_MinMax(t *testing.T) {
 func TestAggregateTotal_StartKeep_EndKeep_Count(t *testing.T) {
 	tot := data.NewAggregateTotal("K")
 	tot.TotalType = data.TotalTypeCount
+	tot.IsPageFooter = true // StartKeep/EndKeep only act on page-footer totals
 	_ = tot.Add("a")
 	_ = tot.Add("b")
 	// count=2
@@ -310,6 +313,7 @@ func TestAggregateTotal_StartKeep_EndKeep_Uninitialized(t *testing.T) {
 	// restore to uninitialized state.
 	tot := data.NewAggregateTotal("K")
 	tot.TotalType = data.TotalTypeMax
+	tot.IsPageFooter = true // StartKeep/EndKeep only act on page-footer totals
 
 	tot.StartKeep()
 

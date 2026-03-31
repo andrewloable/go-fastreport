@@ -302,7 +302,8 @@ func (e *Exporter) ExportBand(b *preview.PreparedBand) error {
 
 	// Render band background div (C# LayerBack pattern).
 	// C# renders each band as a positioned div with its fill color before child objects.
-	if b.Width > 0 && b.Height > 0 {
+	// NoBackground bands (e.g. horizontal-split matrix continuations) skip this div.
+	if b.Width > 0 && b.Height > 0 && !b.NoBackground {
 		e.renderBandBackground(b, scale)
 	}
 
@@ -512,15 +513,15 @@ func (e *Exporter) renderObject(obj preview.PreparedObject, scale float32) {
 				// picClass and imgClass are assigned below depending on InlineStyles mode.
 
 				// Resize image to display dimensions for correct rendering in HTML.
-				// For rotated objects (Angle != 0), apply rotation to the image
-				// to match C# GetLayerPicture behaviour.
+				// For rotated objects, apply rotation to match C# GetLayerPicture.
+				// Use PictureAngle (not Angle) — Angle is for text objects.
 				var imgData []byte
 				targetW := int(math.Round(float64(adjW)))
 				targetH := int(math.Round(float64(adjH)))
-				if obj.Angle != 0 {
-					imgData = imgexp.RotateImagePNG(data, obj.Angle, targetW, targetH)
+				if obj.PictureAngle != 0 {
+					imgData = imgexp.RotateImagePNG(data, obj.PictureAngle, targetW, targetH)
 				} else {
-					imgData = resizeImagePNG(data, targetW, targetH)
+					imgData = resizeImagePNG(data, targetW, targetH, obj.PictureSizeMode)
 				}
 				mime := imageMIMEForCSS(imgData)
 				encoded := base64.StdEncoding.EncodeToString(imgData)
@@ -1473,12 +1474,16 @@ func borderCSS(b *style.Border, scale float32) string {
 	return sb.String()
 }
 
-// resizeImagePNG decodes any image format (PNG, JPEG, GIF) and scales it to
-// targetW×targetH using PictureBoxSizeMode.Zoom logic (fit within bounds
-// preserving aspect ratio, centred on a transparent canvas), then encodes
-// the result as PNG. Matches C#'s GetLayerPicture which creates a Bitmap at
-// Width*Zoom × Height*Zoom and calls obj.Draw() with SizeMode=Zoom.
-func resizeImagePNG(data []byte, targetW, targetH int) []byte {
+// resizeImagePNG decodes any image format (PNG, JPEG, GIF) and scales/positions
+// it according to sizeMode (matches C# PictureObject SizeMode enum values):
+//   0 = Normal     — show at original size, clip to bounds
+//   1 = Stretch    — stretch to fill entire bounds (no aspect ratio preservation)
+//   2 = AutoSize   — like Zoom (object auto-sizes to image; in export, treat as Zoom)
+//   3 = CenterImage— center at original size, no scaling
+//   4 = Zoom       — proportional fit, centered (default)
+//
+// The result is PNG-encoded. Matches C# GetLayerPicture / PictureObject.Draw().
+func resizeImagePNG(data []byte, targetW, targetH, sizeMode int) []byte {
 	if targetW <= 0 || targetH <= 0 {
 		return data
 	}
@@ -1493,23 +1498,70 @@ func resizeImagePNG(data []byte, targetW, targetH int) []byte {
 	// Create target bitmap with transparent background (matching C# Bitmap + clear).
 	dst := image.NewRGBA(image.Rect(0, 0, targetW, targetH))
 
-	// C# PictureObject.SizeMode defaults to Zoom: scale to fit while preserving
-	// aspect ratio, then center within the target bounds.
-	scaleX := float64(targetW) / float64(srcW)
-	scaleY := float64(targetH) / float64(srcH)
-	scale := scaleX
-	if scaleY < scaleX {
-		scale = scaleY
-	}
-	drawW := int(math.Round(float64(srcW) * scale))
-	drawH := int(math.Round(float64(srcH) * scale))
-	offsetX := (targetW - drawW) / 2
-	offsetY := (targetH - drawH) / 2
+	switch sizeMode {
+	case 1: // StretchImage — fill entire target, ignoring aspect ratio.
+		// C# ref: PictureBoxSizeMode.StretchImage
+		xdraw.CatmullRom.Scale(dst, image.Rect(0, 0, targetW, targetH), src, srcBounds, xdraw.Over, nil)
 
-	// Draw scaled image centered in the target bitmap using bicubic interpolation
-	// (matching C#'s HighQualityBicubic / InterpolationMode).
-	drawRect := image.Rect(offsetX, offsetY, offsetX+drawW, offsetY+drawH)
-	xdraw.CatmullRom.Scale(dst, drawRect, src, srcBounds, xdraw.Over, nil)
+	case 3: // CenterImage — center at original size, no scaling.
+		// C# ref: PictureBoxSizeMode.CenterImage
+		offsetX := (targetW - srcW) / 2
+		offsetY := (targetH - srcH) / 2
+		// Clip source to target bounds if image is larger.
+		srcClipX := 0
+		srcClipY := 0
+		drawW := srcW
+		drawH := srcH
+		if offsetX < 0 {
+			srcClipX = -offsetX
+			drawW = targetW
+			offsetX = 0
+		}
+		if offsetY < 0 {
+			srcClipY = -offsetY
+			drawH = targetH
+			offsetY = 0
+		}
+		if drawW > targetW-offsetX {
+			drawW = targetW - offsetX
+		}
+		if drawH > targetH-offsetY {
+			drawH = targetH - offsetY
+		}
+		srcRect := image.Rect(srcBounds.Min.X+srcClipX, srcBounds.Min.Y+srcClipY,
+			srcBounds.Min.X+srcClipX+drawW, srcBounds.Min.Y+srcClipY+drawH)
+		dstRect := image.Rect(offsetX, offsetY, offsetX+drawW, offsetY+drawH)
+		xdraw.NearestNeighbor.Scale(dst, dstRect, src, srcRect, xdraw.Over, nil)
+
+	case 0: // Normal — show at original size, clip to bounds (top-left origin).
+		// C# ref: PictureBoxSizeMode.Normal
+		drawW := srcW
+		drawH := srcH
+		if drawW > targetW {
+			drawW = targetW
+		}
+		if drawH > targetH {
+			drawH = targetH
+		}
+		srcRect := image.Rect(srcBounds.Min.X, srcBounds.Min.Y, srcBounds.Min.X+drawW, srcBounds.Min.Y+drawH)
+		dstRect := image.Rect(0, 0, drawW, drawH)
+		xdraw.NearestNeighbor.Scale(dst, dstRect, src, srcRect, xdraw.Over, nil)
+
+	default: // 2 (AutoSize) and 4 (Zoom) — proportional fit, centered.
+		// C# ref: PictureBoxSizeMode.Zoom / AutoSize
+		scaleX := float64(targetW) / float64(srcW)
+		scaleY := float64(targetH) / float64(srcH)
+		scale := scaleX
+		if scaleY < scaleX {
+			scale = scaleY
+		}
+		drawW := int(math.Round(float64(srcW) * scale))
+		drawH := int(math.Round(float64(srcH) * scale))
+		offsetX := (targetW - drawW) / 2
+		offsetY := (targetH - drawH) / 2
+		drawRect := image.Rect(offsetX, offsetY, offsetX+drawW, offsetY+drawH)
+		xdraw.CatmullRom.Scale(dst, drawRect, src, srcBounds, xdraw.Over, nil)
+	}
 
 	var buf bytes.Buffer
 	if err := png.Encode(&buf, dst); err != nil {

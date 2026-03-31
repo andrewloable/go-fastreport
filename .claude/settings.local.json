@@ -151,7 +151,8 @@
       "Bash(command -v node)",
       "Bash(command -v python3)",
       "Bash(ffmpeg:*)",
-      "Bash(__NEW_LINE_f4e5c2eef88de876__ python3:*)"
+      "Bash(__NEW_LINE_f4e5c2eef88de876__ python3:*)",
+      "Bash(node -e \"require\\(''''puppeteer''''\\)\")"
     ]
   }
 }

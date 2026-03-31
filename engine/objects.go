@@ -267,6 +267,9 @@ func (e *ReportEngine) populateBandObjects2(parentBand *band.BandBase, objs *rep
 							"RowIndex":    mxForHighlight.RowIndex,
 							"ColumnIndex": mxForHighlight.ColumnIndex,
 						})
+						// Expose the current cell's raw value as "Value" — mirrors C#
+						// Report.Calc(expr, varValue) where varValue = TextObject.Value.
+						e.report.SetExtraCalcVar("Value", mxForHighlight.CurrentCellValue)
 						return e.report.Calc(expr)
 					}
 				}
@@ -389,8 +392,14 @@ func (e *ReportEngine) populateBandObjects2(parentBand *band.BandBase, objs *rep
 								po.Text = ""
 								break
 							}
-							if cond.ApplyFill {
-								po.FillColor = cond.FillColor
+							if cond.ApplyFill && cond.Fill != nil {
+								if gf, ok := cond.Fill.(*style.GlassFill); ok {
+									po.BackgroundCSS = renderGlassFillCSS(gf, int(po.Width), int(po.Height))
+									po.FillColor = color.RGBA{}
+								} else {
+									po.FillColor = colorFromFill(cond.Fill)
+									po.BackgroundCSS = ""
+								}
 							}
 							if cond.ApplyTextFill {
 								po.TextColor = cond.TextFillColor
@@ -848,6 +857,10 @@ func (e *ReportEngine) autoManualBuild(tbl *table.TableObject) *table.TableBase 
 
 	h := table.NewTableHelper(tbl)
 
+	// Parse a conditional PageBreak from the script (e.g. "Handle Page Breaks"):
+	//   if (GetColumnValue("DS.Field") == "Value") { Table.PageBreak(); }
+	pbCond := parseColumnPageBreakCond(e.report.ScriptText, tbl.ManualBuildEvent)
+
 	// Print header columns (0 .. fixedCols-1).
 	for i := 0; i < fixedCols; i++ {
 		h.PrintColumn(i)
@@ -858,6 +871,16 @@ func (e *ReportEngine) autoManualBuild(tbl *table.TableObject) *table.TableBase 
 	dataRowCount := 0
 	for !ds.EOF() {
 		e.report.SetCalcContext(ds)
+
+		// Apply conditional page break before this column (mirrors C# PageBreak() call).
+		if pbCond != nil {
+			if val, err := e.report.Calc("[" + pbCond.field + "]"); err == nil {
+				if str, ok := val.(string); ok && str == pbCond.value {
+					h.PageBreak()
+				}
+			}
+		}
+
 		eval := func(text string) string { return e.evalText(text) }
 		h.CellTextEval = eval
 		// Evaluate PictureObject DataColumn bindings for embedded images.
@@ -919,6 +942,65 @@ func (e *ReportEngine) autoManualBuild(tbl *table.TableObject) *table.TableBase 
 	}
 
 	return h.Result()
+}
+
+// columnPageBreakCond holds a parsed conditional PageBreak from a C# ManualBuild
+// script: "if GetColumnValue('DS.Field') == 'Value' { Table.PageBreak() }".
+type columnPageBreakCond struct {
+	field string // dot-qualified column path, e.g. "Employees.FirstName"
+	value string // string value to match, e.g. "Janet"
+}
+
+// parseColumnPageBreakCond extracts a single conditional PageBreak pattern from
+// the ManualBuild event handler body. It matches the C# pattern:
+//
+//	if (...GetColumnValue("DS.Field")...) == "Value") { ..TableX.PageBreak().. }
+//
+// Returns nil when the pattern is not found.
+func parseColumnPageBreakCond(scriptText, eventName string) *columnPageBreakCond {
+	if scriptText == "" || eventName == "" {
+		return nil
+	}
+	funcIdx := strings.Index(scriptText, eventName)
+	if funcIdx < 0 {
+		return nil
+	}
+	sub := scriptText[funcIdx:]
+	bodyStart := strings.Index(sub, "{")
+	if bodyStart < 0 {
+		return nil
+	}
+	// Extract balanced function body.
+	depth := 0
+	bodyEnd := -1
+	for i, ch := range sub[bodyStart:] {
+		if ch == '{' {
+			depth++
+		} else if ch == '}' {
+			depth--
+			if depth == 0 {
+				bodyEnd = bodyStart + i + 1
+				break
+			}
+		}
+	}
+	if bodyEnd < 0 {
+		bodyEnd = len(sub)
+	}
+	body := sub[bodyStart:bodyEnd]
+
+	// Require a PageBreak() call somewhere in the body.
+	if !strings.Contains(body, ".PageBreak()") {
+		return nil
+	}
+
+	// Match: GetColumnValue("DS.Field")...) == "Value"
+	re := regexp.MustCompile(`GetColumnValue\s*\(\s*"([^"]+)"\s*\)[^)]*\)\s*==\s*"([^"]+)"`)
+	m := re.FindStringSubmatch(body)
+	if m == nil {
+		return nil
+	}
+	return &columnPageBreakCond{field: m[1], value: m[2]}
 }
 
 // scriptBuildInfo holds parsed C# ManualBuild script information for driving
@@ -1480,7 +1562,39 @@ func (e *ReportEngine) autoManualBuildDataTable(tbl *table.TableObject) *table.T
 		}
 	}
 
-	return h.Result()
+	result := h.Result()
+
+	// Replicate the C# AfterCalcBounds fit-to-page pattern: when the ManualBuild
+	// script subscribes to ResultTable.AfterCalcBounds (detectable as the literal
+	// "AfterCalcBounds" appearing in the function body), the intent is to scale all
+	// column widths proportionally so the table fits within the page width.
+	// C# ref: ResultTable_AfterCalcBounds handler — computes
+	// ratio = pageWidth / tableWidth, sets each column.AutoSize = false, scales
+	// column.Width *= ratio, then calls resultTable.CalcHeight().
+	if strings.Contains(body, "AfterCalcBounds") && e.pageWidth > 0 {
+		result.CalcWidth()
+		tableW := result.Width()
+		if tableW > e.pageWidth {
+			ratio := e.pageWidth / tableW
+			for ci, col := range result.Columns() {
+				col.SetAutoSize(false)
+				newW := col.Width() * ratio
+				col.SetWidth(newW)
+				// Sync each cell's width to the new column width so CalcHeight
+				// uses the correct available width for word-wrap height calculation.
+				// C# cells derive their width from the column at measure time;
+				// Go cells have independent widths that must be updated explicitly.
+				for ri := 0; ri < result.RowCount(); ri++ {
+					if cell := result.Cell(ri, ci); cell != nil {
+						cell.SetWidth(newW)
+					}
+				}
+			}
+			result.CalcHeight()
+		}
+	}
+
+	return result
 }
 
 // evaluateTableAggregates scans the result table for cells containing aggregate
@@ -2274,8 +2388,14 @@ func (e *ReportEngine) buildPreparedObject(obj report.Base) *preview.PreparedObj
 				if !cond.Visible {
 					return nil
 				}
-				if cond.ApplyFill {
-					po.FillColor = cond.FillColor
+				if cond.ApplyFill && cond.Fill != nil {
+					if gf, ok := cond.Fill.(*style.GlassFill); ok {
+						po.BackgroundCSS = renderGlassFillCSS(gf, int(po.Width), int(po.Height))
+						po.FillColor = color.RGBA{} // transparent — glass fill handles the background
+					} else {
+						po.FillColor = colorFromFill(cond.Fill)
+						po.BackgroundCSS = ""
+					}
 				}
 				if cond.ApplyTextFill {
 					po.TextColor = cond.TextFillColor
@@ -2395,11 +2515,48 @@ func (e *ReportEngine) buildPreparedObject(obj report.Base) *preview.PreparedObj
 		if f, ok := v.Fill().(*style.SolidFill); ok && f.Color.A > 0 {
 			po.FillColor = f.Color
 		}
+		// Propagate SizeMode and Angle so the HTML exporter can apply the correct
+		// scaling and rotation. C# ref: PictureObjectBase.Draw() checks SizeMode and
+		// Angle before rendering. Mirrors FastReport.Base/Object/PictureObject.cs.
+		po.PictureSizeMode = int(v.SizeMode())
+		po.PictureAngle = v.Angle()
 		// Evaluate DataColumn binding to load image data from the current data
 		// source row. C# ref: PictureObject.GetData() (PictureObject.cs:705-736)
 		// calls Report.GetColumnValueNullable(DataColumn) which returns byte[].
 		if col := v.DataColumn(); col != "" && e.report != nil {
 			val, err := e.report.Calc("[" + col + "]")
+			if (err != nil || val == nil) && e.report.Dictionary() != nil {
+				// Fallback: C# calls Report.GetColumnValue(DataColumn) which accesses
+				// the named data source directly, without requiring it to be the
+				// active calc context. This handles PictureObjects inside DataBands
+				// that have no DataSource attribute (e.g. Image.frx Data1 band).
+				// C# ref: DataHelper.GetColumnValue → ds.CurrentRow[columnName].
+				if dotIdx := strings.LastIndex(col, "."); dotIdx >= 0 {
+					dsAlias := col[:dotIdx]
+					colName := col[dotIdx+1:]
+					dict := e.report.Dictionary()
+					ds := dict.FindDataSourceByAlias(dsAlias)
+					if ds == nil {
+						ds = dict.FindDataSourceByName(dsAlias)
+					}
+					if ds != nil {
+						dval, dErr := ds.GetValue(colName)
+						if dErr != nil {
+							// Data source not yet positioned; seek to first row.
+							// C# Init() always calls First() at the end (InitShared line 683),
+							// so the data source is always at row 0 after Init. In Go
+							// Init() leaves currentRow=-1, so we call First() here.
+							if fErr := ds.First(); fErr == nil {
+								dval, _ = ds.GetValue(colName)
+							}
+						}
+						if dval != nil {
+							val = dval
+							err = nil
+						}
+					}
+				}
+			}
 			if err == nil && val != nil {
 				switch d := val.(type) {
 				case []byte:
@@ -2814,7 +2971,10 @@ func (e *ReportEngine) evalGaugeValue(g *gauge.GaugeObject) {
 
 // renderGaugeBlob encodes img as PNG, stores it in the BlobStore, and returns the index.
 // Returns -1 if the prepared pages or image is nil.
-func (e *ReportEngine) renderGaugeBlob(name string, img image.Image) int {
+// Passes an empty source key so each render is stored as a new unique blob —
+// matching C# BlobStore.Add() which never deduplicates (only AddOrUpdate does).
+// Using the gauge name as the key caused all rows to reuse the first row's image.
+func (e *ReportEngine) renderGaugeBlob(_ string, img image.Image) int {
 	if img == nil || e.preparedPages == nil {
 		return -1
 	}
@@ -2822,7 +2982,7 @@ func (e *ReportEngine) renderGaugeBlob(name string, img image.Image) int {
 	if err := png.Encode(&buf, img); err != nil {
 		return -1
 	}
-	return e.preparedPages.BlobStore.Add(name, buf.Bytes())
+	return e.preparedPages.BlobStore.Add("", buf.Bytes())
 }
 
 // evalText evaluates a text template with [bracket] expressions.

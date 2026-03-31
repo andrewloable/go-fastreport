@@ -101,8 +101,8 @@ func (h *HtmlObject) ApplyCondition(c style.HighlightCondition) {
 		cloned := c.Border.Clone()
 		h.SetBorder(*cloned)
 	}
-	if c.ApplyFill {
-		h.SetFill(&style.SolidFill{Color: c.FillColor})
+	if c.ApplyFill && c.Fill != nil {
+		h.SetFill(c.Fill.Clone())
 	}
 	if !c.Visible {
 		h.SetVisible(false)

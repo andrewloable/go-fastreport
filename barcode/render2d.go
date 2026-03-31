@@ -171,9 +171,9 @@ func DrawQRCode2D(matrix [][]bool, rows, cols, width, height int, shape string, 
 				vertW := renderW * 0.2
 				vertH := renderH / 2 * defaultScale
 				// Horizontal bar
-				drawFilledRect(img, cx-horizW, cy-horizH, cx+horizW, cy+horizH, black)
+				drawModuleRect(img, cx-horizW, cy-horizH, cx+horizW, cy+horizH, black)
 				// Vertical bar
-				drawFilledRect(img, cx-vertW, cy-vertH, cx+vertW, cy+vertH, black)
+				drawModuleRect(img, cx-vertW, cy-vertH, cx+vertW, cy+vertH, black)
 
 			case stringsEqualFold(shape, "Hexagon"):
 				// C# BarcodeQR.Draw2DBarcode:469–478.
@@ -196,7 +196,7 @@ func DrawQRCode2D(matrix [][]bool, rows, cols, width, height int, shape string, 
 
 			default:
 				// Rectangle (default) and any unrecognised shape.
-				drawFilledRect(img, renderX, renderY, renderX+renderW, renderY+renderH, black)
+				drawModuleRect(img, renderX, renderY, renderX+renderW, renderY+renderH, black)
 			}
 		}
 	}
@@ -456,6 +456,25 @@ func drawFilledRect(img *image.RGBA, x0, y0, x1, y1 float64, fill color.Color) {
 	right := int(math.Ceil(x1))
 	top := int(math.Floor(y0))
 	bottom := int(math.Ceil(y1))
+	if right <= left {
+		right = left + 1
+	}
+	if bottom <= top {
+		bottom = top + 1
+	}
+	draw.Draw(img, image.Rect(left, top, right, bottom), image.NewUniform(fill), image.Point{}, draw.Src)
+}
+
+// drawModuleRect renders a QR module cell using round-based pixel snapping.
+// Unlike drawFilledRect (which uses Floor/Ceil and causes adjacent modules to
+// share boundary pixels), this function uses Round for both bounds so that
+// adjacent dark and light modules do not bleed into each other.
+// This matches C# System.Drawing.FillRectangle behaviour with float coordinates.
+func drawModuleRect(img *image.RGBA, x0, y0, x1, y1 float64, fill color.Color) {
+	left := int(math.Round(x0))
+	right := int(math.Round(x1))
+	top := int(math.Round(y0))
+	bottom := int(math.Round(y1))
 	if right <= left {
 		right = left + 1
 	}

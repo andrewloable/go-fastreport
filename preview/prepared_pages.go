@@ -332,6 +332,9 @@ type PreparedBand struct {
 	// C# ref: HTMLExportLayers.cs LayerPicture → GetStyleTag(index1, index2)
 	// emits dual-class "s{i1} s{i2}" for non-SolidFill band backgrounds.
 	BackgroundCSS string
+	// NoBackground, when true, suppresses the band background div in the HTML exporter.
+	// Used for horizontal-split matrix continuation bands that share no fill with the original.
+	NoBackground bool
 }
 
 // ObjectType distinguishes the kind of report object stored in PreparedObject.

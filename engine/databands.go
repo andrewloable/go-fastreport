@@ -661,6 +661,18 @@ func (e *ReportEngine) runDataBandHierarchical(db *band.DataBand, ds band.DataSo
 	idCol := db.IDColumn()
 	parentCol := db.ParentIDColumn()
 
+	// IdColumn/ParentIdColumn in FRX are qualified as "DataSource.Column"
+	// (e.g. "Employees.EmployeeID"). Strip the datasource prefix so that
+	// GetValue receives only the bare column name stored in the row map.
+	// C# ref: DataHelper.GetColumn splits on '.' and resolves the column
+	// from the datasource's Columns collection. (DataHelper.cs:38-47)
+	if idx := strings.Index(idCol, "."); idx >= 0 {
+		idCol = idCol[idx+1:]
+	}
+	if idx := strings.Index(parentCol, "."); idx >= 0 {
+		parentCol = parentCol[idx+1:]
+	}
+
 	type rowSnapshot struct {
 		idx      int
 		id       string

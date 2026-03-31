@@ -75,10 +75,14 @@ func (e *ReportEngine) splitBandHorizontallyForMatrix(pb *preview.PreparedBand) 
 				straddleObjs = append(straddleObjs, po) // save with original width
 			}
 
-			// Trim objects that extend past the split boundary (e.g. ColSpan
-			// headers or table-wide border containers).
+			// Trim objects that extend past the split boundary.
+			// Exception: full-page section background objects (ObjectTypePicture,
+			// BlobIdx<0, IgnoreForRowSnap) must keep their original width (= page width)
+			// so the background fills the whole page, matching C# behavior.
 			if po.Left+po.Width > firstPageRight {
-				po.Width = firstPageRight - po.Left
+				if !(po.IgnoreForRowSnap && po.Kind == preview.ObjectTypePicture && po.BlobIdx < 0) {
+					po.Width = firstPageRight - po.Left
+				}
 			}
 			firstObjs = append(firstObjs, po)
 		} else {
@@ -114,15 +118,26 @@ func (e *ReportEngine) splitBandHorizontallyForMatrix(pb *preview.PreparedBand) 
 		e.startNewPageForCurrent()
 
 		contPb := &preview.PreparedBand{
-			Name:   pb.Name,
-			Left:   pb.Left,
-			Top:    e.curY,
-			Width:  pb.Width,
-			Height: pb.Height,
+			Name:         pb.Name,
+			Left:         pb.Left,
+			Top:          pb.Top,
+			Width:        pb.Width,
+			Height:       pb.Height,
+			NoBackground: true,
 		}
 
 		// Duplicate fixed column objects on the continuation page.
-		contPb.Objects = append(contPb.Objects, fixedObjs...)
+		// IgnoreForRowSnap border containers (sectionBorder) that span beyond the
+		// fixed columns must be trimmed to the visible width of this page group.
+		// Full-page background objects (ObjectTypePicture, BlobIdx<0) keep their width.
+		// C# ref: each continuation section shows only the columns visible on that page.
+		for _, fo := range fixedObjs {
+			adj := fo
+			if fo.IgnoreForRowSnap && fo.Kind != preview.ObjectTypePicture && fo.Left+fo.Width > fixedRight {
+				adj.Width = usedW
+			}
+			contPb.Objects = append(contPb.Objects, adj)
+		}
 
 		// Include straddling objects (e.g. ColSpan "Total" header) trimmed
 		// to show only the portion within this continuation group.

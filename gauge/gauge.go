@@ -707,6 +707,17 @@ func (g *SimpleGauge) Assign(src *SimpleGauge) {
 
 // ── SimpleProgressGauge ───────────────────────────────────────────────────────
 
+// SimpleProgressPointerType controls the rendering style of the progress pointer.
+// Mirrors C# SimpleProgressPointerType (SimpleProgressPointer.cs:13-25).
+type SimpleProgressPointerType int
+
+const (
+	// SimpleProgressPointerTypeFull renders a filled bar from 0 to the current value.
+	SimpleProgressPointerTypeFull SimpleProgressPointerType = iota
+	// SimpleProgressPointerTypeSmall renders a small marker positioned at the current value.
+	SimpleProgressPointerTypeSmall
+)
+
 // SimpleProgressGauge is a simplified horizontal progress bar gauge.
 // It is the Go equivalent of FastReport.Gauge.SimpleProgressGauge.
 type SimpleProgressGauge struct {
@@ -714,6 +725,13 @@ type SimpleProgressGauge struct {
 
 	// ShowText controls whether the percentage text is displayed.
 	ShowText bool
+	// PointerType controls whether the pointer is a full bar or a small marker.
+	// Mirrors C# SimpleProgressPointer.Type (SimpleProgressPointer.cs:35-40).
+	PointerType SimpleProgressPointerType
+	// SmallPointerWidthRatio is the width of the small marker as a fraction of
+	// the gauge width (default: 0.1). Only used when PointerType is Small.
+	// Mirrors C# SimpleProgressPointer.SmallPointerWidthRatio (SimpleProgressPointer.cs:42-53).
+	SmallPointerWidthRatio float32
 }
 
 // NewSimpleProgressGauge creates a SimpleProgressGauge with defaults.
@@ -721,8 +739,10 @@ type SimpleProgressGauge struct {
 // C# also sets Border.Lines = BorderLines.All (SimpleProgressGauge.cs:47).
 func NewSimpleProgressGauge() *SimpleProgressGauge {
 	g := &SimpleProgressGauge{
-		GaugeObject: *NewGaugeObject(),
-		ShowText:    true,
+		GaugeObject:            *NewGaugeObject(),
+		ShowText:               true,
+		PointerType:            SimpleProgressPointerTypeFull,
+		SmallPointerWidthRatio: 0.1,
 	}
 	g.SetWidth(8 * units.Centimeters)
 	g.SetHeight(2 * units.Centimeters)
@@ -746,6 +766,12 @@ func (g *SimpleProgressGauge) Serialize(w report.Writer) error {
 	if !g.ShowText {
 		w.WriteBool("ShowText", false)
 	}
+	if g.PointerType != SimpleProgressPointerTypeFull {
+		w.WriteStr("Pointer.Type", "Small")
+	}
+	if g.SmallPointerWidthRatio != 0.1 {
+		w.WriteFloat("Pointer.SmallPointerWidthRatio", g.SmallPointerWidthRatio)
+	}
 	return nil
 }
 
@@ -762,5 +788,13 @@ func (g *SimpleProgressGauge) Deserialize(r report.Reader) error {
 		g.SetHeight(2 * units.Centimeters)
 	}
 	g.ShowText = r.ReadBool("ShowText", true)
+	// Pointer.Type: C# serializes enum as string "Full"/"Small".
+	// Mirrors C# SimpleProgressPointer.Serialize (SimpleProgressPointer.cs:111-115).
+	if r.ReadStr("Pointer.Type", "") == "Small" {
+		g.PointerType = SimpleProgressPointerTypeSmall
+	}
+	if v := r.ReadFloat("Pointer.SmallPointerWidthRatio", -1); v >= 0 {
+		g.SmallPointerWidthRatio = v
+	}
 	return nil
 }

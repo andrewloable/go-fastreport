@@ -49,6 +49,13 @@ type AggregateTotal struct {
 	// PrintOn is the name of the band where the total is printed/reset.
 	PrintOn string
 
+	// IsPageFooter mirrors C# Total.IsPageFooter: true when PrintOn is a
+	// PageFooterBand, ColumnFooterBand, or a HeaderFooterBandBase with
+	// RepeatOnEveryPage.  StartKeep/EndKeep only take effect for page-footer
+	// totals; all other totals are unaffected by the keep-together mechanism.
+	// Set by the engine during initTotals().
+	IsPageFooter bool
+
 	// internal state
 	sum            float64
 	count          int
@@ -146,9 +153,12 @@ func (t *AggregateTotal) Value() any {
 }
 
 // StartKeep snapshots the current accumulator state into internal keep* fields.
-// This is used by the engine's keep-together logic so the total can be rolled
-// back if the kept block needs to move to a new page.
+// Only page-footer totals (IsPageFooter=true) participate in the keep mechanism.
+// Mirrors C# Total.StartKeep() which early-returns when !IsPageFooter.
 func (t *AggregateTotal) StartKeep() {
+	if !t.IsPageFooter {
+		return
+	}
 	t.keepSum = t.sum
 	t.keepCount = t.count
 	t.keepMinVal = t.minVal
@@ -157,7 +167,12 @@ func (t *AggregateTotal) StartKeep() {
 }
 
 // EndKeep restores the accumulator state from the snapshot taken by StartKeep.
+// Only page-footer totals (IsPageFooter=true) are affected.
+// Mirrors C# Total.EndKeep() which early-returns when !IsPageFooter.
 func (t *AggregateTotal) EndKeep() {
+	if !t.IsPageFooter {
+		return
+	}
 	t.sum = t.keepSum
 	t.count = t.keepCount
 	t.minVal = t.keepMinVal

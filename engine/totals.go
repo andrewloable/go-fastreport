@@ -3,6 +3,7 @@ package engine
 import (
 	"strings"
 
+	"github.com/andrewloable/go-fastreport/band"
 	"github.com/andrewloable/go-fastreport/data"
 )
 
@@ -17,10 +18,52 @@ func (e *ReportEngine) initTotals() {
 		return
 	}
 	e.aggregateTotals = dict.AggregateTotals()
-	// Reset all accumulators for a clean run.
+	// Build a set of page-footer band names.
+	// Mirrors C# Total.IsPageFooter: true when PrintOn is PageFooterBand,
+	// ColumnFooterBand, or a HeaderFooterBandBase with RepeatOnEveryPage.
+	// Only page-footer totals participate in the StartKeep/EndKeep mechanism;
+	// group-footer totals must not be rolled back by keep-together (C# Total.cs).
+	pageFooterBands := e.collectPageFooterBandNames()
 	for _, at := range e.aggregateTotals {
 		at.Reset()
+		if at.PrintOn != "" {
+			at.IsPageFooter = pageFooterBands[strings.ToLower(at.PrintOn)]
+		}
 	}
+}
+
+// collectPageFooterBandNames walks the report's page band tree and returns a
+// lower-cased set of band names that qualify as "page footer" bands:
+//   - PageFooterBand
+//   - ColumnFooterBand
+//   - HeaderFooterBandBase with RepeatOnEveryPage=true
+//
+// Mirrors C# Total.IsPageFooter (Total.cs).
+func (e *ReportEngine) collectPageFooterBandNames() map[string]bool {
+	result := make(map[string]bool)
+	if e.report == nil {
+		return result
+	}
+	for _, page := range e.report.Pages() {
+		for _, b := range page.AllBands() {
+			switch v := b.(type) {
+			case *band.PageFooterBand:
+				result[strings.ToLower(v.Name())] = true
+			case *band.ColumnFooterBand:
+				result[strings.ToLower(v.Name())] = true
+			default:
+				// Check for HeaderFooterBandBase with RepeatOnEveryPage.
+				type repeatChecker interface {
+					RepeatOnEveryPage() bool
+					Name() string
+				}
+				if rc, ok := b.(repeatChecker); ok && rc.RepeatOnEveryPage() {
+					result[strings.ToLower(rc.Name())] = true
+				}
+			}
+		}
+	}
+	return result
 }
 
 // accumulateTotals evaluates each aggregate total's Expression using the

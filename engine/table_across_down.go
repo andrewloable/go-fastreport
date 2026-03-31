@@ -61,6 +61,8 @@ func (e *ReportEngine) renderManualBuildAcrossThenDown(
 
 	// Compute column groups: each group holds columns that fit horizontally.
 	// Fixed columns are repeated in every group and are NOT counted in colGroups.
+	// A column with PageBreak=true always starts a new group (mirrors C# TableResult
+	// GeneratePagesAcrossThenDown which breaks column groups at PageBreak columns).
 	type colGroup struct {
 		startCol int
 		endCol   int
@@ -71,6 +73,10 @@ func (e *ReportEngine) renderManualBuildAcrossThenDown(
 		endCol := startCol
 		usedW := fixedColW
 		for endCol < nCols {
+			// A PageBreak column (beyond the first in this group) forces a new page.
+			if endCol > startCol && cols[endCol].PageBreak() {
+				break
+			}
 			cw := colX[endCol+1] - colX[endCol]
 			if usedW+cw > availWidth+0.1 && endCol > startCol {
 				break

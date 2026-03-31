@@ -395,6 +395,11 @@ func (e *ReportEngine) showGroupFooter(header *band.GroupHeaderBand) {
 	}
 	if ftr != nil {
 		e.ShowFullBand(&ftr.HeaderFooterBandBase.BandBase)
+		// C# ShowBand calls ProcessTotals(band) after rendering every band.
+		// ProcessTotals resets any total whose PrintOn==band && ResetAfterPrint==true.
+		// Mirrors: TotalCollection.ProcessBand (TotalCollection.cs) called from
+		// ReportEngine.Bands.cs ShowBand line 252.
+		e.resetTotalsForBand(ftr.Name(), ftr.Repeated())
 	}
 	e.RemoveReprint(&header.HeaderFooterBandBase.BandBase)
 

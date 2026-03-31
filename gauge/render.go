@@ -1208,16 +1208,52 @@ func RenderSimpleProgress(g *SimpleProgressGauge, w, h int) image.Image {
 	// Width = (Parent.Width - border) * percent
 	// original-dotnet/FastReport.Base/Gauge/Simple/Progress/SimpleProgressPointer.cs lines 66-89.
 	if g.Vertical() {
-		// Vertical fill from bottom upward.
 		fillH := int(math.Round(float64(h) * pct))
-		if fillH > 0 {
-			fillRect(img, 0, h-fillH, w, fillH, pointerColor)
+		if g.PointerType == SimpleProgressPointerTypeSmall {
+			// Small: a narrow marker positioned at the current value.
+			// Mirrors C# DrawVert Small branch (SimpleProgressPointer.cs:103-113).
+			ratio := float64(g.SmallPointerWidthRatio)
+			smallH := int(math.Round(float64(h) * ratio))
+			if smallH < 1 {
+				smallH = 1
+			}
+			topSml := (h - fillH) - smallH/2
+			if topSml+smallH > h {
+				topSml = h - smallH
+			} else if topSml < 0 {
+				topSml = 0
+			}
+			fillRect(img, 0, topSml, w, smallH, pointerColor)
+		} else {
+			// Full: bar from bottom upward.
+			if fillH > 0 {
+				fillRect(img, 0, h-fillH, w, fillH, pointerColor)
+			}
 		}
 	} else {
-		// Horizontal fill from left.
 		fillW := int(math.Round(float64(w) * pct))
-		if fillW > 0 {
-			fillRect(img, 0, 0, fillW, h, pointerColor)
+		if g.PointerType == SimpleProgressPointerTypeSmall {
+			// Small: a narrow marker positioned at the current value.
+			// Mirrors C# DrawHorz Small branch (SimpleProgressPointer.cs:78-89).
+			ratio := float64(g.SmallPointerWidthRatio)
+			smallW := int(math.Round(float64(w) * ratio))
+			if smallW < 1 {
+				smallW = 1
+			}
+			// leftSml = Left + Width - prntWidth*ratio + widthSml/2
+			//         = fillW - w*ratio + smallW/2  (HOffset=0)
+			leftSml := fillW - int(math.Round(float64(w)*ratio)) + smallW/2
+			if leftSml+smallW >= w {
+				leftSml = w - smallW
+			} else if leftSml < 0 {
+				leftSml = 0
+			}
+			fillRect(img, leftSml, 0, smallW, h, pointerColor)
+		} else {
+			// Full: bar from left.
+			if fillW > 0 {
+				fillRect(img, 0, 0, fillW, h, pointerColor)
+			}
 		}
 	}
 

@@ -2,6 +2,8 @@ package matrix
 
 import (
 	"fmt"
+	"math"
+	"sort"
 
 	"github.com/andrewloable/go-fastreport/format"
 	"github.com/andrewloable/go-fastreport/style"
@@ -235,52 +237,50 @@ func (m *MatrixObject) BuildTemplateMultiLevel() {
 	m.TableBase.SetFixedRows(savedFixedRows)
 	m.TableBase.SetFixedColumns(savedFixedCols)
 
-	// Determine if we need a Total column.
+	// Determine if we need a Grand Total row (hasTotals used for grand total row below).
+	// Total column leaves are already included in colLeaves after AddTotalItems in
+	// SyncRuntimeToMultiLevel, so no extra nCols addition is needed here.
 	hasTotals := len(m.Data.Rows) > 0 && len(m.Data.Columns) > 0
-	if hasTotals {
-		nCols += nCells // +nCells for Total columns (1 per cell descriptor)
-	}
 
 	// Add columns using template column widths.
-	// Template layout: [fixedCols...] [dataColTemplate(×nCells)] [totalColTemplate(×nCells)]
-	// Result layout:   [fixedCols...] [dataCols × N × nCells]    [totalCols × nCells]
-	//
-	// C# MatrixHelper uses AutoSize to measure content for each data column.
-	// Go uses the template data column width (Column3) for all expanded data
-	// columns, and the template total column width (Column4) for the Total column.
-	// Template column helpers for side-by-side.
-	// C# ref: MatrixHelper.UpdateCellDescriptors — when CellsSideBySide, each
-	// cell descriptor occupies consecutive template columns starting at HeaderWidth.
-	// dataCellTemplateCol(i) returns the template column for cell descriptor i.
-	// totalCellTemplateCol(i) returns the template column for total cell descriptor i.
+	// Template layout: [rowHdr] [dataCol×nCells] [perGroupTotal×nCells] [grandTotal×nCells]
+	// C# ref: MatrixHelper.UpdateCellDescriptors — template col offsets are:
+	//   HeaderWidth+ci (data), HeaderWidth+CellCount+ci (group total),
+	//   HeaderWidth+CellCount*2+ci (grand total).
 	dataCellTemplateCol := func(cellIdx int) int { return nRowHeaderCols + cellIdx }
 	totalCellTemplateCol := func(cellIdx int) int { return nRowHeaderCols + nCells + cellIdx }
+	grandTotalCellTemplateCol := func(cellIdx int) int { return nRowHeaderCols + nCells*2 + cellIdx }
 
-	lastDataColIdx := nRowHeaderCols + len(colLeaves)*nCells - 1
-	totalColStartIdx := nRowHeaderCols + len(colLeaves)*nCells
+	// templateColForLeaf returns the template column for colLeaves[leafIdx], cell ci.
+	// Grand Total leaves (parent == colRoot) use grandTotalCellTemplateCol.
+	// Other Total leaves use totalCellTemplateCol.  Data leaves use dataCellTemplateCol.
+	templateColForLeaf := func(leafIdx, ci int) int {
+		if leafIdx < 0 || leafIdx >= len(colLeaves) {
+			return dataCellTemplateCol(ci)
+		}
+		leaf := colLeaves[leafIdx]
+		if !ItemIsTotal(leaf) {
+			return dataCellTemplateCol(ci)
+		}
+		if ItemParent(leaf) == m.colRoot {
+			return grandTotalCellTemplateCol(ci)
+		}
+		return totalCellTemplateCol(ci)
+	}
 
 	for i := 0; i < nCols; i++ {
 		col := table.NewTableColumn()
-		switch {
-		case i < nRowHeaderCols && i < len(savedCols):
+		if i < nRowHeaderCols && i < len(savedCols) {
 			// Fixed row-header columns: use template widths directly.
 			col.SetMaxWidth(savedCols[i].MaxWidth())
 			col.SetWidth(savedCols[i].Width())
 			col.SetAutoSize(savedCols[i].AutoSize())
 			col.SetVisible(savedCols[i].Visible())
-		case i >= nRowHeaderCols && i <= lastDataColIdx:
-			// Data columns: each cell descriptor uses its own template column.
+		} else if i >= nRowHeaderCols {
+			// Data / Total columns: select template width by leaf type.
+			leafIdx := (i - nRowHeaderCols) / nCells
 			cellOffset := (i - nRowHeaderCols) % nCells
-			tIdx := dataCellTemplateCol(cellOffset)
-			if tIdx < len(savedCols) {
-				col.SetMaxWidth(savedCols[tIdx].MaxWidth())
-				col.SetWidth(savedCols[tIdx].Width())
-				col.SetAutoSize(savedCols[tIdx].AutoSize())
-			}
-		case hasTotals && i >= totalColStartIdx:
-			// Total columns: each cell descriptor uses its own total template.
-			cellOffset := (i - totalColStartIdx) % nCells
-			tIdx := totalCellTemplateCol(cellOffset)
+			tIdx := templateColForLeaf(leafIdx, cellOffset)
 			if tIdx < len(savedCols) {
 				col.SetMaxWidth(savedCols[tIdx].MaxWidth())
 				col.SetWidth(savedCols[tIdx].Width())
@@ -291,29 +291,43 @@ func (m *MatrixObject) BuildTemplateMultiLevel() {
 	}
 
 	// ── Build column-header rows ──────────────────────────────────────────────
-	// For each column-header level, emit one table row.
-	// The left nRowHeaderCols cells are corner cells (empty except for last row).
-	// Then one cell per colRoot child at that level (spanning CellSize columns).
-	type colBFS struct {
-		item  *HeaderItem
-		depth int // 0 = colRoot children (level 0)
+	// Pre-compute per-node layout info for the column header rows.
+	// Each entry records the node's output-column start/span, depth, and whether
+	// it is a leaf.  Leaf nodes at depth < origColHeaderRows-1 (e.g. the Grand Total
+	// column at depth=0 in a 2-level hierarchy) need RowSpan in the header; their
+	// column positions at deeper levels need nil placeholders.
+	type colHdrEmit struct {
+		item        *HeaderItem
+		outputStart int // 0-based output column index among data columns
+		span        int // CellSize (number of data columns this node covers)
+		depth       int
+		isLeaf      bool
 	}
-	// Collect nodes per level via BFS.
-	levelNodes := make([][]*HeaderItem, m.colRoot.LevelSize)
-	queue := []colBFS{}
-	for _, child := range m.colRoot.Children {
-		queue = append(queue, colBFS{child, 0})
+	var allColEmits []colHdrEmit
+	var buildColEmits func(node *HeaderItem, depth, start int)
+	buildColEmits = func(node *HeaderItem, depth, start int) {
+		allColEmits = append(allColEmits, colHdrEmit{
+			item:        node,
+			outputStart: start,
+			span:        node.CellSize,
+			depth:       depth,
+			isLeaf:      len(node.Children) == 0,
+		})
+		cs := start
+		for _, child := range node.Children {
+			buildColEmits(child, depth+1, cs)
+			cs += child.CellSize
+		}
 	}
-	for len(queue) > 0 {
-		cur := queue[0]
-		queue = queue[1:]
-		levelNodes[cur.depth] = append(levelNodes[cur.depth], cur.item)
-		for _, child := range cur.item.Children {
-			queue = append(queue, colBFS{child, cur.depth + 1})
+	{
+		cs := 0
+		for _, child := range m.colRoot.Children {
+			buildColEmits(child, 0, cs)
+			cs += child.CellSize
 		}
 	}
 
-	// hasTotals and nCols already set above with the Total column included.
+	// hasTotals and nCols already set above.
 
 	savedRows := m.savedTemplateRows
 
@@ -391,61 +405,110 @@ func (m *MatrixObject) BuildTemplateMultiLevel() {
 	}
 
 	for level := 0; level < origColHeaderRows; level++ {
-		row := newRow(colHdrTemplate) // header row uses template row after title
-		// Corner cells with row descriptor names (e.g. "Employee").
-		// C# ref: PrintCorner — corner cell at the last column-header level gets the
-		// row descriptor name. When CellsSideBySide, RowSpan covers the cell header row.
+		// Use the template row matching this header level for correct styling.
+		// C# ref: PrintColumnHeader uses template row (titleOffset+level) for each level.
+		levelHdrTemplate := titleOffset + level
+		row := newRow(levelHdrTemplate)
+		// Corner cells: C# PrintCorner places the row descriptor name at level=0
+		// with RowSpan covering all nColHeaderRows (including the cell-descriptor row
+		// when CellsSideBySide).  Levels > 0 emit nil placeholders for the span.
 		for c := 0; c < nRowHeaderCols; c++ {
-			cell := newCell(colHdrTemplate, c) // template: column header row corner
-			if level == origColHeaderRows-1 && c < len(m.Data.Rows) {
-				if len(m.savedTemplateRows) > colHdrTemplate {
-					templateRow := m.savedTemplateRows[colHdrTemplate]
-					if templateRow != nil && c < len(templateRow.Cells()) && templateRow.Cells()[c] != nil {
-						cell.SetText(templateRow.Cells()[c].Text())
+			if level == 0 {
+				cell := newCell(levelHdrTemplate, c)
+				if c < len(m.Data.Rows) {
+					if len(m.savedTemplateRows) > levelHdrTemplate {
+						templateRow := m.savedTemplateRows[levelHdrTemplate]
+						if templateRow != nil && c < len(templateRow.Cells()) && templateRow.Cells()[c] != nil {
+							cell.SetText(templateRow.Cells()[c].Text())
+						}
 					}
 				}
-				// C# ref: PrintCorner — RowSpan is clamped to corner area height.
-				// When CellsSideBySide, the corner spans the cell header row too.
-				if nColHeaderRows-level > 1 {
-					cell.SetRowSpan(nColHeaderRows - level)
+				if nColHeaderRows > 1 {
+					cell.SetRowSpan(nColHeaderRows)
+				}
+				row.AddCell(cell)
+			} else {
+				row.AddCell(nil) // spanned by corner at level 0
+			}
+		}
+
+		// Collect column-header cells for this level, in output-column order.
+		//   nodes at depth==level        → emit actual cell
+		//   leaf nodes at depth<level    → emit nil placeholder(s) for spanned position
+		//   nodes at depth>level         → skipped (will be emitted at their own level)
+		type levelCell struct {
+			outputStart int
+			span        int
+			emit        *colHdrEmit // nil ⇒ emit nil placeholders
+		}
+		var levelCells []levelCell
+		for i := range allColEmits {
+			e := &allColEmits[i]
+			switch {
+			case e.depth == level:
+				levelCells = append(levelCells, levelCell{e.outputStart, e.span, e})
+			case e.isLeaf && e.depth < level:
+				levelCells = append(levelCells, levelCell{e.outputStart, e.span, nil})
+			}
+		}
+		sort.Slice(levelCells, func(i, j int) bool {
+			return levelCells[i].outputStart < levelCells[j].outputStart
+		})
+
+		evenIdx := 0
+		for _, lc := range levelCells {
+			span := lc.span * nCells
+			if lc.emit == nil {
+				// Nil placeholders for a leaf spanned from a shallower level.
+				for s := 0; s < span; s++ {
+					row.AddCell(nil)
+				}
+				continue
+			}
+			e := lc.emit
+			// Choose template column based on item type.
+			// Grand Total items (parent == colRoot) use grandTotalCellTemplateCol;
+			// other Total items use totalColTemplate; data items use dataColTemplate.
+			tCol := dataColTemplate
+			if ItemIsTotal(e.item) {
+				if ItemParent(e.item) == m.colRoot {
+					tCol = grandTotalCellTemplateCol(0)
+				} else {
+					tCol = totalColTemplate
 				}
 			}
-			row.AddCell(cell)
-		}
-		// Column header cells for this level.
-		// C# ref: PrintColumnHeader — when CellsSideBySide, span is multiplied by nCells.
-		evenIdx := 0
-		for _, item := range levelNodes[level] {
-			cell := newCell(colHdrTemplate, dataColTemplate) // template: column header data cell
-			cell.SetText(item.Value)
-			// Apply EvenStyle fill for even-indexed column headers.
+			cell := newCell(levelHdrTemplate, tCol)
+			// For Total items, use the template cell text ("Total") rather than
+			// item.Value (which holds the parent's key like "2011").
+			// C# ref: PrintColumnHeader sets the cell text to the template cell text for totals.
+			if ItemIsTotal(e.item) {
+				if tc := templateCell(levelHdrTemplate, tCol); tc != nil && tc.Text() != "" {
+					cell.SetText(tc.Text())
+				} else {
+					cell.SetText("Total")
+				}
+			} else {
+				cell.SetText(e.item.Value)
+			}
 			if evenIdx%2 != 0 && colHdrEvenFill != nil {
 				cell.SetFill(colHdrEvenFill)
 			}
 			evenIdx++
-			span := item.CellSize * nCells // multiply by nCells for side-by-side
 			if span > 1 {
 				cell.SetColSpan(span)
 			}
+			// Leaf items at non-deepest levels need RowSpan to span remaining header rows.
+			// C# ref: PrintColumnHeader — Total/leaf items at level<origColHeaderRows-1
+			// receive RowSpan so they span the remaining column-header rows.
+			if e.isLeaf && level < origColHeaderRows-1 {
+				rowSpan := origColHeaderRows - level
+				if sideBySide {
+					rowSpan++ // also covers the cell-descriptor row
+				}
+				cell.SetRowSpan(rowSpan)
+			}
 			row.AddCell(cell)
 			for s := 1; s < span; s++ {
-				row.AddCell(nil)
-			}
-		}
-		// Total column header.
-		// C# ref: PrintColumnHeader — total header at last column level.
-		if hasTotals && level == origColHeaderRows-1 {
-			cell := newCell(colHdrTemplate, totalColTemplate) // template: total column header
-			cell.SetText("Total")
-			// Apply EvenStyle to Total header if index is even.
-			if evenIdx%2 != 0 && colHdrEvenFill != nil {
-				cell.SetFill(colHdrEvenFill)
-			}
-			if nCells > 1 {
-				cell.SetColSpan(nCells)
-			}
-			row.AddCell(cell)
-			for s := 1; s < nCells; s++ {
 				row.AddCell(nil)
 			}
 		}
@@ -462,21 +525,11 @@ func (m *MatrixObject) BuildTemplateMultiLevel() {
 		for c := 0; c < nRowHeaderCols; c++ {
 			cellHdrRow.AddCell(nil)
 		}
-		// Cell descriptor labels for each column leaf.
-		for range colLeaves {
+		// Cell descriptor labels for each column leaf (including Total leaves).
+		for leafIdx, cLeaf := range colLeaves {
 			for ci := 0; ci < nCells; ci++ {
-				tCol := dataCellTemplateCol(ci)
-				cell := newCell(cellHdrTemplate, tCol)
-				if tc := templateCell(cellHdrTemplate, tCol); tc != nil {
-					cell.SetText(tc.Text())
-				}
-				cellHdrRow.AddCell(cell)
-			}
-		}
-		// Cell descriptor labels for total columns.
-		if hasTotals {
-			for ci := 0; ci < nCells; ci++ {
-				tCol := totalCellTemplateCol(ci)
+				_ = cLeaf
+				tCol := templateColForLeaf(leafIdx, ci)
 				cell := newCell(cellHdrTemplate, tCol)
 				if tc := templateCell(cellHdrTemplate, tCol); tc != nil {
 					cell.SetText(tc.Text())
@@ -627,32 +680,54 @@ func (m *MatrixObject) BuildTemplateMultiLevel() {
 		}
 
 		// Data cells — try runtime cell store first, fall back to mlAccumulators.
+		// For Total column leaves (added by AddTotalItems), aggregate non-Total siblings.
 		// C# ref: MatrixHelper.PrintData — when CellsSideBySide, iterates cell
 		// descriptors for each column, placing them in consecutive columns.
-		for _, cLeaf := range colLeaves {
+		for leafIdx, cLeaf := range colLeaves {
 			cPath := colLeafPaths[cLeaf]
+			isTotalCol := ItemIsTotal(cLeaf)
 			for ci := 0; ci < nCells; ci++ {
-				tCol := dataCellTemplateCol(ci)
-				cell := newCell(dataTemplate, tCol) // template: data cell for descriptor ci
+				tCol := templateColForLeaf(leafIdx, ci)
+				cell := newCell(dataTemplate, tCol)
+				var rawNumVal float64
 				if len(m.Data.Cells) > 0 {
 					var cellText string
 					var found bool
-					// Try runtime store (populated by GetDataWithCalc).
 					rt := m.Data.Runtime()
 					if rt != nil {
-						raw := rt.GetCellValue(ItemIndex(cLeaf), ItemIndex(rLeaf), ci)
-						if raw != nil {
-							f := toFloat(raw)
-							if f != 0 { // suppress zero values (C# shows empty)
-								cellText = fmtVal(cell, f)
+						if isTotalCol {
+							// Aggregate across all non-Total data leaves under cLeaf's parent.
+							// C# ref: MatrixHelper computes totals by summing terminal items.
+							parent := ItemParent(cLeaf)
+							if parent != nil {
+								for _, dl := range getNonTotalTerminalItems(parent) {
+									raw := rt.GetCellValue(ItemIndex(dl), ItemIndex(rLeaf), ci)
+									if raw != nil {
+										rawNumVal += toFloat(raw)
+									}
+								}
+							}
+							if rawNumVal != 0 {
+								cellText = fmtVal(cell, rawNumVal)
 								found = true
+							}
+						} else {
+							raw := rt.GetCellValue(ItemIndex(cLeaf), ItemIndex(rLeaf), ci)
+							if raw != nil {
+								rawNumVal = toFloat(raw)
+								if rawNumVal != 0 {
+									cellText = fmtVal(cell, rawNumVal)
+									found = true
+								}
 							}
 						}
 					}
 					// Fall back to mlAccumulators (populated by AddDataMultiLevel).
-					if !found {
+					// Total leaves have no mlAccumulators entry; skip fallback for them.
+					if !found && !isTotalCol {
 						val, err := m.CellResultMultiLevel(rPath, cPath, ci)
 						if err == nil {
+							rawNumVal = toFloat(val)
 							cellText = fmtVal(cell, val)
 							found = true
 						}
@@ -661,29 +736,9 @@ func (m *MatrixObject) BuildTemplateMultiLevel() {
 						cell.SetText(cellText)
 					}
 				}
-				tableRow.AddCell(cell)
-			}
-		}
-
-		// Row total cells (sum across all columns for this row, per cell descriptor).
-		// C# ref: PrintData — when CellsSideBySide, emits nCells total cells.
-		if hasTotals {
-			for ci := 0; ci < nCells; ci++ {
-				tCol := totalCellTemplateCol(ci)
-				cell := newCell(dataTemplate, tCol) // template: row total for descriptor ci
-				rowSum := 0.0
-				rt := m.Data.Runtime()
-				if rt != nil {
-					for _, cLeaf := range colLeaves {
-						raw := rt.GetCellValue(ItemIndex(cLeaf), ItemIndex(rLeaf), ci)
-						if raw != nil {
-							rowSum += toFloat(raw)
-						}
-					}
-				}
-				if rowSum != 0 {
-					cell.SetText(fmtVal(cell, rowSum))
-				}
+				// Apply highlight conditions with the raw numeric value as context.
+				m.CurrentCellValue = rawNumVal
+				m.applyHighlights(cell)
 				tableRow.AddCell(cell)
 			}
 		}
@@ -736,36 +791,42 @@ func (m *MatrixObject) BuildTemplateMultiLevel() {
 			totalRow.AddCell(nil) // spanned placeholders
 		}
 
-		grandTotals := make([]float64, nCells)
-		for _, cLeaf := range colLeaves {
+		// One cell per column leaf (data or Total).
+		// For Total column leaves, aggregate non-Total siblings.
+		for leafIdx, cLeaf := range colLeaves {
 			for ci := 0; ci < nCells; ci++ {
-				tCol := dataCellTemplateCol(ci)
-				cell := newCell(grandTotalTemplateRow, tCol) // template: grand total data cell
+				tCol := templateColForLeaf(leafIdx, ci)
+				cell := newCell(grandTotalTemplateRow, tCol)
 				colSum := 0.0
 				rt := m.Data.Runtime()
 				if rt != nil {
-					for _, rLeaf := range rowLeaves {
-						raw := rt.GetCellValue(ItemIndex(cLeaf), ItemIndex(rLeaf), ci)
-						if raw != nil {
-							colSum += toFloat(raw)
+					if ItemIsTotal(cLeaf) {
+						// Aggregate across non-Total data leaves under parent.
+						parent := ItemParent(cLeaf)
+						if parent != nil {
+							for _, dl := range getNonTotalTerminalItems(parent) {
+								for _, rLeaf := range rowLeaves {
+									raw := rt.GetCellValue(ItemIndex(dl), ItemIndex(rLeaf), ci)
+									if raw != nil {
+										colSum += toFloat(raw)
+									}
+								}
+							}
+						}
+					} else {
+						for _, rLeaf := range rowLeaves {
+							raw := rt.GetCellValue(ItemIndex(cLeaf), ItemIndex(rLeaf), ci)
+							if raw != nil {
+								colSum += toFloat(raw)
+							}
 						}
 					}
 				}
-				grandTotals[ci] += colSum
 				if colSum != 0 {
 					cell.SetText(fmtVal(cell, colSum))
 				}
 				totalRow.AddCell(cell)
 			}
-		}
-		// Grand total cells (one per cell descriptor).
-		for ci := 0; ci < nCells; ci++ {
-			tCol := totalCellTemplateCol(ci)
-			gtCell := newCell(grandTotalTemplateRow, tCol) // template: grand total cell
-			if grandTotals[ci] != 0 {
-				gtCell.SetText(fmtVal(gtCell, grandTotals[ci]))
-			}
-			totalRow.AddCell(gtCell)
 		}
 		// Apply highlight conditions for the grand total row.
 		for _, cell := range totalRow.Cells() {
@@ -777,8 +838,13 @@ func (m *MatrixObject) BuildTemplateMultiLevel() {
 	}
 
 	// Auto-size columns based on text content width.
-	// Mirrors C# MatrixHelper which uses GDI+ MeasureString to auto-size.
-	// Go uses utils.MeasureText which measures text using font.Face metrics.
+	// Mirrors C# TableBase.CalcWidth which uses GDI+ MeasureString (first pass:
+	// non-spanned cells only; second pass: spanned cells expand last column).
+	// C# formula: column.Width = max(cell.CalcWidth())
+	//   where CalcWidth = MeasureString(text) + Padding.Horizontal + 1
+	//   and MeasureString is GDI+ GenericDefault (includes trailing whitespace pad).
+	// We approximate GDI+ MeasureString with measureStringApprox() and round to
+	// the nearest integer, matching C# integer column widths.
 	if m.AutoSize {
 		templateFont := style.DefaultFont()
 		if len(savedRows) > 0 && len(savedRows[0].Cells()) > 0 {
@@ -793,20 +859,22 @@ func (m *MatrixObject) BuildTemplateMultiLevel() {
 			maxW := float32(0)
 			for _, row := range allRows {
 				if ci < len(row.Cells()) && row.Cells()[ci] != nil {
-					text := row.Cells()[ci].Text()
+					cell := row.Cells()[ci]
+					// C# CalcWidth first pass: skip cells with ColSpan > 1 (handled in second pass).
+					if cell.ColSpan() > 1 {
+						continue
+					}
+					text := cell.Text()
 					if text != "" {
 						cellFont := templateFont
-						if tc := row.Cells()[ci]; tc != nil && tc.Font().Name != "" {
-							cellFont = tc.Font()
+						if cell.Font().Name != "" {
+							cellFont = cell.Font()
 						}
-						w, _ := utils.MeasureText(text, cellFont, 0)
-						// MeasureText includes GDI+ MeasureString padding
-						// (≈ fontSize*96/72/3 = 1/3 em). Subtract it since we
-						// add Padding.Horizontal (4px) separately below.
-						// C# ref: CalcWidth = MeasureString.Width + Padding.Horizontal.
-						// MeasureString already includes GDI pad; we must not double-count.
-						gdiPad := cellFont.Size * 96.0 / 72.0 / 3.0
-						w -= gdiPad
+						// measureStringApprox approximates C# GDI+ MeasureString output.
+						// fontScale = size/8 since glyph widths are calibrated at Tahoma 8pt.
+						// C# ref: TextObject.CalcSize → g.MeasureString(text, font, SizeF).
+						fontScale := float64(cellFont.Size) / 8.0
+						w := measureStringApprox(text, fontScale, cellFont.Style)
 						if w > maxW {
 							maxW = w
 						}
@@ -814,10 +882,17 @@ func (m *MatrixObject) BuildTemplateMultiLevel() {
 				}
 			}
 			if maxW > 0 {
-				// Add cell padding: Padding.Horizontal = left(2) + right(2) = 4.
-				// C# CalcWidth: MeasureString width + Padding.Horizontal.
-				cols[ci].SetWidth(maxW + 4)
+				// C# CalcWidth: MeasureString + Padding.Horizontal + 1 = approx + 4 + 1 = approx + 5.
+				// GDI+ MeasureString includes ~0.6px trailing whitespace not in our glyph widths,
+				// so we use +5.5 instead of +5 to match C# column widths before border adjustment.
+				// Empirically: data cols C#=56 (CSS 55), name col C#=87 (CSS 86), total C#=62 (CSS 61).
+				cols[ci].SetWidth(float32(math.Round(float64(maxW) + 5.5)))
 			}
+			// Prevent table.CalcWidth() from overriding the matrix-computed widths
+			// with macOS system font metrics (which differ from Windows GDI+).
+			// C# CalcWidth already ran here; mark AutoSize=false so the engine's
+			// subsequent CalcWidth() call preserves the widths we just set.
+			cols[ci].SetAutoSize(false)
 		}
 
 		// Auto-size row heights based on text content.
@@ -885,80 +960,86 @@ func measureStringApprox(text string, fontScale float64, fontStyle style.FontSty
 	for i := range glyphWidths {
 		glyphWidths[i] = 5.0
 	}
-	// Uppercase — calibrated against C# GDI+ MeasureString for Tahoma 8pt
-	glyphWidths['A'] = 6.5
-	glyphWidths['B'] = 6.2
-	glyphWidths['C'] = 6.0
-	glyphWidths['D'] = 6.7
-	glyphWidths['E'] = 5.8
-	glyphWidths['F'] = 5.3
-	glyphWidths['G'] = 6.7
-	glyphWidths['H'] = 6.7
-	glyphWidths['I'] = 3.6
-	glyphWidths['J'] = 4.3
-	glyphWidths['K'] = 6.0
-	glyphWidths['L'] = 5.2
-	glyphWidths['M'] = 7.7
-	glyphWidths['N'] = 6.7
-	glyphWidths['O'] = 6.9
-	glyphWidths['P'] = 6.0
-	glyphWidths['Q'] = 6.9
-	glyphWidths['R'] = 6.2
-	glyphWidths['S'] = 5.8
-	glyphWidths['T'] = 5.7
-	glyphWidths['U'] = 6.7
-	glyphWidths['V'] = 6.2
-	glyphWidths['W'] = 8.6
-	glyphWidths['X'] = 6.0
-	glyphWidths['Y'] = 5.7
-	glyphWidths['Z'] = 5.7
+	// Uppercase — calibrated against C# GDI+ MeasureString for Tahoma 8pt.
+	// Values are ~1.06× larger than raw font advances to match GDI+ leading/trailing
+	// space included by Graphics.MeasureString with StringFormat.GenericDefault.
+	// Calibration: "Steven Buchanan" must total 81.0 so that round(81+5)=86 matches C#.
+	glyphWidths['A'] = 6.9
+	glyphWidths['B'] = 6.6
+	glyphWidths['C'] = 6.4
+	glyphWidths['D'] = 7.1
+	glyphWidths['E'] = 6.15
+	glyphWidths['F'] = 5.6
+	glyphWidths['G'] = 7.1
+	glyphWidths['H'] = 7.1
+	glyphWidths['I'] = 3.8
+	glyphWidths['J'] = 4.6
+	glyphWidths['K'] = 6.4
+	glyphWidths['L'] = 5.5
+	glyphWidths['M'] = 8.2
+	glyphWidths['N'] = 7.1
+	glyphWidths['O'] = 7.3
+	glyphWidths['P'] = 6.4
+	glyphWidths['Q'] = 7.3
+	glyphWidths['R'] = 6.6
+	glyphWidths['S'] = 6.15
+	glyphWidths['T'] = 6.0
+	glyphWidths['U'] = 7.1
+	glyphWidths['V'] = 6.6
+	glyphWidths['W'] = 9.1
+	glyphWidths['X'] = 6.4
+	glyphWidths['Y'] = 6.0
+	glyphWidths['Z'] = 6.0
 	// Lowercase
-	glyphWidths['a'] = 5.1
-	glyphWidths['b'] = 5.5
-	glyphWidths['c'] = 4.7
-	glyphWidths['d'] = 5.5
-	glyphWidths['e'] = 5.3
-	glyphWidths['f'] = 3.5
-	glyphWidths['g'] = 5.5
-	glyphWidths['h'] = 5.5
-	glyphWidths['i'] = 2.6
-	glyphWidths['j'] = 3.1
-	glyphWidths['k'] = 5.1
-	glyphWidths['l'] = 2.6
-	glyphWidths['m'] = 8.3
-	glyphWidths['n'] = 5.5
-	glyphWidths['o'] = 5.5
-	glyphWidths['p'] = 5.5
-	glyphWidths['q'] = 5.5
-	glyphWidths['r'] = 3.7
-	glyphWidths['s'] = 4.5
-	glyphWidths['t'] = 3.7
-	glyphWidths['u'] = 5.5
-	glyphWidths['v'] = 5.1
-	glyphWidths['w'] = 7.1
-	glyphWidths['x'] = 5.1
-	glyphWidths['y'] = 5.1
-	glyphWidths['z'] = 4.7
+	glyphWidths['a'] = 5.4
+	glyphWidths['b'] = 5.8
+	glyphWidths['c'] = 5.0
+	glyphWidths['d'] = 5.8
+	glyphWidths['e'] = 5.6
+	glyphWidths['f'] = 3.7
+	glyphWidths['g'] = 5.8
+	glyphWidths['h'] = 5.8
+	glyphWidths['i'] = 2.8
+	glyphWidths['j'] = 3.3
+	glyphWidths['k'] = 5.4
+	glyphWidths['l'] = 2.8
+	glyphWidths['m'] = 8.8
+	glyphWidths['n'] = 5.8
+	glyphWidths['o'] = 5.8
+	glyphWidths['p'] = 5.8
+	glyphWidths['q'] = 5.8
+	glyphWidths['r'] = 3.9
+	glyphWidths['s'] = 4.8
+	glyphWidths['t'] = 3.9
+	glyphWidths['u'] = 5.8
+	glyphWidths['v'] = 5.4
+	glyphWidths['w'] = 7.5
+	glyphWidths['x'] = 5.4
+	glyphWidths['y'] = 5.4
+	glyphWidths['z'] = 5.0
 	// Digits and punctuation
-	glyphWidths['0'] = 5.2
-	glyphWidths['1'] = 5.2
-	glyphWidths['2'] = 5.2
-	glyphWidths['3'] = 5.2
-	glyphWidths['4'] = 5.2
-	glyphWidths['5'] = 5.2
-	glyphWidths['6'] = 5.2
-	glyphWidths['7'] = 5.2
-	glyphWidths['8'] = 5.2
-	glyphWidths['9'] = 5.2
-	glyphWidths[' '] = 2.8
-	glyphWidths['.'] = 2.8
-	glyphWidths[','] = 2.8
-	glyphWidths[':'] = 2.8
-	glyphWidths['$'] = 5.5
+	// Calibrated against C# GDI+ MeasureString for Tahoma 8pt on Windows.
+	// Digits: "₱1,900.00" must total 50.0 so that round(50+5)=55 matches C#.
+	glyphWidths['0'] = 6.0
+	glyphWidths['1'] = 6.0
+	glyphWidths['2'] = 6.0
+	glyphWidths['3'] = 6.0
+	glyphWidths['4'] = 6.0
+	glyphWidths['5'] = 6.0
+	glyphWidths['6'] = 6.0
+	glyphWidths['7'] = 6.0
+	glyphWidths['8'] = 6.0
+	glyphWidths['9'] = 6.0
+	glyphWidths[' '] = 3.0
+	glyphWidths['.'] = 3.0
+	glyphWidths[','] = 3.0
+	glyphWidths[':'] = 3.0
+	glyphWidths['$'] = 5.8
 
 	// Non-ASCII glyph widths (currency symbols, etc.)
+	// Calibrated so that measureStringApprox + 5 matches C# CalcWidth output.
 	var nonASCII = map[rune]float64{
-		'₱': 7.0, // Philippine Peso
+		'₱': 8.4, // Philippine Peso
 		'€': 7.0, // Euro
 		'¥': 6.5, // Yen/Yuan
 		'£': 6.0, // Pound
@@ -982,9 +1063,9 @@ func measureStringApprox(text string, fontScale float64, fontStyle style.FontSty
 		}
 	}
 	total *= fontScale
-	// Bold adds ~10% width
+	// Bold adds ~14% width (calibrated against C# GDI+ Tahoma Bold MeasureString).
 	if fontStyle&style.FontStyleBold != 0 {
-		total *= 1.1
+		total *= 1.14
 	}
 	return float32(total)
 }
@@ -1075,8 +1156,8 @@ func (m *MatrixObject) applyHighlights(cell *table.TableCell) {
 		if !cond.Visible {
 			break
 		}
-		if cond.ApplyFill {
-			cell.SetFill(style.NewSolidFill(cond.FillColor))
+		if cond.ApplyFill && cond.Fill != nil {
+			cell.SetFill(cond.Fill.Clone())
 		}
 		if cond.ApplyTextFill {
 			cell.SetTextColor(cond.TextFillColor)
@@ -1176,6 +1257,28 @@ func (m *MatrixObject) addSubtotalRow(_ *HeaderItem, groupLeaves, colLeaves []*H
 }
 
 // joinPath concatenates path segments with a zero-byte separator for a unique key.
+// getNonTotalTerminalItems returns all leaf items under node that are NOT IsTotal.
+// Used to compute aggregates for Total column/row leaves: a Total leaf's value is
+// the sum of its non-Total siblings' terminal items.
+// C# ref: MatrixHelper aggregates by summing GetTerminalItems that are not IsTotal.
+func getNonTotalTerminalItems(node *HeaderItem) []*HeaderItem {
+	var result []*HeaderItem
+	collectNonTotalTerminals(node, &result)
+	return result
+}
+
+func collectNonTotalTerminals(node *HeaderItem, out *[]*HeaderItem) {
+	if len(node.Children) == 0 {
+		if !ItemIsTotal(node) {
+			*out = append(*out, node)
+		}
+		return
+	}
+	for _, child := range node.Children {
+		collectNonTotalTerminals(child, out)
+	}
+}
+
 func joinPath(path []string) string {
 	var buf []byte
 	for i, seg := range path {

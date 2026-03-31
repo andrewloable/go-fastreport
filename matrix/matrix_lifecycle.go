@@ -221,6 +221,11 @@ func (m *MatrixObject) SyncRuntimeToMultiLevel() {
 	if rt == nil {
 		return
 	}
+	// Add total items to the column header tree (mirrors C# MatrixData.Columns.AddTotalItems
+	// called before GenerateResult). This inserts per-group Total leaves and a Grand Total
+	// leaf into the column tree so BuildTemplateMultiLevel emits them as real columns.
+	// Must be called after GetDataWithCalc has fully populated the column tree.
+	rt.Columns().AddTotalItems(false)
 	m.rowRoot = rt.Rows().Root
 	m.colRoot = rt.Columns().Root
 	// Ensure mlAccumulators is initialized.

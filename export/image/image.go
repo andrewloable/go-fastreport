@@ -1373,7 +1373,9 @@ func RenderGenericPNG(obj preview.PreparedObject) ([]byte, error) {
 // or 270 degrees), resizes to targetW×targetH, and re-encodes as PNG.
 // Used by the HTML exporter for rotated picture objects (barcodes, etc.).
 func RotateImagePNG(data []byte, angle, targetW, targetH int) []byte {
-	src, err := png.Decode(bytes.NewReader(data))
+	// Use image.Decode (not png.Decode) to handle JPEG, GIF, etc. in addition to PNG.
+	// C# ref: ImageHelper.RotateImage supports any bitmap format.
+	src, _, err := image.Decode(bytes.NewReader(data))
 	if err != nil {
 		return data // fallback: return original
 	}

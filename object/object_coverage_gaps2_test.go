@@ -530,7 +530,7 @@ func TestHtmlObject_ApplyCondition_Fill(t *testing.T) {
 	red := color.RGBA{R: 255, A: 255}
 	cond := style.NewHighlightCondition()
 	cond.ApplyFill = true
-	cond.FillColor = red
+	cond.Fill = &style.SolidFill{Color: red}
 	h.ApplyCondition(cond)
 
 	f, ok := h.Fill().(*style.SolidFill)
@@ -538,7 +538,7 @@ func TestHtmlObject_ApplyCondition_Fill(t *testing.T) {
 		t.Fatalf("ApplyCondition: Fill type = %T, want *style.SolidFill", h.Fill())
 	}
 	if f.Color != red {
-		t.Errorf("ApplyCondition: FillColor = %v, want %v", f.Color, red)
+		t.Errorf("ApplyCondition: Fill.Color = %v, want %v", f.Color, red)
 	}
 	if !h.Visible() {
 		t.Error("ApplyCondition: Visible should still be true")

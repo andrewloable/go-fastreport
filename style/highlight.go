@@ -23,7 +23,9 @@ type HighlightCondition struct {
 	ApplyTextFill bool
 
 	// Visual overrides — applied only when the corresponding Apply flag is true.
-	FillColor     color.RGBA // background fill override (solid fill colour)
+	// Fill holds the full fill object (SolidFill, GlassFill, etc.) for the
+	// background override. Mirrors C# StyleBase.Fill (StyleBase.cs).
+	Fill          Fill       // background fill override (may be GlassFill, SolidFill, etc.)
 	TextFillColor color.RGBA // text (foreground) colour override
 	Font          Font       // font override
 	// Border is the border override applied when ApplyBorder is true.
@@ -39,6 +41,7 @@ func NewHighlightCondition() HighlightCondition {
 		Visible:       true,
 		ApplyTextFill: true,
 		TextFillColor: color.RGBA{R: 255, A: 255},
+		Fill:          &SolidFill{},
 		Border:        *NewBorder(),
 	}
 }
@@ -52,7 +55,11 @@ func (h *HighlightCondition) Assign(src HighlightCondition) {
 	h.ApplyFill = src.ApplyFill
 	h.ApplyFont = src.ApplyFont
 	h.ApplyTextFill = src.ApplyTextFill
-	h.FillColor = src.FillColor
+	if src.Fill != nil {
+		h.Fill = src.Fill.Clone()
+	} else {
+		h.Fill = nil
+	}
 	h.TextFillColor = src.TextFillColor
 	h.Font = src.Font
 	// Deep-copy Border lines to avoid sharing pointers.
@@ -69,6 +76,10 @@ func (h *HighlightCondition) Assign(src HighlightCondition) {
 // Mirrors C# HighlightCondition.Clone (HighlightCondition.cs line 75-80).
 func (h HighlightCondition) Clone() HighlightCondition {
 	c := h
+	// Deep-copy Fill to avoid sharing pointers.
+	if h.Fill != nil {
+		c.Fill = h.Fill.Clone()
+	}
 	// Deep-copy Border lines to avoid sharing pointers.
 	for i, l := range h.Border.Lines {
 		if l != nil {
@@ -77,6 +88,19 @@ func (h HighlightCondition) Clone() HighlightCondition {
 		}
 	}
 	return c
+}
+
+// fillColorRGBA extracts the representative color from a Fill for equality
+// comparison purposes. Returns transparent for nil.
+func fillColorRGBA(f Fill) color.RGBA {
+	switch v := f.(type) {
+	case *SolidFill:
+		return v.Color
+	case *GlassFill:
+		return v.Color
+	default:
+		return color.RGBA{}
+	}
 }
 
 // Equals reports whether h and other have identical field values.
@@ -88,7 +112,7 @@ func (h HighlightCondition) Equals(other HighlightCondition) bool {
 		h.ApplyFill == other.ApplyFill &&
 		h.ApplyFont == other.ApplyFont &&
 		h.ApplyTextFill == other.ApplyTextFill &&
-		h.FillColor == other.FillColor &&
+		fillColorRGBA(h.Fill) == fillColorRGBA(other.Fill) &&
 		h.TextFillColor == other.TextFillColor &&
 		h.Font == other.Font
 }

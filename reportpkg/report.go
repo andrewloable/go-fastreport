@@ -420,13 +420,17 @@ func (r *Report) RegisterFunction(name string, fn func(args []any) (any, error))
 // SetExtraCalcVar injects a variable into the expression evaluation environment.
 // Used by the engine to expose matrix properties (e.g. Matrix1 with RowIndex/ColumnIndex)
 // during highlight condition evaluation. The variable persists across Calc calls
-// until overwritten.
+// until overwritten. Passing nil removes the variable.
 // C# ref: Matrix.RowIndex / Matrix.ColumnIndex accessed from script context during PrintData.
 func (r *Report) SetExtraCalcVar(name string, value any) {
 	if r.extraCalcEnv == nil {
 		r.extraCalcEnv = make(map[string]any)
 	}
-	r.extraCalcEnv[name] = value
+	if value == nil {
+		delete(r.extraCalcEnv, name)
+	} else {
+		r.extraCalcEnv[name] = value
+	}
 }
 
 // CustomFunctions returns a copy of the registered custom function map.

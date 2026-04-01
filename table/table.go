@@ -631,13 +631,7 @@ func (t *TableBase) CalcSpans() {
 // cellMeasuredWidth returns the minimum width needed to display the cell
 // text without wrapping, using font metrics for accuracy.
 // Mirrors C# TextObject.CalcSize().Width used in TableBase.CalcWidth.
-// The result is ceiling-rounded and includes a 1px GDI-compatible safety margin.
-// C# GDI+ MeasureString (GenericDefault) includes trailing whitespace (~1px),
-// ensuring text is never clipped at the cell boundary. Go's font measurement
-// omits this trailing space, so we add +1 explicitly.
-// The HTML exporter subtracts borderWidth/2 from each side (≈1px total for
-// 1px borders), so a 2px constant ensures the rendered content area always
-// has at least 1px more than the measured text width.
+// C# formula: textWidth + Padding.Horizontal + 1 (TextObject.cs InternalCalcWidth → CalcSize).
 func cellMeasuredWidth(cell *TableCell) float32 {
 	text := cell.Text()
 	var textW float32
@@ -646,7 +640,7 @@ func cellMeasuredWidth(cell *TableCell) float32 {
 		textW = utils.ScaleWidth(w, cell.Font())
 	}
 	pad := cell.Padding()
-	result := textW + pad.Left + pad.Right + 2
+	result := textW + pad.Left + pad.Right + 1
 	return float32(math.Ceil(float64(result)))
 }
 

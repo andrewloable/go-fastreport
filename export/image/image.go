@@ -256,13 +256,27 @@ func (e *Exporter) renderObject(obj preview.PreparedObject, bandTop float32) {
 	y := e.scaled(int(bandTop + obj.Top))
 	w := e.scaled(int(obj.Width))
 	h := e.scaled(int(obj.Height))
-	if w < 1 {
-		w = 1
+	// For diagonal lines, w or h can be negative (encoding direction).
+	// Skip the min-1 clamping so the direction is preserved for drawLine.
+	if obj.Kind != preview.ObjectTypeLine || !obj.LineDiagonal {
+		if w < 1 {
+			w = 1
+		}
+		if h < 1 {
+			h = 1
+		}
 	}
-	if h < 1 {
-		h = 1
+	// Use absolute values for the bounding rectangle (needed for diagonal lines
+	// with negative w or h).
+	bx0, bx1 := x, x+w
+	if bx0 > bx1 {
+		bx0, bx1 = bx1, bx0
 	}
-	bounds := image.Rect(x, y, x+w, y+h).Intersect(e.curPage.Bounds())
+	by0, by1 := y, y+h
+	if by0 > by1 {
+		by0, by1 = by1, by0
+	}
+	bounds := image.Rect(bx0, by0, bx1, by1).Intersect(e.curPage.Bounds())
 
 	// For RTF objects, strip RTF control words to get plain text for rendering.
 	if obj.Kind == preview.ObjectTypeRTF {
@@ -356,14 +370,43 @@ func (e *Exporter) renderObject(obj preview.PreparedObject, bandTop float32) {
 		if obj.Border.Lines[0] != nil && obj.Border.Lines[0].Color.A > 0 {
 			lineColor = obj.Border.Lines[0].Color
 		}
+		lineWidth := 1
+		if obj.Border.Lines[0] != nil && obj.Border.Lines[0].Width > 0 {
+			lineWidth = int(math.Round(float64(obj.Border.Lines[0].Width)))
+		}
 		if obj.LineDiagonal {
+			// Draw thick diagonal line by offsetting in the perpendicular direction.
+			// For a mostly-horizontal line, offset in Y; for mostly-vertical, offset in X.
 			e.drawLine(x, y, x+w, y+h, lineColor)
+			dx := w
+			if dx < 0 {
+				dx = -dx
+			}
+			dy := h
+			if dy < 0 {
+				dy = -dy
+			}
+			for i := 1; i < lineWidth; i++ {
+				if dx >= dy {
+					e.drawLine(x, y+i, x+w, y+h+i, lineColor)
+				} else {
+					e.drawLine(x+i, y, x+w+i, y+h, lineColor)
+				}
+			}
 		} else {
-			// Non-diagonal: horizontal or vertical based on dominant dimension.
+			// Non-diagonal: horizontal or vertical filled rectangle.
 			if w >= h {
-				e.drawHLine(x, y+h/2, x+w, lineColor)
+				// Horizontal line: fill lineWidth pixel rows centered at y+h/2.
+				cy := y + h/2
+				for i := 0; i < lineWidth; i++ {
+					e.drawHLine(x, cy+i, x+w, lineColor)
+				}
 			} else {
-				e.drawVLine(x+w/2, y, y+h, lineColor)
+				// Vertical line: fill lineWidth pixel columns centered at x+w/2.
+				cx := x + w/2
+				for i := 0; i < lineWidth; i++ {
+					e.drawVLine(cx+i, y, y+h, lineColor)
+				}
 			}
 		}
 
@@ -1336,8 +1379,11 @@ func (e *Exporter) stitchPages(pages []*image.RGBA) *image.RGBA {
 // at its own dimensions. Used by the HTML exporter to render PolygonObjects
 // and ShapeObjects as base64 images (matching C# LayerBack + LayerPicture).
 func RenderGenericPNG(obj preview.PreparedObject) ([]byte, error) {
-	w := int(math.Round(float64(obj.Width)))
-	h := int(math.Round(float64(obj.Height)))
+	// C# HTMLExportLayers.GetLayerPicture uses Math.Abs(Width) and Math.Abs(Height)
+	// for the bitmap dimensions. Lines can have negative Width/Height encoding
+	// direction (e.g., top-right to bottom-left has negative Height).
+	w := int(math.Round(math.Abs(float64(obj.Width))))
+	h := int(math.Round(math.Abs(float64(obj.Height))))
 	if w < 1 {
 		w = 1
 	}
@@ -1358,8 +1404,23 @@ func RenderGenericPNG(obj preview.PreparedObject) ([]byte, error) {
 		curPage:     canvas,
 	}
 	renderObj := obj
-	renderObj.Left = 0
-	renderObj.Top = 0
+	// For objects with negative dimensions (diagonal lines going in reverse
+	// direction), adjust Left/Top so the line endpoint at the negative edge
+	// maps to coordinate 0 in the bitmap. The line keeps its original Width/
+	// Height so drawLine computes the correct start→end direction.
+	// C# ref: GetLayerPicture computes:
+	//   Left = Width > 0 ? AbsLeft : AbsLeft + Width
+	//   Then translates by (-Left, -Top) so the object draws into [0..abs(W)] × [0..abs(H)].
+	if obj.Width < 0 {
+		renderObj.Left = float32(w) // start from right edge
+	} else {
+		renderObj.Left = 0
+	}
+	if obj.Height < 0 {
+		renderObj.Top = float32(h) // start from bottom edge
+	} else {
+		renderObj.Top = 0
+	}
 	exp.renderObject(renderObj, 0)
 
 	var buf bytes.Buffer

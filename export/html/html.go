@@ -582,6 +582,17 @@ func (e *Exporter) renderObject(obj preview.PreparedObject, scale float32) {
 		// C# renders all LineObjects as PNG images via LayerPicture (one div, two
 		// CSS classes: base style + background image). Match that approach.
 		// Reference: HTMLExportLayers.cs:939-941
+		// C# LayerPicture adjusts position for negative Width/Height:
+		//   x = Width > 0 ? AbsLeft : AbsLeft + Width
+		//   y = Height > 0 ? AbsTop : AbsTop + Height
+		// The CSS div keeps the original (possibly negative) Width/Height, but the
+		// background PNG image uses abs(Width) × abs(Height) pixels.
+		if w < 0 {
+			left += w
+		}
+		if h < 0 {
+			top += h
+		}
 		e.renderObjectAsImage(obj, left, top, w, h, scale)
 
 	case preview.ObjectTypeShape:

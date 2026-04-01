@@ -657,7 +657,30 @@ func (e *ReportEngine) showFullBandOnce(b *band.BandBase) {
 
 			// Split the band across pages if it exceeds available space.
 			// Use FreeSpace() which deducts page footer height, matching C#.
-			if pb.Height > e.FreeSpace() && e.FreeSpace() > 0 && e.pageHeight > 0 {
+			//
+			// When a matrix needs BOTH horizontal (column groups) and vertical
+			// (row groups) splitting, we must apply the horizontal partition FIRST
+			// so that each column-group band is individually split vertically.
+			// If splitPreparedBandAcrossPages ran first it would copy the full-width
+			// objects into each slice and the later horizontal split would operate on
+			// the already-discarded original pb — leaving overflow columns on all pages.
+			if e.pendingHSplit != nil {
+				needsVSplit := pb.Height > e.FreeSpace() && e.FreeSpace() > 0 && e.pageHeight > 0
+				if needsVSplit {
+					// Combined AcrossThenDown split: horizontal first, vertical per group.
+					e.splitMatrixAcrossThenDown(pb)
+					// curY already advanced inside splitMatrixAcrossThenDown; suppress
+					// the AdvanceY(height) call at the end of showFullBandOnce.
+					height = 0
+				} else {
+					_ = e.preparedPages.AddBand(pb)
+					if pb.Height > height {
+						height = pb.Height
+					}
+					e.splitBandHorizontallyForMatrix(pb)
+				}
+				e.pendingHSplit = nil
+			} else if pb.Height > e.FreeSpace() && e.FreeSpace() > 0 && e.pageHeight > 0 {
 				e.splitPreparedBandAcrossPages(pb)
 			} else {
 				_ = e.preparedPages.AddBand(pb)
@@ -675,13 +698,6 @@ func (e *ReportEngine) showFullBandOnce(b *band.BandBase) {
 			// Must be called AFTER AddBand so the PreparedBand exists in pg.Bands
 			// and can be found by RenderInnerSubreport's backward search.
 			e.RenderInnerSubreports(b)
-
-			// Horizontal page splitting for wide matrices.
-			// C# ref: TableResult.GeneratePages splits columns across pages.
-			if e.pendingHSplit != nil {
-				e.splitBandHorizontallyForMatrix(pb)
-				e.pendingHSplit = nil
-			}
 		}
 	}
 	e.AdvanceY(height)

@@ -697,6 +697,12 @@ func (e *ReportEngine) populateTableObjects(tbl *table.TableBase, originX, origi
 					endRow = len(rows)
 				}
 				cellH := rowY[endRow] - rowY[ri]
+				// Skip zero-size cells (e.g. cells in Visible=false rows with height=0).
+				// C# ref: invisible rows (Visible=false) contribute 0 height and their
+				// cells are not emitted in the rendered output.
+				if cellH <= 0 || cellW <= 0 {
+					continue
+				}
 
 				absLeft := originX + sec.xOffset + colX[ci]
 				absTop := originY + sec.yOffset + rowY[ri]
@@ -805,7 +811,12 @@ func (e *ReportEngine) autoManualBuild(tbl *table.TableObject) *table.TableBase 
 	// C# pattern: PrintRow(0); PrintColumns(); foreach DS: PrintRow(1); PrintColumns()
 	// This covers tables like Table2 in Table.frx (Categories with images).
 	if fixedCols == 0 && tbl.FixedRows() == 0 && tbl.RowCount() >= 2 {
-		return e.autoManualBuildSimpleRowFirst(tbl)
+		if built := e.autoManualBuildSimpleRowFirst(tbl); built != nil {
+			return built
+		}
+		// Fall back to for-loop interpretation (e.g. Multiplication Table with
+		// nested integer-range loops and expressions like [x * y]).
+		return e.autoManualBuildForLoops(tbl)
 	}
 
 	if fixedCols <= 0 {
@@ -1223,6 +1234,295 @@ func (e *ReportEngine) autoManualBuildSimpleRowFirst(tbl *table.TableObject) *ta
 		h.CellTextEval = nil
 		h.CellObjectEval = nil
 		_ = ds.Next()
+	}
+
+	return h.Result()
+}
+
+// parsedForItemKind identifies the type of item in a parsed C# for-loop body.
+type parsedForItemKind int
+
+const (
+	parsedForPrintRow    parsedForItemKind = iota // PrintRow(index or var)
+	parsedForPrintCol                             // PrintColumn(literal)
+	parsedForNestedLoop                           // Nested for-loop
+)
+
+// parsedForItem is one statement in a C# for-loop body.
+type parsedForItem struct {
+	kind       parsedForItemKind
+	argLit     int    // literal index for PrintRow/PrintColumn; -1 when argVar is set
+	argVar     string // loop variable name for PrintRow (e.g. "y"); empty for literals
+	nestedLoop *parsedForLoop
+}
+
+// parsedForLoop is a C# for-loop with a simple integer range and body items.
+type parsedForLoop struct {
+	varName string
+	start   int
+	end     int // inclusive upper bound
+	body    []parsedForItem
+}
+
+// csharpForLoopRe matches: for (var = start; var </<= end; var++)
+var csharpForLoopRe = regexp.MustCompile(`for\s*\(\s*(\w+)\s*=\s*(\d+)\s*;\s*\w+\s*(<=|<)\s*(\d+)\s*;\s*\w+\+\+\s*\)`)
+
+// csharpPrintRowLoopRe matches: PrintRow(expr) where expr is an identifier or literal.
+var csharpPrintRowLoopRe = regexp.MustCompile(`\bPrintRow\s*\(\s*(\w+)\s*\)`)
+
+// csharpPrintColLoopRe matches: PrintColumn(intLiteral).
+var csharpPrintColLoopRe = regexp.MustCompile(`\bPrintColumn\s*\(\s*(\d+)\s*\)`)
+
+// forLoopBraceClose returns the index of the '}' matching the opening '{' whose
+// content begins at start (i.e. body[start-1] == '{'). Returns -1 if unmatched.
+func forLoopBraceClose(body string, start int) int {
+	depth := 1
+	for i := start; i < len(body); i++ {
+		switch body[i] {
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return i
+			}
+		}
+	}
+	return -1
+}
+
+// parseCSharpForLoops extracts top-level for-loops with simple integer ranges
+// from the named event handler in the C# script text.
+func parseCSharpForLoops(scriptText, eventName string) []*parsedForLoop {
+	if scriptText == "" || eventName == "" {
+		return nil
+	}
+	funcIdx := strings.Index(scriptText, eventName)
+	if funcIdx < 0 {
+		return nil
+	}
+	braceRel := strings.Index(scriptText[funcIdx:], "{")
+	if braceRel < 0 {
+		return nil
+	}
+	bodyStart := funcIdx + braceRel + 1
+	bodyEnd := forLoopBraceClose(scriptText, bodyStart)
+	if bodyEnd < 0 {
+		return nil
+	}
+	return parseCSharpForLoopBody(scriptText[bodyStart:bodyEnd])
+}
+
+// parseCSharpForLoopBody parses all top-level for-loops in a C# code block.
+func parseCSharpForLoopBody(body string) []*parsedForLoop {
+	var loops []*parsedForLoop
+	offset := 0
+	for offset < len(body) {
+		sub := body[offset:]
+		loc := csharpForLoopRe.FindStringIndex(sub)
+		if loc == nil {
+			break
+		}
+		m := csharpForLoopRe.FindStringSubmatch(sub)
+		varName := m[1]
+		startVal, _ := strconv.Atoi(m[2])
+		cmp := m[3]
+		endVal, _ := strconv.Atoi(m[4])
+		if cmp == "<" {
+			endVal--
+		}
+		absEnd := offset + loc[1]
+		braceRel := strings.Index(body[absEnd:], "{")
+		if braceRel < 0 {
+			offset = absEnd
+			continue
+		}
+		braceStart := absEnd + braceRel + 1
+		braceEnd := forLoopBraceClose(body, braceStart)
+		if braceEnd < 0 {
+			offset = absEnd
+			continue
+		}
+		items := parseCSharpBodyItems(body[braceStart:braceEnd])
+		loops = append(loops, &parsedForLoop{
+			varName: varName,
+			start:   startVal,
+			end:     endVal,
+			body:    items,
+		})
+		offset = braceEnd + 1
+	}
+	return loops
+}
+
+// parseCSharpBodyItems returns PrintRow, PrintColumn, and nested for-loop items
+// from a C# for-loop body, in source order, not descending into nested loop bodies.
+func parseCSharpBodyItems(body string) []parsedForItem {
+	var items []parsedForItem
+	offset := 0
+	for offset < len(body) {
+		sub := body[offset:]
+		prLoc := csharpPrintRowLoopRe.FindStringIndex(sub)
+		pcLoc := csharpPrintColLoopRe.FindStringIndex(sub)
+		forLoc := csharpForLoopRe.FindStringIndex(sub)
+
+		// Determine which match comes first.
+		first := len(sub)
+		if prLoc != nil && prLoc[0] < first {
+			first = prLoc[0]
+		}
+		if pcLoc != nil && pcLoc[0] < first {
+			first = pcLoc[0]
+		}
+		if forLoc != nil && forLoc[0] < first {
+			first = forLoc[0]
+		}
+		if first == len(sub) {
+			break
+		}
+
+		if forLoc != nil && forLoc[0] == first {
+			// Nested for-loop: consume it entirely (body items parsed recursively).
+			m := csharpForLoopRe.FindStringSubmatch(sub)
+			varName := m[1]
+			startVal, _ := strconv.Atoi(m[2])
+			cmp := m[3]
+			endVal, _ := strconv.Atoi(m[4])
+			if cmp == "<" {
+				endVal--
+			}
+			absEnd := offset + forLoc[1]
+			braceRel := strings.Index(body[absEnd:], "{")
+			if braceRel < 0 {
+				offset = absEnd
+				continue
+			}
+			braceStart := absEnd + braceRel + 1
+			braceEnd := forLoopBraceClose(body, braceStart)
+			if braceEnd < 0 {
+				offset = absEnd
+				continue
+			}
+			innerItems := parseCSharpBodyItems(body[braceStart:braceEnd])
+			items = append(items, parsedForItem{
+				kind: parsedForNestedLoop,
+				nestedLoop: &parsedForLoop{
+					varName: varName,
+					start:   startVal,
+					end:     endVal,
+					body:    innerItems,
+				},
+			})
+			offset = braceEnd + 1
+			continue
+		}
+
+		if prLoc != nil && prLoc[0] == first {
+			m := csharpPrintRowLoopRe.FindStringSubmatch(sub)
+			argStr := m[1]
+			item := parsedForItem{kind: parsedForPrintRow}
+			if argLit, err := strconv.Atoi(argStr); err == nil {
+				item.argLit = argLit
+			} else {
+				item.argVar = argStr
+				item.argLit = -1
+			}
+			items = append(items, item)
+			offset += prLoc[1]
+			continue
+		}
+
+		if pcLoc != nil && pcLoc[0] == first {
+			m := csharpPrintColLoopRe.FindStringSubmatch(sub)
+			argLit, _ := strconv.Atoi(m[1])
+			items = append(items, parsedForItem{kind: parsedForPrintCol, argLit: argLit})
+			offset += pcLoc[1]
+			continue
+		}
+
+		offset++ // safety: avoid infinite loop
+	}
+	return items
+}
+
+// autoManualBuildForLoops handles ManualBuild tables driven by nested C# for-loops
+// with simple integer ranges. This covers reports like "Multiplication Table" where
+// the script sets variables (x, y) as loop counters and cells reference them via
+// expressions like [x], [y], [x * y].
+//
+// C# pattern example (Multiplication Table):
+//
+//	for (y = 0; y < 2; y++) { Table1.PrintRow(y); Table1.PrintColumn(0); for (x=1; x<=10; x++) { Table1.PrintColumn(1); } }
+//	for (y = 1; y <= 10; y++) { Table1.PrintRow(2); Table1.PrintColumn(0); for (x=1; x<=10; x++) { Table1.PrintColumn(1); } }
+//
+// Returns nil when no suitable for-loop pattern is found.
+func (e *ReportEngine) autoManualBuildForLoops(tbl *table.TableObject) *table.TableBase {
+	loops := parseCSharpForLoops(e.report.ScriptText, tbl.ManualBuildEvent)
+	if len(loops) == 0 {
+		return nil
+	}
+
+	// Verify that at least one body contains both PrintRow and PrintColumn.
+	hasPrintRow, hasPrintCol := false, false
+	var scanItems func(items []parsedForItem)
+	scanItems = func(items []parsedForItem) {
+		for _, item := range items {
+			switch item.kind {
+			case parsedForPrintRow:
+				hasPrintRow = true
+			case parsedForPrintCol:
+				hasPrintCol = true
+			case parsedForNestedLoop:
+				scanItems(item.nestedLoop.body)
+			}
+		}
+	}
+	for _, loop := range loops {
+		scanItems(loop.body)
+	}
+	if !hasPrintRow || !hasPrintCol {
+		return nil
+	}
+
+	h := table.NewTableHelper(tbl)
+	loopVars := make(map[string]int)
+
+	var executeItems func(items []parsedForItem)
+	executeItems = func(items []parsedForItem) {
+		for _, item := range items {
+			switch item.kind {
+			case parsedForPrintRow:
+				rowIdx := item.argLit
+				if item.argVar != "" {
+					rowIdx = loopVars[item.argVar]
+				}
+				h.PrintRow(rowIdx)
+			case parsedForPrintCol:
+				h.CellTextEval = func(text string) string { return e.evalText(text) }
+				h.PrintColumn(item.argLit)
+				h.CellTextEval = nil
+			case parsedForNestedLoop:
+				nl := item.nestedLoop
+				for i := nl.start; i <= nl.end; i++ {
+					loopVars[nl.varName] = i
+					e.report.SetExtraCalcVar(nl.varName, i)
+					executeItems(nl.body)
+				}
+			}
+		}
+	}
+
+	for _, loop := range loops {
+		for i := loop.start; i <= loop.end; i++ {
+			loopVars[loop.varName] = i
+			e.report.SetExtraCalcVar(loop.varName, i)
+			executeItems(loop.body)
+		}
+	}
+
+	// Remove injected loop variables from the expression environment.
+	for k := range loopVars {
+		e.report.SetExtraCalcVar(k, nil)
 	}
 
 	return h.Result()
@@ -2474,15 +2774,21 @@ func (e *ReportEngine) buildPreparedObject(obj report.Base) *preview.PreparedObj
 		po.Kind = preview.ObjectTypeLine
 		po.LineDiagonal = v.Diagonal()
 		po.Border = v.Border()
-		// Ensure horizontal lines have at least 1px height so the border is visible.
-		// In C#, LineObject with Height=0 renders with the border line width.
-		// C# ref: LineObject.cs Draw() uses Height for rendering calculations.
-		if !v.Diagonal() && po.Height == 0 && po.Width > 0 {
+		// Ensure non-diagonal lines have at least the border width in their
+		// thin dimension. C# HTMLExportLayers.GetLayerPicture does:
+		//   Width = obj.Width == 0 ? obj.Border.LeftLine.Width : obj.Width
+		//   Height = obj.Height == 0 ? obj.Border.TopLine.Width : obj.Height
+		if !v.Diagonal() {
 			lw := float32(1)
 			if v.Border().Lines[0] != nil && v.Border().Lines[0].Width > 0 {
 				lw = v.Border().Lines[0].Width
 			}
-			po.Height = lw
+			if po.Height == 0 && po.Width > 0 {
+				po.Height = lw
+			}
+			if po.Width == 0 && po.Height > 0 {
+				po.Width = lw
+			}
 		}
 		if f, ok := v.Fill().(*style.SolidFill); ok {
 			po.FillColor = f.Color

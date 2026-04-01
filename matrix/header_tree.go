@@ -240,16 +240,34 @@ func (m *MatrixObject) BuildTemplateMultiLevel() {
 	// Determine if we need a Grand Total row (hasTotals used for grand total row below).
 	// Total column leaves are already included in colLeaves after AddTotalItems in
 	// SyncRuntimeToMultiLevel, so no extra nCols addition is needed here.
-	hasTotals := len(m.Data.Rows) > 0 && len(m.Data.Columns) > 0
+	// C# ref: MatrixHelper — grand total row is emitted when any row descriptor has
+	// Totals=true, regardless of whether column dimensions are defined. For "rows only"
+	// matrices (empty Data.Columns), the row descriptor's Totals flag is the sole control.
+	rowHasTotals := false
+	for _, rd := range m.Data.Rows {
+		if rd.Totals {
+			rowHasTotals = true
+			break
+		}
+	}
+	hasTotals := len(m.Data.Rows) > 0 && rowHasTotals
 
 	// Add columns using template column widths.
-	// Template layout: [rowHdr] [dataCol×nCells] [perGroupTotal×nCells] [grandTotal×nCells]
-	// C# ref: MatrixHelper.UpdateCellDescriptors — template col offsets are:
-	//   HeaderWidth+ci (data), HeaderWidth+CellCount+ci (group total),
-	//   HeaderWidth+CellCount*2+ci (grand total).
+	// Template layout (C# MatrixHelper.UpdateColumnDescriptors):
+	//   [rowHdr×nRowHeaderCols] [data×nCells] [deepestSubtotal×nCells] ... [grandTotal×nCells]
+	// The grand total template offset is nRowHeaderCols + nCells × nColDims, where nColDims is
+	// the number of column dimensions. C# builds the template with bodyWidth = 1 + nColDims
+	// (each Totals=true descriptor adds one total column), so the last template column is
+	// at index nRowHeaderCols + nCells*nColDims.
+	// For a single-level matrix (nColDims=1): grandTotal = nRowHeaderCols + nCells*1.
+	// For a two-level matrix (nColDims=2):   grandTotal = nRowHeaderCols + nCells*2.
+	nColDims := len(m.Data.Columns)
+	if nColDims < 1 {
+		nColDims = 1
+	}
 	dataCellTemplateCol := func(cellIdx int) int { return nRowHeaderCols + cellIdx }
 	totalCellTemplateCol := func(cellIdx int) int { return nRowHeaderCols + nCells + cellIdx }
-	grandTotalCellTemplateCol := func(cellIdx int) int { return nRowHeaderCols + nCells*2 + cellIdx }
+	grandTotalCellTemplateCol := func(cellIdx int) int { return nRowHeaderCols + nCells*nColDims + cellIdx }
 
 	// templateColForLeaf returns the template column for colLeaves[leafIdx], cell ci.
 	// Grand Total leaves (parent == colRoot) use grandTotalCellTemplateCol.
@@ -337,11 +355,17 @@ func (m *MatrixObject) BuildTemplateMultiLevel() {
 	newCell := m.newStyledCell
 
 	// Helper: create a row with template height/autosize when available.
+	// C# ref: InitResultTable — row.Assign(descr.TemplateRow) copies all properties
+	// including Visible. Rows with Visible=false (e.g. the empty column-header row for
+	// "rows only" matrices) must have height=0 so they don't occupy vertical space.
 	newRow := func(templateRowIdx int) *table.TableRow {
 		r := table.NewTableRow()
 		if templateRowIdx >= 0 && templateRowIdx < len(savedRows) {
 			r.SetHeight(savedRows[templateRowIdx].Height())
 			r.SetAutoSize(savedRows[templateRowIdx].AutoSize())
+			if !savedRows[templateRowIdx].Visible() {
+				r.SetHeight(0)
+			}
 		}
 		return r
 	}
@@ -360,7 +384,12 @@ func (m *MatrixObject) BuildTemplateMultiLevel() {
 	if m.ShowTitle {
 		titleRow := newRow(0) // title uses template row 0
 		// Corner cell(s) of the title row.
+		// C# ref: PrintTitle — left-top cell is assigned from Matrix[0,0], which copies
+		// all properties including Text (e.g. "Employee" label in the corner).
 		cornerCell := newCell(0, 0) // template: Row0/Col0
+		if tc := m.templateCellAt(0, 0); tc != nil {
+			cornerCell.SetText(tc.Text())
+		}
 		if nRowHeaderCols > 1 {
 			cornerCell.SetColSpan(nRowHeaderCols)
 		}
@@ -856,13 +885,21 @@ func (m *MatrixObject) BuildTemplateMultiLevel() {
 		cols := m.TableBase.Columns()
 		allRows := m.TableBase.Rows()
 		for ci := range cols {
-			maxW := float32(0)
+			// Use -1 as sentinel: "no non-spanned cell encountered yet".
+			// Mirrors C# TableBase.CalcWidth which starts columnWidth = -1 and sets
+			// column.Width = cellWidth for any ColSpan==1 cell (including empty ones,
+			// since TextObject.CalcSize returns (0,0) for empty text → cellWidth=0 > -1).
+			maxW := float32(-1)
 			for _, row := range allRows {
 				if ci < len(row.Cells()) && row.Cells()[ci] != nil {
 					cell := row.Cells()[ci]
 					// C# CalcWidth first pass: skip cells with ColSpan > 1 (handled in second pass).
 					if cell.ColSpan() > 1 {
 						continue
+					}
+					// Found a non-spanned cell — mark column as "seen" even if text is empty.
+					if maxW < 0 {
+						maxW = 0
 					}
 					text := cell.Text()
 					if text != "" {
@@ -887,6 +924,11 @@ func (m *MatrixObject) BuildTemplateMultiLevel() {
 				// so we use +5.5 instead of +5 to match C# column widths before border adjustment.
 				// Empirically: data cols C#=56 (CSS 55), name col C#=87 (CSS 86), total C#=62 (CSS 61).
 				cols[ci].SetWidth(float32(math.Round(float64(maxW) + 5.5)))
+			} else if maxW == 0 {
+				// All non-spanned cells have empty text → C# CalcWidth sets column.Width=0.
+				// Fixes "columns only" matrix: row-header column collapses to 0 when noRows=true.
+				// C# ref: TextObject.CalcSize returns (0,0) for empty text, so cellWidth=0 > -1.
+				cols[ci].SetWidth(0)
 			}
 			// Prevent table.CalcWidth() from overriding the matrix-computed widths
 			// with macOS system font metrics (which differ from Windows GDI+).

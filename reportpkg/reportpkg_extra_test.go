@@ -413,9 +413,11 @@ func TestReportPage_MergeFromBase_DoesNotDuplicateExisting(t *testing.T) {
 // ── serializeBands / page.Serialize ──────────────────────────────────────
 
 func TestReportPage_Serialize_TitleBeforeHeader(t *testing.T) {
-	// When TitleBeforeHeader = true, ReportTitle comes before PageHeader in XML.
+	// TitleBeforeHeader=true is the default (C# [DefaultValue(true)]).
+	// The attribute is NOT written to XML when it equals the default.
+	// ReportTitle must still come before PageHeader in band serialization order.
 	frx := buildPageFRX(t, func(pg *reportpkg.ReportPage) {
-		pg.TitleBeforeHeader = true
+		// pg.TitleBeforeHeader is already true by default.
 		rt := band.NewReportTitleBand()
 		rt.SetName("RT")
 		pg.SetReportTitle(rt)
@@ -424,9 +426,9 @@ func TestReportPage_Serialize_TitleBeforeHeader(t *testing.T) {
 		pg.SetPageHeader(ph)
 	})
 
-	// Verify TitleBeforeHeader attribute present, then confirm RT before PH.
-	if !strings.Contains(frx, `TitleBeforeHeader="true"`) {
-		t.Error("expected TitleBeforeHeader=true in XML")
+	// TitleBeforeHeader="true" is the default and must NOT appear in XML.
+	if strings.Contains(frx, `TitleBeforeHeader="true"`) {
+		t.Error("TitleBeforeHeader=true is the default and must not be written to XML")
 	}
 	rtPos := strings.Index(frx, "<ReportTitle")
 	phPos := strings.Index(frx, "<PageHeader")
@@ -439,8 +441,10 @@ func TestReportPage_Serialize_TitleBeforeHeader(t *testing.T) {
 }
 
 func TestReportPage_Serialize_DefaultHeaderOrder(t *testing.T) {
-	// When TitleBeforeHeader = false (default), PageHeader comes before ReportTitle.
+	// When TitleBeforeHeader = false (explicit non-default), PageHeader comes before ReportTitle.
+	// The attribute TitleBeforeHeader="false" must appear in XML since it differs from the default (true).
 	frx := buildPageFRX(t, func(pg *reportpkg.ReportPage) {
+		pg.TitleBeforeHeader = false
 		rt := band.NewReportTitleBand()
 		rt.SetName("RT")
 		pg.SetReportTitle(rt)
@@ -449,6 +453,9 @@ func TestReportPage_Serialize_DefaultHeaderOrder(t *testing.T) {
 		pg.SetPageHeader(ph)
 	})
 
+	if !strings.Contains(frx, `TitleBeforeHeader="false"`) {
+		t.Error("expected TitleBeforeHeader=false in XML when set to non-default")
+	}
 	rtPos := strings.Index(frx, "<ReportTitle")
 	phPos := strings.Index(frx, "<PageHeader")
 	if rtPos == -1 || phPos == -1 {
@@ -504,7 +511,7 @@ func TestReportPage_Serialize_AllFlags(t *testing.T) {
 		pg.RightMargin = 15
 		pg.BottomMargin = 20
 		pg.MirrorMargins = true
-		pg.TitleBeforeHeader = true
+		pg.TitleBeforeHeader = false // non-default (default is true), so it appears in XML
 		pg.PrintOnPreviousPage = true
 		pg.ResetPageNumber = true
 		pg.StartOnOddPage = true
@@ -526,7 +533,7 @@ func TestReportPage_Serialize_AllFlags(t *testing.T) {
 		`RightMargin="15"`,
 		`BottomMargin="20"`,
 		`MirrorMargins="true"`,
-		`TitleBeforeHeader="true"`,
+		`TitleBeforeHeader="false"`,
 		`PrintOnPreviousPage="true"`,
 		`ResetPageNumber="true"`,
 		`StartOnOddPage="true"`,

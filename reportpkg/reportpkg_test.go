@@ -33,8 +33,8 @@ func TestNewReportPage_Defaults(t *testing.T) {
 	if p.MirrorMargins {
 		t.Error("MirrorMargins should default to false")
 	}
-	if p.TitleBeforeHeader {
-		t.Error("TitleBeforeHeader should default to false")
+	if !p.TitleBeforeHeader {
+		t.Error("TitleBeforeHeader should default to true (C# [DefaultValue(true)])")
 	}
 	if p.Fill() == nil {
 		t.Error("Fill should default to non-nil (white)")

@@ -273,7 +273,7 @@ func TestReportPage_Serialize_AllNonDefaultAttributes(t *testing.T) {
 	pg.RightMargin = 7
 	pg.BottomMargin = 8
 	pg.MirrorMargins = true
-	pg.TitleBeforeHeader = true
+	pg.TitleBeforeHeader = false // non-default (default is true); exercises the WriteAttr path
 	pg.PrintOnPreviousPage = true
 	pg.ResetPageNumber = true
 	pg.StartOnOddPage = true
@@ -299,7 +299,7 @@ func TestReportPage_Serialize_AllNonDefaultAttributes(t *testing.T) {
 	for _, attr := range []string{
 		`PaperWidth="100"`, `PaperHeight="200"`, `Landscape="true"`,
 		`LeftMargin="5"`, `TopMargin="6"`, `RightMargin="7"`, `BottomMargin="8"`,
-		`MirrorMargins="true"`, `TitleBeforeHeader="true"`,
+		`MirrorMargins="true"`, `TitleBeforeHeader="false"`,
 		`PrintOnPreviousPage="true"`, `ResetPageNumber="true"`,
 		`StartOnOddPage="true"`, `OutlineExpression="[Page]"`,
 		`CreatePageEvent="OnCreate"`, `StartPageEvent="OnStart"`,

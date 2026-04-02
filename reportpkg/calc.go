@@ -152,7 +152,9 @@ func (r *Report) CalcText(template string) (string, error) {
 			sb.WriteString("]")
 			continue
 		}
-		sb.WriteString(fmt.Sprintf("%v", val))
+		if val != nil {
+			sb.WriteString(fmt.Sprintf("%v", val))
+		}
 	}
 	return sb.String(), nil
 }

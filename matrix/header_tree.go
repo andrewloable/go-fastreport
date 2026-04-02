@@ -6,6 +6,8 @@ import (
 	"sort"
 
 	"github.com/andrewloable/go-fastreport/format"
+	"github.com/andrewloable/go-fastreport/object"
+	"github.com/andrewloable/go-fastreport/script"
 	"github.com/andrewloable/go-fastreport/style"
 	"github.com/andrewloable/go-fastreport/table"
 	"github.com/andrewloable/go-fastreport/utils"
@@ -768,6 +770,10 @@ func (m *MatrixObject) BuildTemplateMultiLevel() {
 				// Apply highlight conditions with the raw numeric value as context.
 				m.CurrentCellValue = rawNumVal
 				m.applyHighlights(cell)
+				// Set the raw value on the result cell so BeforePrint scripts can
+				// read it via "Cell4.Value", then fire any registered BeforePrint event.
+				cell.SetCurrentValue(rawNumVal)
+				m.fireCellBeforePrint(cell)
 				tableRow.AddCell(cell)
 			}
 		}
@@ -912,18 +918,20 @@ func (m *MatrixObject) BuildTemplateMultiLevel() {
 						// C# ref: TextObject.CalcSize → g.MeasureString(text, font, SizeF).
 						fontScale := float64(cellFont.Size) / 8.0
 						w := measureStringApprox(text, fontScale, cellFont.Style)
-						if w > maxW {
-							maxW = w
+						// C# CalcWidth: cellWidth = MeasureString(text) + Padding.Horizontal + 1.
+						// GDI+ MeasureString includes ~0.5px trailing whitespace, so we add 0.5
+						// to match. Padding.Horizontal = cell.Padding().Left + cell.Padding().Right.
+						// C# ref: TextObject.CalcSize → width = g.MeasureString + Padding.H + 1.
+						pad := cell.Padding()
+						cellWidth := w + float32(pad.Left) + float32(pad.Right) + 1.5
+						if cellWidth > maxW {
+							maxW = cellWidth
 						}
 					}
 				}
 			}
 			if maxW > 0 {
-				// C# CalcWidth: MeasureString + Padding.Horizontal + 1 = approx + 4 + 1 = approx + 5.
-				// GDI+ MeasureString includes ~0.6px trailing whitespace not in our glyph widths,
-				// so we use +5.5 instead of +5 to match C# column widths before border adjustment.
-				// Empirically: data cols C#=56 (CSS 55), name col C#=87 (CSS 86), total C#=62 (CSS 61).
-				cols[ci].SetWidth(float32(math.Round(float64(maxW) + 5.5)))
+				cols[ci].SetWidth(float32(math.Round(float64(maxW))))
 			} else if maxW == 0 {
 				// All non-spanned cells have empty text → C# CalcWidth sets column.Width=0.
 				// Fixes "columns only" matrix: row-header column collapses to 0 when noRows=true.
@@ -1150,16 +1158,24 @@ func (m *MatrixObject) templateCellAt(rowIdx, colIdx int) *table.TableCell {
 
 // newStyledCell creates a new table cell with visual properties copied from the
 // template cell at (rowIdx, colIdx). Mirrors C# RunTimeAssign: copies font, fill,
-// border, alignment, format, and highlight conditions.
+// border, alignment, format, padding, highlight conditions, and embedded objects.
 func (m *MatrixObject) newStyledCell(rowIdx, colIdx int) *table.TableCell {
 	c := table.NewTableCell()
-	if tc := m.templateCellAt(rowIdx, colIdx); tc != nil {
+	tc := m.templateCellAt(rowIdx, colIdx)
+	if tc != nil {
 		c.SetFont(tc.Font())
 		c.SetFill(tc.Fill())
 		c.SetBorder(tc.Border())
 		c.SetHorzAlign(tc.HorzAlign())
 		c.SetVertAlign(tc.VertAlign())
 		c.SetTextColor(tc.TextColor())
+		// Copy padding so AutoSize column width includes padding (e.g. Padding.Left=50
+		// for cells containing embedded shape indicators).
+		// C# ref: RunTimeAssign → TextObject.Assign copies Padding.
+		c.SetPadding(tc.Padding())
+		// Copy the template cell's BeforePrintEventName so fireCellBeforePrint can
+		// look up the compiled handler.
+		c.BeforePrintEventName = tc.BeforePrintEventName
 		if tc.Format() != nil {
 			c.SetFormat(tc.Format())
 		}
@@ -1170,8 +1186,63 @@ func (m *MatrixObject) newStyledCell(rowIdx, colIdx int) *table.TableCell {
 			copy(hCopy, h)
 			c.SetHighlights(hCopy)
 		}
+		// Clone embedded ShapeObjects so each result cell has its own independent
+		// instances — BeforePrint scripts mutate Visible and Fill per-cell.
+		// Other object types are shared by reference (read-only in scripts).
+		// C# ref: RunTimeAssign → TableCell.Assign copies child object list.
+		for _, obj := range tc.Objects() {
+			if shape, ok := obj.(*object.ShapeObject); ok {
+				c.AddObject(shape.Clone())
+			} else {
+				c.AddObject(obj)
+			}
+		}
 	}
 	return c
+}
+
+// fireCellBeforePrint fires the BeforePrint event for a result cell when the
+// template cell (identified via the result cell's BeforePrintEventName) has a
+// compiled handler in m.EventHandlers.
+//
+// The cell's embedded objects that implement script.ContextObject are exposed
+// by name so the script can mutate their Visible and Fill properties.
+func (m *MatrixObject) fireCellBeforePrint(cell *table.TableCell) {
+	eventName := cell.BeforePrintEventName
+	if eventName == "" || m.EventHandlers == nil {
+		return
+	}
+	handler, found := m.EventHandlers[eventName]
+	if !found {
+		return
+	}
+
+	// Derive sender name from event name (e.g. "Cell4" from "Cell4_BeforePrint").
+	senderName := eventName
+	if idx := len(eventName) - len("_BeforePrint"); idx > 0 && eventName[idx:] == "_BeforePrint" {
+		senderName = eventName[:idx]
+	}
+
+	// Build named object map from the result cell's children.
+	objects := make(map[string]script.ContextObject)
+	for _, obj := range cell.Objects() {
+		co, isCtx := obj.(script.ContextObject)
+		if !isCtx {
+			continue
+		}
+		type named interface{ Name() string }
+		if n, ok := obj.(named); ok {
+			objects[n.Name()] = co
+		}
+	}
+
+	ctx := &script.Context{
+		SenderName:  senderName,
+		SenderValue: cell.CurrentValue(),
+		Objects:     objects,
+		Vars:        make(map[string]interface{}),
+	}
+	handler(ctx)
 }
 
 // applyHighlights evaluates the highlight conditions on a cell using the current

@@ -489,3 +489,4 @@ func TestMatrixObject_Serialize_MatrixCellsError(t *testing.T) {
 		t.Error("expected error when MatrixCells WriteObjectNamed fails")
 	}
 }
+

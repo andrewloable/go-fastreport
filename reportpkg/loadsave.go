@@ -183,6 +183,8 @@ func (r *Report) deserializeReportBody(rdr *serial.Reader, baseDir string) error
 		}
 		_ = rdr.FinishChild()
 	}
+	// Compile any C# script methods found in ScriptText into executable closures.
+	r.CompileScripts()
 	return nil
 }
 

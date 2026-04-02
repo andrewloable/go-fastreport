@@ -125,6 +125,11 @@ type ReportComponentBase struct {
 	bookmark  string
 	hyperlink *Hyperlink
 
+	// BeforePrintEventName is the C# script method name to invoke before printing.
+	// Read from the FRX attribute BeforePrintEvent="Cell4_BeforePrint".
+	// C# ref: FastReport.ReportComponentBase.BeforePrintEvent property.
+	BeforePrintEventName string
+
 	// Event callbacks.
 	OnBeforePrint EventHandler
 	OnAfterPrint  EventHandler
@@ -564,6 +569,7 @@ func (rc *ReportComponentBase) Deserialize(r Reader) error {
 	rc.evenStylePriority = StylePriority(r.ReadInt("EvenStylePriority", int(StylePriorityUseFill)))
 	rc.hoverStyleName = r.ReadStr("HoverStyle", "")
 	rc.bookmark = r.ReadStr("Bookmark", "")
+	rc.BeforePrintEventName = r.ReadStr("BeforePrintEvent", "")
 	// Hyperlink dot-notation attributes.
 	hlKind := r.ReadStr("Hyperlink.Kind", "")
 	hlExpr := r.ReadStr("Hyperlink.Expression", "")

@@ -8,6 +8,7 @@ import (
 	"github.com/andrewloable/go-fastreport/export"
 	"github.com/andrewloable/go-fastreport/preview"
 	"github.com/andrewloable/go-fastreport/report"
+	"github.com/andrewloable/go-fastreport/script"
 	"github.com/andrewloable/go-fastreport/style"
 )
 
@@ -282,6 +283,10 @@ type Report struct {
 
 	// Script settings.
 	ScriptText string
+
+	// CompiledScripts holds compiled BeforePrint (and other) event handlers
+	// parsed from ScriptText. Populated by CompileScripts() after FRX load.
+	CompiledScripts map[string]script.CompiledMethod
 
 	// ScriptLanguage records the script language stored in the FRX attribute.
 	// The Go port does not execute C# or VB scripts; this field is preserved
@@ -761,6 +766,23 @@ func (r *Report) ApplyStyles() {
 			ss.ApplyToObject(s)
 		}
 	}
+}
+
+// CompileScripts parses r.ScriptText and populates r.CompiledScripts with
+// compiled BeforePrint (and other) event handlers. Called automatically after
+// FRX load. Errors from the script parser are silently ignored so that reports
+// with unparseable scripts still render (with no event firing).
+func (r *Report) CompileScripts() {
+	if r.ScriptText == "" {
+		r.CompiledScripts = nil
+		return
+	}
+	methods, err := script.ParseScript(r.ScriptText)
+	if err != nil || len(methods) == 0 {
+		r.CompiledScripts = nil
+		return
+	}
+	r.CompiledScripts = methods
 }
 
 // Clear resets all pages and report properties to defaults.

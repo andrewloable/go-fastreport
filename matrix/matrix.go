@@ -9,6 +9,7 @@ import (
 	"github.com/andrewloable/go-fastreport/data"
 	"github.com/andrewloable/go-fastreport/format"
 	"github.com/andrewloable/go-fastreport/report"
+	"github.com/andrewloable/go-fastreport/script"
 	"github.com/andrewloable/go-fastreport/table"
 )
 
@@ -292,6 +293,10 @@ type MatrixObject struct {
 	// BuildTemplateMultiLevel.
 	// C# ref: templateCell.GetData() evaluates highlight conditions in PrintData.
 	HighlightCalc func(expr string) (any, error)
+	// EventHandlers maps C# event method names to compiled Go closures.
+	// Populated by the engine from Report.CompiledScripts before BuildTemplateMultiLevel.
+	// Used to fire BeforePrint events on result cells.
+	EventHandlers map[string]script.CompiledMethod
 	// CurrentCellValue holds the raw numeric value of the current data cell being
 	// processed, so that HighlightCalc can expose it as "Value" in the expression
 	// context. Mirrors C# TextObject.Value passed to Report.Calc(expr, varValue).

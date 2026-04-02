@@ -579,21 +579,39 @@ func (e *Exporter) renderObject(obj preview.PreparedObject, scale float32) {
 		}
 
 	case preview.ObjectTypeLine:
-		// C# renders all LineObjects as PNG images via LayerPicture (one div, two
-		// CSS classes: base style + background image). Match that approach.
-		// Reference: HTMLExportLayers.cs:939-941
-		// C# LayerPicture adjusts position for negative Width/Height:
-		//   x = Width > 0 ? AbsLeft : AbsLeft + Width
-		//   y = Height > 0 ? AbsTop : AbsTop + Height
-		// The CSS div keeps the original (possibly negative) Width/Height, but the
-		// background PNG image uses abs(Width) × abs(Height) pixels.
+		// C# converts lines with caps to PictureObjects via GetConvertedObjects()
+		// which expands the bounding box. For lines without caps, C# uses LayerPicture
+		// which adjusts position for negative Width/Height.
+		// RenderGenericPNG returns the actual canvas size (including cap extension).
 		if w < 0 {
 			left += w
 		}
 		if h < 0 {
 			top += h
 		}
-		e.renderObjectAsImage(obj, left, top, w, h, scale)
+		// Pre-render the line PNG to get the actual canvas dimensions (may be
+		// larger than abs(w)×abs(h) due to cap decorations).
+		linePNG, canvasW, canvasH, lineErr := imgexp.RenderGenericPNG(obj)
+		if lineErr == nil && len(linePNG) > 0 {
+			// Use canvas dimensions for the CSS div so caps are not clipped.
+			cssW := float32(canvasW)
+			cssH := float32(canvasH)
+			// Adjust position: the cap padding shifts the line within the canvas,
+			// so shift the div left/up by the same amount.
+			absW := w
+			if absW < 0 {
+				absW = -absW
+			}
+			absH := h
+			if absH < 0 {
+				absH = -absH
+			}
+			padL := (cssW - absW) / 2
+			padT := (cssH - absH) / 2
+			left -= padL
+			top -= padT
+			e.renderObjectAsImageWithPNG(obj, left, top, cssW, cssH, scale, linePNG)
+		}
 
 	case preview.ObjectTypeShape:
 		// C# renders all ShapeObjects as inline-style divs with base64 PNG images.
@@ -612,7 +630,7 @@ func (e *Exporter) renderObject(obj preview.PreparedObject, scale float32) {
 	case preview.ObjectTypeCheckBox:
 		// C# renders checkboxes as PNG images using the LayerBack + LayerPicture
 		// div pair pattern (same as other picture objects), with border adjustments.
-		pngBytes, err := imgexp.RenderGenericPNG(obj)
+		pngBytes, _, _, err := imgexp.RenderGenericPNG(obj)
 		if err == nil && len(pngBytes) > 0 {
 			// Apply border width adjustment (mirrors ObjectTypePicture rendering).
 			var bLeft, bTop, bRight, bBottom float32
@@ -695,7 +713,7 @@ func (e *Exporter) renderObject(obj preview.PreparedObject, scale float32) {
 // single div with a base64 PNG background image, matching C# HTMLExportLayers
 // pattern for non-text objects (one div, two CSS classes: styling + image).
 func (e *Exporter) renderObjectAsImage(obj preview.PreparedObject, left, top, w, h, scale float32) {
-	pngBytes, err := imgexp.RenderGenericPNG(obj)
+	pngBytes, _, _, err := imgexp.RenderGenericPNG(obj)
 	if err != nil || len(pngBytes) == 0 {
 		return
 	}
@@ -707,7 +725,19 @@ func (e *Exporter) renderObjectAsImage(obj preview.PreparedObject, left, top, w,
 	} else {
 		picCSS.WriteString(fmt.Sprintf("background-color:%s;", rgbColor(obj.FillColor)))
 	}
-	picCSS.WriteString(fmt.Sprintf("border:none;width:%spx;height:%spx;", pxVal(w), pxVal(h)))
+	// C# HTMLExportStyles.GetStyle uses Math.Abs(Width) and Math.Abs(Height)
+	// for the CSS class. The inline style keeps the raw (possibly negative) values.
+	// When the browser encounters an invalid negative inline height, it falls back
+	// to the positive CSS class value, making the div render at the correct size.
+	absW := w
+	if absW < 0 {
+		absW = -absW
+	}
+	absH := h
+	if absH < 0 {
+		absH = -absH
+	}
+	picCSS.WriteString(fmt.Sprintf("border:none;width:%spx;height:%spx;", pxVal(absW), pxVal(absH)))
 
 	encoded := base64.StdEncoding.EncodeToString(pngBytes)
 	imgCSS := fmt.Sprintf(
@@ -728,11 +758,50 @@ func (e *Exporter) renderObjectAsImage(obj preview.PreparedObject, left, top, w,
 	}
 }
 
+// renderObjectAsImageWithPNG is like renderObjectAsImage but uses pre-rendered PNG data
+// and explicit CSS dimensions (for line cap expansion where canvas > line dims).
+func (e *Exporter) renderObjectAsImageWithPNG(obj preview.PreparedObject, left, top, w, h, scale float32, pngBytes []byte) {
+	var picCSS strings.Builder
+	picCSS.WriteString("text-align:center;position:absolute;color:rgb(255, 255, 255);")
+	if obj.FillColor.A == 0 {
+		picCSS.WriteString("background-color:transparent;")
+	} else {
+		picCSS.WriteString(fmt.Sprintf("background-color:%s;", rgbColor(obj.FillColor)))
+	}
+	absW := w
+	if absW < 0 {
+		absW = -absW
+	}
+	absH := h
+	if absH < 0 {
+		absH = -absH
+	}
+	picCSS.WriteString(fmt.Sprintf("border:none;width:%spx;height:%spx;", pxVal(absW), pxVal(absH)))
+
+	encoded := base64.StdEncoding.EncodeToString(pngBytes)
+	imgCSS := fmt.Sprintf(
+		"background: url('data:image/Png;base64,%s') no-repeat !important;background-size:100%% 100%%;-webkit-print-color-adjust:exact;",
+		encoded,
+	)
+
+	if e.InlineStyles {
+		e.sb.WriteString(fmt.Sprintf(
+			"<div style=\"%s%sleft:%spx;top:%spx;width:%spx;height:%spx;\">&nbsp;</div>\n",
+			picCSS.String(), imgCSS, pxVal(left), pxVal(top), pxVal(absW), pxVal(absH)))
+	} else {
+		picClass := e.css.Register(picCSS.String())
+		imgClass := e.css.Register(imgCSS)
+		e.sb.WriteString(fmt.Sprintf(
+			"<div class=\"%s %s\" style=\"left:%spx;top:%spx;width:%spx;height:%spx;\">&nbsp;</div>\n",
+			picClass, imgClass, pxVal(left), pxVal(top), pxVal(absW), pxVal(absH)))
+	}
+}
+
 // renderObjectAsInlineImage renders a PreparedObject as a single div with
 // inline style containing a base64 PNG background image. No CSS classes.
 // Matches C# rendering of ShapeObjects (HTMLExportLayers.cs).
 func (e *Exporter) renderObjectAsInlineImage(obj preview.PreparedObject, left, top, w, h float32) {
-	pngBytes, err := imgexp.RenderGenericPNG(obj)
+	pngBytes, _, _, err := imgexp.RenderGenericPNG(obj)
 	if err != nil || len(pngBytes) == 0 {
 		return
 	}

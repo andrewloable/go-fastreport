@@ -77,6 +77,11 @@ type TableCell struct {
 	// aggregate functions (Sum, Min, Max) to identify matching cells.
 	// Mirrors C# TableCellData.OriginalCell concept.
 	originalCellName string
+
+	// currentValue holds the raw data value for this cell, set by the matrix
+	// engine so that BeforePrint scripts can read it via "Cell4.Value".
+	// Mirrors C# TableCell.Value (the TextObject.Value passed to script events).
+	currentValue interface{}
 }
 
 // TypeName returns the FRX element name.
@@ -121,6 +126,37 @@ func (c *TableCell) OriginalCellName() string { return c.originalCellName }
 
 // SetOriginalCellName sets the template cell name.
 func (c *TableCell) SetOriginalCellName(name string) { c.originalCellName = name }
+
+// CurrentValue returns the raw data value for this cell.
+// Used by BeforePrint script events (mirrors C# TableCell.Value).
+func (c *TableCell) CurrentValue() interface{} { return c.currentValue }
+
+// SetCurrentValue sets the raw data value for this cell.
+// Called by the matrix engine before firing BeforePrint events.
+func (c *TableCell) SetCurrentValue(v interface{}) { c.currentValue = v }
+
+// ScriptGetProperty returns named property values for BeforePrint script access.
+// Implements the script.ContextObject interface (implicit in Go).
+func (c *TableCell) ScriptGetProperty(name string) interface{} {
+	switch name {
+	case "Value":
+		return c.currentValue
+	case "Text":
+		return c.Text()
+	}
+	return nil
+}
+
+// ScriptSetProperty sets named property values from BeforePrint scripts.
+// Implements the script.ContextObject interface (implicit in Go).
+func (c *TableCell) ScriptSetProperty(name string, value interface{}) {
+	switch name {
+	case "Text":
+		if s, ok := value.(string); ok {
+			c.SetText(s)
+		}
+	}
+}
 
 // Duplicates returns the cell's duplicate-value handling mode.
 func (c *TableCell) Duplicates() CellDuplicates { return c.duplicates }

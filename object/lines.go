@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/andrewloable/go-fastreport/report"
+	"github.com/andrewloable/go-fastreport/style"
 	"github.com/andrewloable/go-fastreport/utils"
 )
 
@@ -375,6 +376,44 @@ func (s *ShapeObject) Deserialize(r report.Reader) error {
 		}
 	}
 	return nil
+}
+
+// Clone returns an independent deep copy of this ShapeObject.
+// Used by the matrix engine to give each rendered cell its own shape
+// instances so that BeforePrint script mutations do not bleed across cells.
+func (s *ShapeObject) Clone() *ShapeObject {
+	clone := NewShapeObject()
+	clone.Assign(s)
+	clone.SetName(s.Name())
+	clone.BeforePrintEventName = s.BeforePrintEventName
+	return clone
+}
+
+// ScriptGetProperty returns the named property value for script access.
+// Implements the script.ContextObject interface (implicit in Go).
+func (s *ShapeObject) ScriptGetProperty(name string) interface{} {
+	switch name {
+	case "Visible":
+		return s.Visible()
+	case "Fill":
+		return s.Fill()
+	}
+	return nil
+}
+
+// ScriptSetProperty sets the named property from script.
+// Implements the script.ContextObject interface (implicit in Go).
+func (s *ShapeObject) ScriptSetProperty(name string, value interface{}) {
+	switch name {
+	case "Visible":
+		if b, ok := value.(bool); ok {
+			s.SetVisible(b)
+		}
+	case "Fill":
+		if f, ok := value.(style.Fill); ok {
+			s.SetFill(f)
+		}
+	}
 }
 
 // -----------------------------------------------------------------------

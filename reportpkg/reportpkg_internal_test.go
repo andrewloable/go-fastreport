@@ -1188,10 +1188,10 @@ func TestBuildCalcEnv_WithTotals(t *testing.T) {
 // ── serializeBands — non-TitleBeforeHeader paths ──────────────────────────
 
 func TestSerializeBands_DefaultOrder_PageHeaderAndTitle(t *testing.T) {
-	// TitleBeforeHeader=false (default) with both PageHeader and ReportTitle.
-	// Expected order: PageHeader first, then ReportTitle.
+	// TitleBeforeHeader=true (default, matching C# [DefaultValue(true)]) with both
+	// PageHeader and ReportTitle. Expected order: ReportTitle first, then PageHeader.
 	pg := NewReportPage()
-	// TitleBeforeHeader defaults to false.
+	// TitleBeforeHeader defaults to true.
 	ph := band.NewPageHeaderBand()
 	ph.SetName("PH1")
 	pg.SetPageHeader(ph)
@@ -1214,11 +1214,11 @@ func TestSerializeBands_DefaultOrder_PageHeaderAndTitle(t *testing.T) {
 		t.Error("expected <ReportTitle in XML")
 	}
 
-	// PageHeader must come before ReportTitle (default order).
+	// ReportTitle must come before PageHeader (default order: TitleBeforeHeader=true).
 	phPos := strings.Index(xml, "<PageHeader")
 	rtPos := strings.Index(xml, "<ReportTitle")
-	if phPos > rtPos {
-		t.Error("expected PageHeader before ReportTitle in default order")
+	if rtPos > phPos {
+		t.Error("expected ReportTitle before PageHeader in default order (TitleBeforeHeader=true)")
 	}
 }
 

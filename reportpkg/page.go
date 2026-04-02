@@ -240,17 +240,18 @@ func (*ReportPage) TypeName() string { return "ReportPage" }
 // matching FastReport's ReportPage constructor defaults.
 func NewReportPage() *ReportPage {
 	p := &ReportPage{
-		BaseObject:       *report.NewBaseObject(),
-		visible:          true,
-		PaperWidth:       210,
-		PaperHeight:      297,
-		LeftMargin:       10,
-		TopMargin:        10,
-		RightMargin:      10,
-		BottomMargin:     10,
-		FirstPageSource:  7,
-		OtherPagesSource: 7,
-		LastPageSource:   7,
+		BaseObject:        *report.NewBaseObject(),
+		visible:           true,
+		PaperWidth:        210,
+		PaperHeight:       297,
+		LeftMargin:        10,
+		TopMargin:         10,
+		RightMargin:       10,
+		BottomMargin:      10,
+		FirstPageSource:   7,
+		OtherPagesSource:  7,
+		LastPageSource:    7,
+		TitleBeforeHeader: true, // C# default: [DefaultValue(true)]
 	}
 	p.fill = &style.SolidFill{Color: style.ColorWhite}
 	p.Watermark = NewWatermark()
@@ -693,8 +694,8 @@ func (p *ReportPage) Serialize(w report.Writer) error {
 	if p.MirrorMargins {
 		w.WriteBool("MirrorMargins", true)
 	}
-	if p.TitleBeforeHeader {
-		w.WriteBool("TitleBeforeHeader", true)
+	if !p.TitleBeforeHeader {
+		w.WriteBool("TitleBeforeHeader", false) // only write when non-default (C# default is true)
 	}
 	if p.PrintOnPreviousPage {
 		w.WriteBool("PrintOnPreviousPage", true)
@@ -880,7 +881,7 @@ func (p *ReportPage) Deserialize(r report.Reader) error {
 	p.RightMargin = r.ReadFloat("RightMargin", 10)
 	p.BottomMargin = r.ReadFloat("BottomMargin", 10)
 	p.MirrorMargins = r.ReadBool("MirrorMargins", false)
-	p.TitleBeforeHeader = r.ReadBool("TitleBeforeHeader", false)
+	p.TitleBeforeHeader = r.ReadBool("TitleBeforeHeader", true) // C# default is true
 	p.PrintOnPreviousPage = r.ReadBool("PrintOnPreviousPage", false)
 	p.ResetPageNumber = r.ReadBool("ResetPageNumber", false)
 	p.StartOnOddPage = r.ReadBool("StartOnOddPage", false)

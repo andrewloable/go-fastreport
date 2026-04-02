@@ -19,6 +19,7 @@ import (
 	"golang.org/x/image/font"
 	"golang.org/x/image/math/fixed"
 	"golang.org/x/image/tiff"
+	"golang.org/x/image/vector"
 
 	"github.com/andrewloable/go-fastreport/export"
 	"github.com/andrewloable/go-fastreport/preview"
@@ -375,24 +376,67 @@ func (e *Exporter) renderObject(obj preview.PreparedObject, bandTop float32) {
 			lineWidth = int(math.Round(float64(obj.Border.Lines[0].Width)))
 		}
 		if obj.LineDiagonal {
-			// Draw thick diagonal line by offsetting in the perpendicular direction.
-			// For a mostly-horizontal line, offset in Y; for mostly-vertical, offset in X.
-			e.drawLine(x, y, x+w, y+h, lineColor)
-			dx := w
+			x1, y1 := x, y
+			x2, y2 := x+w, y+h
+
+			// C# shortens the line by cap insets so the line doesn't overlap caps.
+			// C# ref: LineObject.cs:144-158 — insets from GetCustomCapPath.
+			// Insets: Arrow=0, Circle=H/2, Square=H/2, Diamond=H/1.4.
+			// The inset is applied along the line direction (in line-local Y axis).
+			lx1, ly1 := float64(x1), float64(y1)
+			lx2, ly2 := float64(x2), float64(y2)
+			ldx := lx2 - lx1
+			ldy := ly2 - ly1
+			lineLen := math.Sqrt(ldx*ldx + ldy*ldy)
+			if lineLen > 0 {
+				capInset := func(cap preview.LineCap) float64 {
+					ch := float64(cap.Height)
+					if ch <= 0 {
+						ch = 8
+					}
+					switch cap.Style {
+					case preview.LineCapStyleCircle, preview.LineCapStyleSquare:
+						return ch / 2 * float64(lineWidth)
+					case preview.LineCapStyleDiamond:
+						return ch / 1.4 * float64(lineWidth)
+					}
+					return 0 // Arrow has inset=0
+				}
+				startInset := capInset(obj.LineStartCap)
+				endInset := capInset(obj.LineEndCap)
+				// Move start point forward along line by startInset
+				ux, uy := ldx/lineLen, ldy/lineLen
+				lx1 += ux * startInset
+				ly1 += uy * startInset
+				// Move end point backward along line by endInset
+				lx2 -= ux * endInset
+				ly2 -= uy * endInset
+			}
+			ix1, iy1 := int(math.Round(lx1)), int(math.Round(ly1))
+			ix2, iy2 := int(math.Round(lx2)), int(math.Round(ly2))
+
+			// Draw thick diagonal line (shortened by cap insets).
+			e.drawLine(ix1, iy1, ix2, iy2, lineColor)
+			dx := ix2 - ix1
 			if dx < 0 {
 				dx = -dx
 			}
-			dy := h
+			dy := ix2 - ix1 // intentionally using same for perpendicular check
+			dy = iy2 - iy1
 			if dy < 0 {
 				dy = -dy
 			}
 			for i := 1; i < lineWidth; i++ {
 				if dx >= dy {
-					e.drawLine(x, y+i, x+w, y+h+i, lineColor)
+					e.drawLine(ix1, iy1+i, ix2, iy2+i, lineColor)
 				} else {
-					e.drawLine(x+i, y, x+w+i, y+h, lineColor)
+					e.drawLine(ix1+i, iy1, ix2+i, iy2, lineColor)
 				}
 			}
+
+			// Draw caps on top of the line (at original endpoints, not inset ones).
+			e.drawLineCap(obj.LineStartCap, x1, y1, x2, y2, lineWidth, lineColor, true)
+			e.drawLineCap(obj.LineEndCap, x1, y1, x2, y2, lineWidth, lineColor, false)
 		} else {
 			// Non-diagonal: horizontal or vertical filled rectangle.
 			if w >= h {
@@ -420,28 +464,55 @@ func (e *Exporter) renderObject(obj preview.PreparedObject, bandTop float32) {
 		if obj.Border.Lines[0] != nil && obj.Border.Lines[0].Color.A > 0 {
 			shapeColor = obj.Border.Lines[0].Color
 		}
+		shapePenW := 1
+		if obj.Border.Lines[0] != nil && obj.Border.Lines[0].Width > 0 {
+			shapePenW = int(math.Round(float64(obj.Border.Lines[0].Width)))
+		}
+		// drawThickShapeLine draws a line with the shape's border width.
+		drawThickLine := func(x0, y0, x1, y1 int) {
+			e.drawLine(x0, y0, x1, y1, shapeColor)
+			adx, ady := x1-x0, y1-y0
+			if adx < 0 {
+				adx = -adx
+			}
+			if ady < 0 {
+				ady = -ady
+			}
+			for i := 1; i < shapePenW; i++ {
+				if adx >= ady {
+					e.drawLine(x0, y0+i, x1, y1+i, shapeColor)
+				} else {
+					e.drawLine(x0+i, y0, x1+i, y1, shapeColor)
+				}
+			}
+		}
 		switch obj.ShapeKind {
 		case 2: // Ellipse — fill ellipse, then draw outline.
 			if fc.A > 0 {
 				e.fillEllipse(x, y, w, h, fc)
 			}
-			e.drawEllipse(x, y, w, h, shapeColor)
+			// Draw thick ellipse by drawing multiple concentric outlines.
+			for i := 0; i < shapePenW; i++ {
+				e.drawEllipse(x+i, y+i, w-i*2, h-i*2, shapeColor)
+			}
 		case 3: // Triangle — fill polygon, then draw outline.
-			// C# triangle points: (x1,y1), (x,y1), (x+dx/2,y) — ShapeObject.cs:178-180
+			// Inset bottom edge by 1px so thick lines don't clip at canvas boundary.
+			bInset := 1
 			triPts := []image.Point{
 				{X: x + w/2, Y: y},
-				{X: x + w, Y: y + h},
-				{X: x, Y: y + h},
+				{X: x + w - bInset, Y: y + h - bInset},
+				{X: x, Y: y + h - bInset},
 			}
 			if fc.A > 0 {
 				e.fillPolygon(triPts, fc)
 			}
-			e.drawLine(x+w/2, y, x+w, y+h, shapeColor)
-			e.drawLine(x+w, y+h, x, y+h, shapeColor)
-			e.drawLine(x, y+h, x+w/2, y, shapeColor)
+			drawThickLine(x+w/2, y, x+w-bInset, y+h-bInset)
+			// Bottom edge: use drawHLine for crisp horizontal rendering.
+			for i := 0; i < shapePenW; i++ {
+				e.drawHLine(x, y+h-bInset-i, x+w-bInset, shapeColor)
+			}
+			drawThickLine(x, y+h-bInset, x+w/2, y)
 		case 4: // Diamond — fill polygon, then draw outline.
-			// C# diamond points: (x+dx/2,y), (x1,y+dy/2), (x+dx/2,y1), (x,y+dy/2)
-			// Ref: ShapeObject.cs:184-187
 			diaPts := []image.Point{
 				{X: x + w/2, Y: y},
 				{X: x + w, Y: y + h/2},
@@ -451,25 +522,29 @@ func (e *Exporter) renderObject(obj preview.PreparedObject, bandTop float32) {
 			if fc.A > 0 {
 				e.fillPolygon(diaPts, fc)
 			}
-			e.drawLine(x+w/2, y, x+w, y+h/2, shapeColor)
-			e.drawLine(x+w, y+h/2, x+w/2, y+h, shapeColor)
-			e.drawLine(x+w/2, y+h, x, y+h/2, shapeColor)
-			e.drawLine(x, y+h/2, x+w/2, y, shapeColor)
+			drawThickLine(x+w/2, y, x+w, y+h/2)
+			drawThickLine(x+w, y+h/2, x+w/2, y+h)
+			drawThickLine(x+w/2, y+h, x, y+h/2)
+			drawThickLine(x, y+h/2, x+w/2, y)
 		case 1: // RoundRectangle — fill then draw outline.
 			if !bounds.Empty() && fc.A > 0 {
 				draw.Draw(e.curPage, bounds, &image.Uniform{fc}, image.Point{}, draw.Over)
 			}
 			radius := int(math.Round(float64(obj.ShapeCurve)))
-			if radius <= 0 {
-				e.drawRect(bounds, shapeColor)
-			} else {
-				e.drawRoundRect(x, y, w, h, radius, shapeColor)
+			for i := 0; i < shapePenW; i++ {
+				if radius <= 0 {
+					e.drawRect(image.Rect(x+i, y+i, x+w-i, y+h-i), shapeColor)
+				} else {
+					e.drawRoundRect(x+i, y+i, w-i*2, h-i*2, radius, shapeColor)
+				}
 			}
 		default: // Rectangle (0) — fill bounding rect, then draw outline.
 			if !bounds.Empty() && fc.A > 0 {
 				draw.Draw(e.curPage, bounds, &image.Uniform{fc}, image.Point{}, draw.Over)
 			}
-			e.drawRect(bounds, shapeColor)
+			for i := 0; i < shapePenW; i++ {
+				e.drawRect(image.Rect(x+i, y+i, x+w-i, y+h-i), shapeColor)
+			}
 		}
 		e.drawBorderLines(obj.Border, x, y, w, h)
 
@@ -985,6 +1060,166 @@ func (e *Exporter) drawLine(x0, y0, x1, y1 int, c color.RGBA) {
 	}
 }
 
+// drawLineCap draws a cap decoration (arrow, circle, square, diamond) at a
+// line endpoint using the golang.org/x/image/vector rasterizer for anti-aliased
+// rendering. Mirrors C# LineObject.Draw cap rendering (LineObject.cs:130-179)
+// with SmoothingMode.AntiAlias enabled.
+func (e *Exporter) drawLineCap(cap preview.LineCap, x1, y1, x2, y2, lineWidth int, c color.RGBA, isStart bool) {
+	if cap.Style == preview.LineCapStyleNone {
+		return
+	}
+
+	capW := float64(cap.Width)
+	capH := float64(cap.Height)
+	if capW <= 0 {
+		capW = 8
+	}
+	if capH <= 0 {
+		capH = 8
+	}
+
+	// C# ref: scale = Border.Width * e.ScaleX (applied via ScaleTransform).
+	scale := float64(lineWidth)
+
+	// Compute line angle. C# uses atan2(dx, dy) — note reversed args.
+	angleDeg := math.Atan2(float64(x2-x1), float64(y2-y1)) * 180.0 / math.Pi
+
+	var cx, cy float64
+	var rotDeg float64
+	if isStart {
+		cx, cy = float64(x1), float64(y1)
+		rotDeg = 180 - angleDeg
+	} else {
+		cx, cy = float64(x2), float64(y2)
+		rotDeg = -angleDeg
+	}
+
+	rotRad := rotDeg * math.Pi / 180.0
+	sinR := math.Sin(rotRad)
+	cosR := math.Cos(rotRad)
+
+	// GDI+ counterclockwise rotation: x'=x*cos-y*sin, y'=x*sin+y*cos.
+	// Scale applied before rotation.
+	tf := func(px, py float64) (float32, float32) {
+		spx, spy := px*scale, py*scale
+		rx := spx*cosR - spy*sinR + cx
+		ry := spx*sinR + spy*cosR + cy
+		return float32(rx), float32(ry)
+	}
+
+	// Use the vector rasterizer for anti-aliased path rendering.
+	bounds := e.curPage.Bounds()
+	r := &vector.Rasterizer{}
+	r.Reset(bounds.Dx(), bounds.Dy())
+
+	// strokePath draws a path by tracing it forward and backward with an offset,
+	// creating a filled polygon that approximates a stroked line with the given width.
+	// C# draws caps with pen width=1 (the scale is baked into ScaleTransform).
+	penW := float32(1.0) // C# cap pen width = 1
+
+	switch cap.Style {
+	case preview.LineCapStyleArrow:
+		// C# Arrow: AddLine(0,0 → -W,-H), AddLine(0,0 → W,-H).
+		tx0, ty0 := tf(0, 0)
+		tx1, ty1 := tf(-capW, -capH)
+		tx2, ty2 := tf(capW, -capH)
+		// Left arm
+		strokeLine(r, tx0, ty0, tx1, ty1, penW)
+		// Right arm
+		strokeLine(r, tx0, ty0, tx2, ty2, penW)
+
+	case preview.LineCapStyleCircle:
+		// C# Circle: AddEllipse(-W/2, -H/2, W, H).
+		tcx, tcy := tf(0, 0)
+		rw := float32(capW * scale / 2)
+		rh := float32(capH * scale / 2)
+		strokeEllipse(r, tcx, tcy, rw, rh, penW)
+
+	case preview.LineCapStyleSquare:
+		// C# Square: AddRectangle(-W/2, -H/2, W, H).
+		hw, hh := capW/2, capH/2
+		ax, ay := tf(-hw, -hh)
+		bx, by := tf(hw, -hh)
+		cx2, cy2 := tf(hw, hh)
+		dx, dy := tf(-hw, hh)
+		strokeLine(r, ax, ay, bx, by, penW)
+		strokeLine(r, bx, by, cx2, cy2, penW)
+		strokeLine(r, cx2, cy2, dx, dy, penW)
+		strokeLine(r, dx, dy, ax, ay, penW)
+
+	case preview.LineCapStyleDiamond:
+		// C# Diamond: 4 lines at (0,-H/1.4), (-W/1.4,0), (0,H/1.4), (W/1.4,0).
+		dw, dh := capW/1.4, capH/1.4
+		tx0, ty0 := tf(0, -dh)
+		tx1, ty1 := tf(-dw, 0)
+		tx2, ty2 := tf(0, dh)
+		tx3, ty3 := tf(dw, 0)
+		strokeLine(r, tx0, ty0, tx1, ty1, penW)
+		strokeLine(r, tx1, ty1, tx2, ty2, penW)
+		strokeLine(r, tx2, ty2, tx3, ty3, penW)
+		strokeLine(r, tx3, ty3, tx0, ty0, penW)
+	}
+
+	// Rasterize the path and composite onto the canvas with anti-aliasing.
+	mask := image.NewAlpha(bounds)
+	r.Draw(mask, mask.Bounds(), image.Opaque, image.Point{})
+	src := &image.Uniform{c}
+	draw.DrawMask(e.curPage, bounds, src, image.Point{}, mask, bounds.Min, draw.Over)
+}
+
+// strokeLine adds a thick line segment to the vector rasterizer as a filled
+// rectangle along the line direction with the given width.
+func strokeLine(r *vector.Rasterizer, x0, y0, x1, y1, width float32) {
+	dx := float64(x1 - x0)
+	dy := float64(y1 - y0)
+	ln := math.Sqrt(dx*dx + dy*dy)
+	if ln < 0.001 {
+		return
+	}
+	// Perpendicular unit vector × half-width
+	hw := float64(width) / 2.0
+	nx := float32(-dy / ln * hw)
+	ny := float32(dx / ln * hw)
+
+	// Four corners of the thick line rectangle
+	r.MoveTo(x0+nx, y0+ny)
+	r.LineTo(x1+nx, y1+ny)
+	r.LineTo(x1-nx, y1-ny)
+	r.LineTo(x0-nx, y0-ny)
+	r.ClosePath()
+}
+
+// strokeEllipse adds an ellipse outline to the vector rasterizer as a filled
+// annular ring (outer - inner ellipse).
+func strokeEllipse(r *vector.Rasterizer, cx, cy, rx, ry, width float32) {
+	hw := width / 2
+	const n = 36 // segments for circle approximation
+	// Outer ellipse (clockwise)
+	for i := 0; i <= n; i++ {
+		a := float64(i) * 2 * math.Pi / float64(n)
+		px := cx + (rx+hw)*float32(math.Cos(a))
+		py := cy + (ry+hw)*float32(math.Sin(a))
+		if i == 0 {
+			r.MoveTo(px, py)
+		} else {
+			r.LineTo(px, py)
+		}
+	}
+	r.ClosePath()
+	// Inner ellipse (counter-clockwise to cut out)
+	for i := n; i >= 0; i-- {
+		a := float64(i) * 2 * math.Pi / float64(n)
+		px := cx + (rx-hw)*float32(math.Cos(a))
+		py := cy + (ry-hw)*float32(math.Sin(a))
+		if i == n {
+			r.MoveTo(px, py)
+		} else {
+			r.LineTo(px, py)
+		}
+	}
+	r.ClosePath()
+}
+
 // drawEllipse draws the outline of an ellipse inscribed in the given rect.
 func (e *Exporter) drawEllipse(x, y, w, h int, c color.RGBA) {
 	if w <= 0 || h <= 0 {
@@ -1378,7 +1613,10 @@ func (e *Exporter) stitchPages(pages []*image.RGBA) *image.RGBA {
 // image exporter's renderObject. The object is rendered on a transparent canvas
 // at its own dimensions. Used by the HTML exporter to render PolygonObjects
 // and ShapeObjects as base64 images (matching C# LayerBack + LayerPicture).
-func RenderGenericPNG(obj preview.PreparedObject) ([]byte, error) {
+// RenderGenericPNG renders any PreparedObject to a PNG byte slice.
+// Returns the PNG data and the actual canvas width/height (which may be larger
+// than abs(obj.Width/Height) due to line cap expansion).
+func RenderGenericPNG(obj preview.PreparedObject) (pngData []byte, canvasW, canvasH int, err error) {
 	// C# HTMLExportLayers.GetLayerPicture uses Math.Abs(Width) and Math.Abs(Height)
 	// for the bitmap dimensions. Lines can have negative Width/Height encoding
 	// direction (e.g., top-right to bottom-left has negative Height).
@@ -1390,12 +1628,111 @@ func RenderGenericPNG(obj preview.PreparedObject) ([]byte, error) {
 	if h < 1 {
 		h = 1
 	}
+
+	// For lines with caps, compute the exact bounding rect including cap shapes
+	// and expand the canvas. This matches C#'s GetConvertedObjects which creates
+	// a PictureObject at the extended bounds.
+	capPadL, capPadT, capPadR, capPadB := 0, 0, 0, 0
+	if obj.Kind == preview.ObjectTypeLine && obj.LineDiagonal &&
+		(obj.LineStartCap.Style != preview.LineCapStyleNone || obj.LineEndCap.Style != preview.LineCapStyleNone) {
+
+		bw := 1.0
+		if obj.Border.Lines[0] != nil && obj.Border.Lines[0].Width > 0 {
+			bw = float64(obj.Border.Lines[0].Width)
+		}
+		dx, dy := float64(obj.Width), float64(obj.Height)
+		angleDeg := math.Abs(math.Atan2(dx, dy) * 180.0 / math.Pi)
+
+		// Line endpoints in canvas coords (before cap expansion).
+		var x1c, y1c, x2c, y2c float64
+		if obj.Width >= 0 {
+			x1c, x2c = 0, float64(w)
+		} else {
+			x1c, x2c = float64(w), 0
+		}
+		if obj.Height >= 0 {
+			y1c, y2c = 0, float64(h)
+		} else {
+			y1c, y2c = float64(h), 0
+		}
+
+		minX, maxX := 0.0, float64(w)
+		minY, maxY := 0.0, float64(h)
+
+		expandCap := func(cap preview.LineCap, cx, cy float64, rotDeg float64) {
+			if cap.Style == preview.LineCapStyleNone {
+				return
+			}
+			cw, ch := float64(cap.Width), float64(cap.Height)
+			if cw <= 0 {
+				cw = 8
+			}
+			if ch <= 0 {
+				ch = 8
+			}
+			var pts [][2]float64
+			switch cap.Style {
+			case preview.LineCapStyleArrow:
+				pts = [][2]float64{{0, 0}, {-cw, -ch}, {cw, -ch}}
+			case preview.LineCapStyleCircle:
+				// Circle is rotation-invariant; use 4 extremes of the axis-aligned extent.
+				pts = [][2]float64{{-cw / 2, 0}, {cw / 2, 0}, {0, -ch / 2}, {0, ch / 2}}
+			case preview.LineCapStyleSquare:
+				pts = [][2]float64{{-cw / 2, -ch / 2}, {cw / 2, -ch / 2}, {cw / 2, ch / 2}, {-cw / 2, ch / 2}}
+			case preview.LineCapStyleDiamond:
+				d := 1.4
+				pts = [][2]float64{{0, -ch / d}, {-cw / d, 0}, {0, ch / d}, {cw / d, 0}}
+			}
+			r := rotDeg * math.Pi / 180.0
+			sinR, cosR := math.Sin(r), math.Cos(r)
+			for _, p := range pts {
+				spx, spy := p[0]*bw, p[1]*bw
+				rx := spx*cosR - spy*sinR + cx
+				ry := spx*sinR + spy*cosR + cy
+				if rx < minX {
+					minX = rx
+				}
+				if rx > maxX {
+					maxX = rx
+				}
+				if ry < minY {
+					minY = ry
+				}
+				if ry > maxY {
+					maxY = ry
+				}
+			}
+		}
+		expandCap(obj.LineStartCap, x1c, y1c, 180-angleDeg)
+		expandCap(obj.LineEndCap, x2c, y2c, -angleDeg)
+
+		// Add border width padding.
+		minX -= bw / 2
+		minY -= bw / 2
+		maxX += bw / 2
+		maxY += bw / 2
+
+		capPadL = int(math.Ceil(-minX))
+		capPadT = int(math.Ceil(-minY))
+		capPadR = int(math.Ceil(maxX - float64(w)))
+		capPadB = int(math.Ceil(maxY - float64(h)))
+		if capPadL < 0 {
+			capPadL = 0
+		}
+		if capPadT < 0 {
+			capPadT = 0
+		}
+		if capPadR < 0 {
+			capPadR = 0
+		}
+		if capPadB < 0 {
+			capPadB = 0
+		}
+		w += capPadL + capPadR
+		h += capPadT + capPadB
+	}
+
 	canvas := image.NewRGBA(image.Rect(0, 0, w, h))
-	// Start with a transparent canvas. Each shape type (Rectangle, Diamond,
-	// Triangle, Ellipse, etc.) fills its own geometric area in renderObject,
-	// so we do not pre-fill the bounding rectangle here.
-	// C# also starts with a transparent/uncleared bitmap for ShapeObjects and
-	// lets obj.Draw() fill only the polygon area. Ref: HTMLExportLayers.cs:503-518.
 
 	exp := &Exporter{
 		ResolutionX: DefaultDPI,
@@ -1404,30 +1741,24 @@ func RenderGenericPNG(obj preview.PreparedObject) ([]byte, error) {
 		curPage:     canvas,
 	}
 	renderObj := obj
-	// For objects with negative dimensions (diagonal lines going in reverse
-	// direction), adjust Left/Top so the line endpoint at the negative edge
-	// maps to coordinate 0 in the bitmap. The line keeps its original Width/
-	// Height so drawLine computes the correct start→end direction.
-	// C# ref: GetLayerPicture computes:
-	//   Left = Width > 0 ? AbsLeft : AbsLeft + Width
-	//   Then translates by (-Left, -Top) so the object draws into [0..abs(W)] × [0..abs(H)].
+	// Adjust Left/Top for direction + cap padding offset.
 	if obj.Width < 0 {
-		renderObj.Left = float32(w) // start from right edge
+		renderObj.Left = float32(int(math.Round(math.Abs(float64(obj.Width)))) + capPadL)
 	} else {
-		renderObj.Left = 0
+		renderObj.Left = float32(capPadL)
 	}
 	if obj.Height < 0 {
-		renderObj.Top = float32(h) // start from bottom edge
+		renderObj.Top = float32(int(math.Round(math.Abs(float64(obj.Height)))) + capPadT)
 	} else {
-		renderObj.Top = 0
+		renderObj.Top = float32(capPadT)
 	}
 	exp.renderObject(renderObj, 0)
 
 	var buf bytes.Buffer
-	if err := png.Encode(&buf, canvas); err != nil {
-		return nil, err
+	if err2 := png.Encode(&buf, canvas); err2 != nil {
+		return nil, 0, 0, err2
 	}
-	return buf.Bytes(), nil
+	return buf.Bytes(), w, h, nil
 }
 
 // RotateImagePNG decodes a PNG image, rotates it by the given angle (90, 180,

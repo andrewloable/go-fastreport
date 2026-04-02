@@ -273,6 +273,10 @@ func (e *ReportEngine) populateBandObjects2(parentBand *band.BandBase, objs *rep
 						return e.report.Calc(expr)
 					}
 				}
+				// Wire compiled BeforePrint event handlers from the report's script.
+				if e.report != nil && e.report.CompiledScripts != nil {
+					mx.EventHandlers = e.report.CompiledScripts
+				}
 				// Save original width before building so we can track growth.
 				origWidth := mx.Width()
 				// Build the result table from collected data.
@@ -744,27 +748,54 @@ func (e *ReportEngine) populateTableObjects(tbl *table.TableBase, originX, origi
 				}
 				pb.Objects = append(pb.Objects, po)
 
-				// Render embedded PictureObjects inside the cell.
-				// C# table cells can contain child PictureObjects (e.g. Photo column
-				// with BindableControl="Picture"). These are rendered as separate
-				// LayerBack+LayerPicture div pairs.
+				// Render embedded child objects inside the cell.
+				// C# table cells can contain PictureObjects, ShapeObjects, etc.
+				// (e.g. Photo column with BindableControl="Picture", or shape
+				// indicators set via BeforePrint event). These are rendered as
+				// separate PreparedObjects positioned relative to the cell origin.
 				for _, childObj := range cell.Objects() {
-					if pic, ok := childObj.(*object.PictureObject); ok {
+					switch child := childObj.(type) {
+					case *object.PictureObject:
 						picPO := preview.PreparedObject{
-							Name:    pic.Name(),
+							Name:    child.Name(),
 							Kind:    preview.ObjectTypePicture,
-							Left:    absLeft + pic.Left(),
-							Top:     absTop + pic.Top(),
-							Width:   pic.Width(),
-							Height:  pic.Height(),
+							Left:    absLeft + child.Left(),
+							Top:     absTop + child.Top(),
+							Width:   child.Width(),
+							Height:  child.Height(),
 							BlobIdx: -1,
 						}
-						if data := pic.ImageData(); len(data) > 0 {
+						if data := child.ImageData(); len(data) > 0 {
 							if e.preparedPages != nil {
 								picPO.BlobIdx = e.preparedPages.BlobStore.Add("", data)
 							}
 						}
 						pb.Objects = append(pb.Objects, picPO)
+					case *object.ShapeObject:
+						// C# ref: TableCell child ShapeObjects are rendered at their
+						// design-time position relative to the cell origin.
+						// BeforePrint event handlers (see matrix/header_tree.go
+						// fireCellBeforePrint) have already mutated Visible and Fill
+						// on each cloned shape before populateTableObjects is called.
+						if !child.Visible() {
+							continue
+						}
+						shapePO := preview.PreparedObject{
+							Name:      child.Name(),
+							Kind:      preview.ObjectTypeShape,
+							Left:      absLeft + child.Left(),
+							Top:       absTop + child.Top(),
+							Width:     child.Width(),
+							Height:    child.Height(),
+							BlobIdx:   -1,
+							ShapeKind: int(child.Shape()),
+							ShapeCurve: child.Curve(),
+							Border:    child.Border(),
+						}
+						if f, ok := child.Fill().(*style.SolidFill); ok {
+							shapePO.FillColor = f.Color
+						}
+						pb.Objects = append(pb.Objects, shapePO)
 					}
 				}
 			}
@@ -2646,8 +2677,14 @@ func (e *ReportEngine) buildPreparedObject(obj report.Base) *preview.PreparedObj
 		po.VertAlign = int(v.VertAlign())
 		po.WordWrap = v.WordWrap()
 		po.Border = v.Border()
-		if f, ok := v.Fill().(*style.SolidFill); ok && f.Color.A > 0 {
-			po.FillColor = f.Color
+		switch f := v.Fill().(type) {
+		case *style.SolidFill:
+			if f.Color.A > 0 {
+				po.FillColor = f.Color
+			}
+		case *style.GlassFill:
+			po.BackgroundCSS = renderGlassFillCSS(f, int(po.Width), int(po.Height))
+			po.FillColor = color.RGBA{} // transparent — glass fill PNG handles the background
 		}
 		po.Text = e.evalTextWithFormat(v.Text(), v.Format())
 		// When the text color has alpha=0 (fully transparent), the text is
@@ -2794,7 +2831,6 @@ func (e *ReportEngine) buildPreparedObject(obj report.Base) *preview.PreparedObj
 			po.FillColor = f.Color
 		}
 		// Propagate cap settings so exporters can render caps.
-		// Mirrors C# LineObject.GetConvertedObjects() cap path (LineObject.OpenSource.cs).
 		po.LineStartCap = preview.LineCap{
 			Style:  preview.LineCapStyle(v.StartCap.Style),
 			Width:  v.StartCap.Width,
@@ -2805,6 +2841,9 @@ func (e *ReportEngine) buildPreparedObject(obj report.Base) *preview.PreparedObj
 			Width:  v.EndCap.Width,
 			Height: v.EndCap.Height,
 		}
+		// Cap bounding box expansion is handled in the image renderer
+		// (RenderGenericPNG) and HTML exporter, not here. The PreparedObject
+		// keeps its original signed Width/Height to preserve line direction.
 
 	case *object.ShapeObject:
 		po.Kind = preview.ObjectTypeShape

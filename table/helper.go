@@ -56,6 +56,11 @@ type TableHelper struct {
 	// Set before PrintColumn/PrintRow and clear it after PrintRows/PrintColumns.
 	CellTextEval func(text string) string
 
+	// CellTextCellEval, when non-nil, takes precedence over CellTextEval and
+	// receives the full cloned cell so the caller can access cell.Format() for
+	// format-aware text evaluation (e.g. currency formatting).
+	CellTextCellEval func(cell *TableCell) string
+
 	// CellObjectEval, when non-nil, is called for each cloned cell during copyCells
 	// to evaluate embedded objects (e.g. PictureObject DataColumn bindings).
 	CellObjectEval func(cell *TableCell)
@@ -431,7 +436,9 @@ func (h *TableHelper) copyCells(srcColIdx, srcRowIdx, dstColIdx, dstRowIdx int) 
 			dst.SetColSpan(1)
 			dst.SetRowSpan(1)
 		}
-		if h.CellTextEval != nil {
+		if h.CellTextCellEval != nil {
+			dst.SetText(h.CellTextCellEval(dst))
+		} else if h.CellTextEval != nil {
 			dst.SetText(h.CellTextEval(dst.Text()))
 		}
 		if h.CellObjectEval != nil {
@@ -490,6 +497,9 @@ func cloneCell(src *TableCell) *TableCell {
 	dst.SetBorder(b)
 	dst.SetFill(src.Fill())
 	dst.SetFont(src.Font())
+	dst.SetFormat(src.Format())
+	dst.SetPadding(src.Padding())
+	dst.SetTextColor(src.TextColor())
 	// Clone embedded objects (e.g. PictureObjects).
 	for _, obj := range src.Objects() {
 		dst.AddObject(obj)

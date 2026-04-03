@@ -608,9 +608,21 @@ func (e *Exporter) renderObject(obj preview.PreparedObject, scale float32) {
 			}
 			padL := (cssW - absW) / 2
 			padT := (cssH - absH) / 2
-			left -= padL
-			top -= padT
-			e.renderObjectAsImageWithPNG(obj, left, top, cssW, cssH, scale, linePNG)
+			// For lines without caps, the canvas may be one pixel taller/wider than
+			// the FRX dimensions due to ceiling rounding (e.g. 160.65 → 161px canvas).
+			// C# uses the exact FRX dimensions for the CSS div, not the canvas size.
+			// background-size:100% 100% handles any sub-pixel PNG scaling.
+			// C# ref: HTMLExportLayers.cs LayerPicture (no GetConvertedObjects path).
+			hasCaps := obj.LineStartCap.Style != preview.LineCapStyleNone ||
+				obj.LineEndCap.Style != preview.LineCapStyleNone
+			if !hasCaps {
+				// No caps: use FRX dimensions for div; no position adjustment needed.
+				e.renderObjectAsImageWithPNG(obj, left, top, absW, absH, scale, linePNG)
+			} else {
+				left -= padL
+				top -= padT
+				e.renderObjectAsImageWithPNG(obj, left, top, cssW, cssH, scale, linePNG)
+			}
 		}
 
 	case preview.ObjectTypeShape:
@@ -699,6 +711,38 @@ func (e *Exporter) renderObject(obj preview.PreparedObject, scale float32) {
 		}
 		// No SVG data — empty placeholder.
 		e.sb.WriteString(fmt.Sprintf(`<div %s></div>`, styleAttr("")))
+
+	case preview.ObjectTypeBandBackground:
+		// Band background for subreport bands merged in PrintOnParent mode.
+		// Renders with the same CSS pattern as renderBandBackground so that the
+		// CSS class is identical to (and shares a style slot with) the band's own
+		// background div in normal rendering.
+		// C# ref: HTMLExportLayers.cs ExportBandLayers → LayerBack(htmlPage, band, null).
+		var bgCSS strings.Builder
+		bgCSS.WriteString("text-align:center;position:absolute;color:rgb(255, 255, 255);")
+		if obj.FillColor.A == 0 {
+			bgCSS.WriteString("background-color:transparent;")
+		} else {
+			bgCSS.WriteString(fmt.Sprintf("background-color:%s;", rgbColor(obj.FillColor)))
+		}
+		if bs := borderCSS(&obj.Border, scale); bs != "" {
+			bgCSS.WriteString(bs)
+		} else {
+			bgCSS.WriteString("border:none;")
+		}
+		bgCSS.WriteString(fmt.Sprintf("width:%spx;height:%spx;", pxVal(w), pxVal(h)))
+		if e.InlineStyles {
+			e.sb.WriteString(fmt.Sprintf(
+				"<div style=\"%sleft:%spx;top:%spx;width:%spx;height:%spx;\">&nbsp;</div>\n",
+				bgCSS.String(), pxVal(left), pxVal(top), pxVal(w), pxVal(h),
+			))
+		} else {
+			className := e.css.Register(bgCSS.String())
+			e.sb.WriteString(fmt.Sprintf(
+				"<div class=\"%s\" style=\"left:%spx;top:%spx;width:%spx;height:%spx;\">&nbsp;</div>\n",
+				className, pxVal(left), pxVal(top), pxVal(w), pxVal(h),
+			))
+		}
 
 	default:
 		// Unknown/unhandled type — render an empty placeholder.
@@ -925,7 +969,12 @@ func (e *Exporter) renderTextObject(obj preview.PreparedObject, scale float32) {
 	}
 
 	// Border (C# HTMLBorder).
-	borderStr := borderCSS(&obj.Border, scale)
+	// Shadow is rendered as separate overlay divs (C# LayerBack lines 631-648), not CSS box-shadow.
+	// Use a shadow-free copy so the CSS class does not include box-shadow.
+	// C# HTMLBorder (HTMLExportDraw.cs) never emits box-shadow; shadow is handled by LayerBack.
+	borderForCSS := obj.Border
+	borderForCSS.Shadow = false
+	borderStr := borderCSS(&borderForCSS, scale)
 	if borderStr != "" {
 		outerCSS.WriteString(borderStr)
 	} else {
@@ -1018,14 +1067,51 @@ func (e *Exporter) renderTextObject(obj preview.PreparedObject, scale float32) {
 	outerStyle := fmt.Sprintf("left:%spx;top:%spx;width:%spx;height:%spx;",
 		pxVal(adjLeft), pxVal(adjTop), pxVal(adjW), pxVal(adjH))
 
-	// For rotated text objects (Angle != 0), emit LayerBack + LayerPicture and return.
-	// C# IsMemo() returns false when Angle != 0, so the object is rendered as:
+	// Shadow rendering: C# LayerBack emits two extra overlay divs for the drop shadow.
+	// One horizontal strip below the object and one vertical strip to the right.
+	// C# ref: HTMLExportLayers.cs LayerBack lines 631-648.
+	if obj.Border.Shadow {
+		sw := obj.Border.ShadowWidth * scale
+		leftW := borderSideWidth(&obj.Border, style.BorderLeft, scale)
+		topW := borderSideWidth(&obj.Border, style.BorderTop, scale)
+		rightW := borderSideWidth(&obj.Border, style.BorderRight, scale)
+		bottomW := borderSideWidth(&obj.Border, style.BorderBottom, scale)
+		sc := obj.Border.ShadowColor
+		// position:absolute required so the shadow div is placed by left/top inline style.
+		// C# GetStyle always generates position:absolute for its shadow TextObject.
+		shadowFill := fmt.Sprintf("position:absolute;background-color:%s;", rgbColor(sc))
+		// Bottom horizontal shadow strip.
+		s1Left := left + sw + leftW
+		s1Top := top + h + bottomW
+		s1W := w + rightW
+		s1H := sw + bottomW
+		shadow1Style := fmt.Sprintf("left:%spx;top:%spx;width:%spx;height:%spx;border:none;",
+			pxVal(s1Left), pxVal(s1Top), pxVal(s1W), pxVal(s1H))
+		// Right vertical shadow strip.
+		s2Left := left + w + rightW
+		s2Top := top + sw + topW
+		s2W := sw + rightW
+		s2H := h
+		shadow2Style := fmt.Sprintf("left:%spx;top:%spx;width:%spx;height:%spx;border:none;",
+			pxVal(s2Left), pxVal(s2Top), pxVal(s2W), pxVal(s2H))
+		if e.InlineStyles {
+			e.sb.WriteString(fmt.Sprintf("<div style=\"%s%s\">&nbsp;</div>\n", shadowFill, shadow1Style))
+			e.sb.WriteString(fmt.Sprintf("<div style=\"%s%s\">&nbsp;</div>\n", shadowFill, shadow2Style))
+		} else {
+			shadowClass := e.cssClass(shadowFill)
+			e.sb.WriteString(fmt.Sprintf("<div class=\"%s\" style=\"%s\">&nbsp;</div>\n", shadowClass, shadow1Style))
+			e.sb.WriteString(fmt.Sprintf("<div class=\"%s\" style=\"%s\">&nbsp;</div>\n", shadowClass, shadow2Style))
+		}
+	}
+
+	// For non-memo text objects (Angle != 0 or Underlines == true), emit LayerBack + LayerPicture and return.
+	// C# IsMemo() returns false when Angle != 0 or Underlines == true, so the object is rendered as:
 	//   LayerBack:    div with full text styling CSS + border:none in inline style
 	//   LayerPicture: div with same CSS class + base64-PNG background-image
 	// C# uses GetStyle(obj) for LayerBack which includes the full text styling.
 	// C# ref: HTMLExportLayers.cs IsMemo() line 719, LayerBack/LayerPicture lines 937-955.
-	if obj.Angle != 0 {
-		posStyle := fmt.Sprintf("left:%spx;top:%spx;width:%spx;height:%spx;", pxVal(left), pxVal(top), pxVal(w), pxVal(h))
+	if obj.Angle != 0 || obj.Underlines {
+		posStyle := fmt.Sprintf("left:%spx;top:%spx;width:%spx;height:%spx;", pxVal(adjLeft), pxVal(adjTop), pxVal(adjW), pxVal(adjH))
 
 		// Render the text object as a PNG and embed as base64 data URL (LayerPicture).
 		picCSS := ""
@@ -1487,6 +1573,23 @@ func htmlBorderWidthValues(b *style.Border, scale float32, left, top, right, bot
 		}
 		*s.out = w
 	}
+}
+
+// borderSideWidth returns the rendered width of a single border side in pixels (scaled).
+// Mirrors C# HTMLBorderWidth: Double lines use Width*3, others use Width.
+// Returns 1*scale as default when the border or its line is nil.
+// Used for shadow offset calculations where we need the raw line width regardless of
+// whether VisibleLines includes that side.
+// C# ref: HTMLExportDraw.cs HTMLBorderWidth lines 63-68.
+func borderSideWidth(b *style.Border, side style.BorderSide, scale float32) float32 {
+	if b == nil || b.Lines[side] == nil {
+		return 1 * scale
+	}
+	line := b.Lines[side]
+	if line.Style == style.LineStyleDouble {
+		return line.Width * 3 * scale
+	}
+	return line.Width * scale
 }
 
 // borderCSS converts a style.Border into CSS border/box-shadow declarations.

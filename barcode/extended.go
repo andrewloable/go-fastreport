@@ -71,7 +71,7 @@ func (g *GS1Barcode) Render(width, height int) (image.Image, error) {
 	if err != nil {
 		return nil, err
 	}
-	return DrawLinearBarcode(pattern, g.encodedText, width, height, true, g.GetWideBarRatio()), nil
+	return drawLinearBarcodeColored(pattern, g.encodedText, width, height, true, g.GetWideBarRatio(), g.Color), nil
 }
 
 func stripGS1Parens(s string) string {
@@ -327,7 +327,7 @@ func (b *PharmacodeBarcode) Render(width, height int) (image.Image, error) {
 	if err != nil {
 		return nil, err
 	}
-	return DrawLinearBarcode(pattern, b.encodedText, width, height, true, b.GetWideBarRatio()), nil
+	return drawLinearBarcodeColored(pattern, b.encodedText, width, height, true, b.GetWideBarRatio(), b.Color), nil
 }
 
 // pharmacodeEncode encodes an integer as Pharmacode bar widths.
@@ -387,7 +387,7 @@ func (b *PlesseyBarcode) Render(width, height int) (image.Image, error) {
 	if err != nil {
 		return nil, err
 	}
-	return DrawLinearBarcode(pattern, b.encodedText, width, height, b.showText, b.GetWideBarRatio()), nil
+	return drawLinearBarcodeColored(pattern, b.encodedText, width, height, b.showText, b.GetWideBarRatio(), b.Color), nil
 }
 
 // plesseyEncode generates the Plessey bar/space bit array including CRC.
@@ -555,7 +555,7 @@ func (b *PostNetBarcode) Render(width, height int) (image.Image, error) {
 	if err != nil {
 		return nil, err
 	}
-	return DrawLinearBarcode(pattern, b.encodedText, width, height, false, b.GetWideBarRatio()), nil
+	return drawLinearBarcodeColored(pattern, b.encodedText, width, height, false, b.GetWideBarRatio(), b.Color), nil
 }
 
 

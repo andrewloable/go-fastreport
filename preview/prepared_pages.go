@@ -372,6 +372,13 @@ const (
 	// HTML exporters convert RTF to HTML; PDF/image exporters render plain text
 	// after stripping RTF control words via utils.StripRTF.
 	ObjectTypeRTF
+	// ObjectTypeBandBackground is a synthetic background element produced when a
+	// subreport band is rendered in PrintOnParent (outputBand) mode. It represents
+	// the band's own background div, which in normal rendering is emitted by
+	// ExportBand → renderBandBackground. HTML exporters emit a positioned div with
+	// the band's fill colour and border. Other exporters may draw a filled rectangle.
+	// C# ref: HTMLExportLayers.cs ExportBandLayers → LayerBack(htmlPage, band, null).
+	ObjectTypeBandBackground
 )
 
 // LineCapStyle mirrors object.CapStyle without creating an import cycle.
@@ -462,6 +469,15 @@ type PreparedObject struct {
 	// Points holds vertex coordinates for ObjectTypePolyLine and ObjectTypePolygon.
 	// Each element is [x, y] in pixels relative to the object's Left/Top origin.
 	Points [][2]float32
+	// PathPoints holds the full bezier path for ObjectTypePolyLine and ObjectTypePolygon.
+	// Each element is [x, y, pointType] where pointType mirrors GDI+ PathPointType:
+	// 0=MoveTo (start), 1=LineTo endpoint, 3=CubicBezier control/endpoint.
+	// Three consecutive type-3 entries encode one cubic bezier: [cp1, cp2, endpoint].
+	// When non-empty, image exporters use this instead of Points for accurate bezier rendering.
+	PathPoints [][3]float32
+	// PolyFill is the full fill style for ObjectTypePolygon (gradient, hatch, etc.).
+	// nil means use FillColor. Not persisted in FPX (in-memory only).
+	PolyFill style.Fill
 
 	// ── Style fields ────────────────────────────────────────────────────────
 	// Font describes the text font.
@@ -545,6 +561,10 @@ type PreparedObject struct {
 	// HTML exporter maps this to CSS text-align-last:justify.
 	// Mirrors TextObject.ForceJustify (TextObject.cs).
 	ForceJustify bool
+	// Underlines draws a horizontal underline beneath each text line.
+	// When true, C# IsMemo() returns false and the object is rendered as a picture.
+	// Mirrors TextObject.Underlines (TextObject.cs).
+	Underlines bool
 	// RTL indicates right-to-left text direction.
 	RTL bool
 	// Clip indicates whether the object should clip its content.

@@ -284,9 +284,9 @@ type Report struct {
 	// Script settings.
 	ScriptText string
 
-	// CompiledScripts holds compiled BeforePrint (and other) event handlers
+	// CompiledScript holds the compiled script (methods + shared class state)
 	// parsed from ScriptText. Populated by CompileScripts() after FRX load.
-	CompiledScripts map[string]script.CompiledMethod
+	CompiledScript *script.Script
 
 	// ScriptLanguage records the script language stored in the FRX attribute.
 	// The Go port does not execute C# or VB scripts; this field is preserved
@@ -768,21 +768,21 @@ func (r *Report) ApplyStyles() {
 	}
 }
 
-// CompileScripts parses r.ScriptText and populates r.CompiledScripts with
+// CompileScripts parses r.ScriptText and populates r.CompiledScript with
 // compiled BeforePrint (and other) event handlers. Called automatically after
 // FRX load. Errors from the script parser are silently ignored so that reports
 // with unparseable scripts still render (with no event firing).
 func (r *Report) CompileScripts() {
 	if r.ScriptText == "" {
-		r.CompiledScripts = nil
+		r.CompiledScript = nil
 		return
 	}
-	methods, err := script.ParseScript(r.ScriptText)
-	if err != nil || len(methods) == 0 {
-		r.CompiledScripts = nil
+	s, err := script.ParseScript(r.ScriptText)
+	if err != nil || len(s.Methods) == 0 {
+		r.CompiledScript = nil
 		return
 	}
-	r.CompiledScripts = methods
+	r.CompiledScript = s
 }
 
 // Clear resets all pages and report properties to defaults.

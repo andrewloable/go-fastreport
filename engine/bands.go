@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"fmt"
 	"image/color"
 	"sort"
 	"strings"
@@ -10,6 +11,7 @@ import (
 	"github.com/andrewloable/go-fastreport/object"
 	"github.com/andrewloable/go-fastreport/preview"
 	"github.com/andrewloable/go-fastreport/report"
+	"github.com/andrewloable/go-fastreport/script"
 	"github.com/andrewloable/go-fastreport/table"
 	"github.com/andrewloable/go-fastreport/utils"
 )
@@ -481,6 +483,10 @@ func (e *ReportEngine) showFullBandOnce(b *band.BandBase) {
 	// Fire BeforePrint before any rendering takes place, mirroring the
 	// C# ReportEngine.ShowBand which calls band.OnBeforePrint first.
 	b.FireBeforePrint()
+	// Fire any compiled C# script BeforePrint handler for this band.
+	// Must run after FireBeforePrint so script results are in scope for
+	// subsequent expression evaluation (e.g. [total] in Text objects).
+	e.fireBandScript(b)
 	b.FireBeforeLayout()
 
 	// Apply EvenStyle for alternating data rows.
@@ -572,9 +578,24 @@ func (e *ReportEngine) showFullBandOnce(b *band.BandBase) {
 	if e.outputBand != nil {
 		// PrintOnParent mode: merge this subreport band's objects directly into
 		// the parent band's PreparedBand, offset by the subreport position.
-		tmp := &preview.PreparedBand{}
+		tmp := &preview.PreparedBand{Width: b.Width(), Height: height}
+		populateBandProps(b, tmp)
 		e.populateBandObjects(b, tmp)
 		yOff := e.outputBandOffsetY + e.curY
+		// Prepend a band-background PreparedObject mirroring the background div that
+		// ExportBand → renderBandBackground would emit for this band in normal mode.
+		// C# ref: HTMLExportLayers.cs ExportBandLayers → LayerBack(htmlPage, band, null).
+		bgObj := preview.PreparedObject{
+			Name:      b.Name() + "_bg",
+			Kind:      preview.ObjectTypeBandBackground,
+			Left:      e.outputBandOffsetX,
+			Top:       yOff,
+			Width:     tmp.Width,
+			Height:    height,
+			FillColor: tmp.FillColor,
+			Border:    tmp.Border,
+		}
+		e.outputBand.Objects = append(e.outputBand.Objects, bgObj)
 		for _, po := range tmp.Objects {
 			po.Left += e.outputBandOffsetX
 			po.Top += yOff
@@ -588,7 +609,7 @@ func (e *ReportEngine) showFullBandOnce(b *band.BandBase) {
 	} else if e.preparedPages != nil {
 		pb := &preview.PreparedBand{
 			Name:          b.Name(),
-			Left:          e.curX,
+			Left:          e.curX + e.originX,
 			Top:           e.curY,
 			Height:        height,
 			Width:         b.Width(),
@@ -613,6 +634,15 @@ func (e *ReportEngine) showFullBandOnce(b *band.BandBase) {
 		if e.curX != 0 {
 			for i := range pb.Objects {
 				pb.Objects[i].Left += e.curX
+			}
+		}
+		// Apply subreport X offset (originX) so outer subreport bands are placed
+		// at the correct horizontal position on the page.
+		// Mirrors C# ReportEngine.Bands.cs AddToPreparedPages line 450:
+		//   if (!isPageBand) band.Left += originX + CurX;
+		if e.originX != 0 {
+			for i := range pb.Objects {
+				pb.Objects[i].Left += e.originX
 			}
 		}
 		// Apply hierarchy indent: shift the band right and narrow its width.
@@ -1002,6 +1032,13 @@ func applyBandObjectShifts(bb *band.BandBase, pb *preview.PreparedBand, shifts [
 			continue
 		}
 
+		// SubreportObject produces no PreparedObject — skip without advancing poIdx.
+		// C# ref: SubreportObject is not rendered as a standalone layer; its content
+		// is merged into the parent band by RenderInnerSubreports/RenderInnerSubreport.
+		if _, ok := obj.(*object.SubreportObject); ok {
+			continue
+		}
+
 		if shifts[i] != 0 {
 			pb.Objects[poIdx].Top += shifts[i]
 		}
@@ -1122,10 +1159,123 @@ func applyBandObjectHeights(bb *band.BandBase, pb *preview.PreparedBand, effecti
 			poIdx = nextAnchor
 			continue
 		}
+		// SubreportObject produces no PreparedObject — skip without advancing poIdx.
+		// Without this guard, applyBandObjectHeights would apply the subreport's
+		// declared Height (e.g. 103.95px) to the next PreparedObject in the list
+		// (e.g. Text8), corrupting its rendered height. Matches the SubreportObject
+		// nil-return path in buildPreparedObject / the default: return nil branch.
+		// C# ref: SubreportObject has no layer output; RenderInnerSubreports merges
+		// subreport content into the parent band instead.
+		if _, ok := obj.(*object.SubreportObject); ok {
+			continue
+		}
 		if effectiveH[i] != pb.Objects[poIdx].Height {
 			pb.Objects[poIdx].Height = effectiveH[i]
 		}
 		poIdx++
+	}
+}
+
+// fireBandScript fires any compiled C# script BeforePrint event handler
+// registered for this band. After the handler runs, all class-level script
+// variables are synced into the report's extra calc environment so that
+// expressions like [total] in Text objects evaluate to the updated value.
+//
+// C# ref: ReportEngine fires BeforePrint event handlers from the embedded script
+// class before rendering each band. Class-level fields persist across calls.
+func (e *ReportEngine) fireBandScript(b *band.BandBase) {
+	if e.report == nil || e.report.CompiledScript == nil {
+		return
+	}
+	eventName := b.BeforePrintEventName
+	if eventName != "" {
+		fmt.Printf("[DEBUG fireBandScript] eventName=%q bandName=%q firstPass=%v finalPass=%v\n", eventName, b.Name(), e.FirstPass(), e.FinalPass())
+	}
+	if eventName == "" {
+		return
+	}
+	method, ok := e.report.CompiledScript.Methods[eventName]
+	if !ok {
+		fmt.Printf("[DEBUG fireBandScript] method %q not found in CompiledScript.Methods\n", eventName)
+		return
+	}
+	ctx := &script.Context{
+		SenderName: b.Name(),
+		Objects:    make(map[string]script.ContextObject),
+		Vars:       make(map[string]interface{}),
+		ClassState: e.report.CompiledScript.ClassState,
+		IsFirstPass: e.FirstPass(),
+		IsFinalPass: e.FinalPass(),
+		GetVariableValue: func(name string) interface{} {
+			// "Row#" and "Row" return the band's own RowNo — for group bands
+			// this is the group count (1-based), matching C# behaviour where
+			// GetVariableValue("Row#") in a group BeforePrint returns the
+			// band's RowNo, not the engine data-row counter.
+			if strings.EqualFold(name, "Row#") || strings.EqualFold(name, "Row") {
+				return b.RowNo()
+			}
+			d := e.report.Dictionary()
+			if d == nil {
+				return nil
+			}
+			for _, sv := range d.SystemVariables() {
+				if strings.EqualFold(sv.Name, name) {
+					return sv.Value
+				}
+			}
+			for _, p := range d.Parameters() {
+				if strings.EqualFold(p.Name, name) {
+					return p.Value
+				}
+			}
+			return nil
+		},
+		GetTotalValue: func(name string) interface{} {
+			d := e.report.Dictionary()
+			if d == nil {
+				return nil
+			}
+			for _, t := range d.Totals() {
+				if strings.EqualFold(t.Name, name) {
+					return t.Value
+				}
+			}
+			return nil
+		},
+		GetColumnValue: func(name string) interface{} {
+			// "Products.ProductName" → look up "ProductName" in the current DS row.
+			col := name
+			if dotIdx := strings.LastIndex(name, "."); dotIdx >= 0 {
+				col = name[dotIdx+1:]
+			}
+			ds := e.report.CalcContext()
+			if eventName == "GroupFooter1_BeforePrint" {
+				var dsName string
+				var rowNo int = -1
+				if ds != nil {
+					dsName = ds.Name()
+					rowNo = ds.CurrentRowNo()
+				}
+				val2, _ := func() (interface{}, error) {
+					if ds == nil {
+						return nil, nil
+					}
+					return ds.GetValue(col)
+				}()
+				fmt.Printf("[DEBUG fireBandScript] event=%s col=%s CalcContext=%v dsName=%s rowNo=%d val=%v\n", eventName, col, ds, dsName, rowNo, val2)
+			}
+			if ds == nil {
+				return nil
+			}
+			val, _ := ds.GetValue(col)
+			return val
+		},
+	}
+	method(ctx)
+	// Sync all class-level variables back to the expression environment so
+	// that bracketed expressions like [total] resolve to the updated value.
+	for k, v := range e.report.CompiledScript.ClassState {
+		e.report.SetExtraCalcVar(k, v)
 	}
 }
 
@@ -1136,28 +1286,40 @@ func applyBandObjectHeights(bb *band.BandBase, pb *preview.PreparedBand, effecti
 // C# ref: BandBase.SaveState() (BandBase.cs:618-645):
 //
 //	if (RowNo % 2 == 0) { ApplyEvenStyle(); foreach obj: obj.ApplyEvenStyle(); }
+//
+// Note: C# always iterates child objects regardless of whether the band itself
+// has an EvenStyle. In FRX files, EvenStyle is often set on individual child
+// objects (e.g. TextObject) rather than the band, so the band-level check must
+// not short-circuit the child iteration.
 func (e *ReportEngine) applyBandEvenStyle(b *band.BandBase) bool {
-	if e.report == nil || b.EvenStyleName() == "" || b.RowNo()%2 != 0 {
+	if e.report == nil || b.RowNo()%2 != 0 {
 		return false
 	}
-	// Save band state.
-	b.SaveState()
-	b.ApplyEvenStyle(e.report)
-	// Save and apply even style on each child object.
+	applied := false
+	// Apply even style to the band itself (no-op internally if EvenStyleName is empty).
+	if b.EvenStyleName() != "" {
+		b.SaveState()
+		b.ApplyEvenStyle(e.report)
+		applied = true
+	}
+	// Always iterate child objects — C# applies EvenStyle to every child when
+	// RowNo is even, regardless of whether the band itself has an EvenStyle.
 	objs := b.Objects()
 	if objs != nil {
 		for i := 0; i < objs.Len(); i++ {
 			type evenStyleable interface {
+				EvenStyleName() string
 				SaveState()
 				ApplyEvenStyle(report.StyleLookup)
 			}
-			if es, ok := objs.Get(i).(evenStyleable); ok {
+			if es, ok := objs.Get(i).(evenStyleable); ok && es.EvenStyleName() != "" {
 				es.SaveState()
 				es.ApplyEvenStyle(e.report)
+				applied = true
 			}
 		}
 	}
-	return true
+	return applied
 }
 
 // restoreBandEvenStyle restores the band and child objects to their pre-EvenStyle

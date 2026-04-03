@@ -148,9 +148,11 @@ func MakeLong(pattern string) string {
 	return string(b)
 }
 
-// DrawLinearBarcode renders a linear barcode pattern to an image.
-// Ported from C# LinearBarcodeBase.DrawBarcode + DoLines.
-func DrawLinearBarcode(pattern, text string, width, height int, showText bool, wideBarRatio float32) image.Image {
+// drawLinearBarcodeColored renders a linear barcode pattern using barColor for
+// bars and a transparent background.
+// C# ref: LinearBarcodeBase.DrawBarcode + DoLines (LinearBarcodeBase.cs).
+// Background is transparent so the object's FillColor CSS shows through in HTML.
+func drawLinearBarcodeColored(pattern, text string, width, height int, showText bool, wideBarRatio float32, barColor color.Color) image.Image {
 	if width <= 0 || height <= 0 || len(pattern) == 0 {
 		return image.NewRGBA(image.Rect(0, 0, max(width, 1), max(height, 1)))
 	}
@@ -168,23 +170,13 @@ func DrawLinearBarcode(pattern, text string, width, height int, showText bool, w
 	//   originalWidth = CalcBounds().Width / 1.25  (= barWidth + extra1 + extra2)
 	//   zoom = displayWidth / originalWidth
 	//
-	// CalcBounds().Width = (barWidth + extras) * 1.25. When the engine renders at
-	// w*3 (3× resolution), displayWidth ≈ CalcBounds().Width * 3.
-	//
 	// In Go, CalcBounds already bakes the 1.25 factor into the object Width, and
-	// the engine passes that width * 3 as our `width` parameter. So:
-	//   width ≈ (barWidth + extras) * 1.25 * 3
-	// C# equivalent originalWidth = (barWidth + extras)
-	// C# zoom = width / (barWidth + extras)
-	//
-	// We don't know extras here, so we use barWidth directly. The bars will fill
-	// the full image width — identical to C# for barcodes without extras (Code128,
-	// Code39, etc.) and slightly stretched for EAN/UPC (where extras exist as quiet
-	// zones). This matches C#'s bar-filling behavior.
+	// the engine passes that width * 3 as our `width` parameter.
 	zoom := float32(width) / originalWidth
 
+	// Transparent background: object FillColor CSS div shows through in HTML export.
+	// C# ref: BarcodeObject.DrawObject fills the bounding box with Fill before drawing bars.
 	img := image.NewRGBA(image.Rect(0, 0, width, height))
-	draw.Draw(img, img.Bounds(), image.NewUniform(color.White), image.Point{}, draw.Src)
 
 	// Bar area height (in pattern units).
 	barAreaH := float32(height) / zoom
@@ -197,11 +189,9 @@ func DrawLinearBarcode(pattern, text string, width, height int, showText bool, w
 	}
 
 	// Position bars left-aligned (matching C# barArea.Left * zoom = 0 for most types).
-	// C# offsets by extra1 * zoom for EAN/UPC quiet zones, but we fill the full width
-	// since CalcBounds already sized the object to include quiet zones.
 	var leftOff float32
 
-	black := image.NewUniform(color.Black)
+	barUniform := image.NewUniform(barColor)
 	curX := leftOff
 
 	for i := range len(pattern) {
@@ -257,7 +247,7 @@ func DrawLinearBarcode(pattern, text string, width, height int, showText bool, w
 			py1 = height
 		}
 
-		draw.Draw(img, image.Rect(px0, py0, px1, py1), black, image.Point{}, draw.Src)
+		draw.Draw(img, image.Rect(px0, py0, px1, py1), barUniform, image.Point{}, draw.Src)
 		curX += scaledW
 	}
 
@@ -265,14 +255,23 @@ func DrawLinearBarcode(pattern, text string, width, height int, showText bool, w
 		textTop := int(math.Round(float64(barAreaH * zoom)))
 		textH := height - textTop
 		if textH > 0 {
-			drawLinearText(img, text, 0, textTop, width, textH)
+			drawLinearText(img, text, 0, textTop, width, textH, barColor)
 		}
 	}
 	return img
 }
 
+// DrawLinearBarcode renders a linear barcode pattern to an image with black bars
+// on a transparent background. Background fill is handled by the object's FillColor
+// in the HTML/PDF exporters.
+// Ported from C# LinearBarcodeBase.DrawBarcode + DoLines.
+func DrawLinearBarcode(pattern, text string, width, height int, showText bool, wideBarRatio float32) image.Image {
+	return drawLinearBarcodeColored(pattern, text, width, height, showText, wideBarRatio, color.Black)
+}
+
 // drawLinearText draws centred text below the bars, matching C# DrawString behaviour.
-func drawLinearText(img *image.RGBA, text string, x0, y0, areaW, areaH int) {
+// textColor sets the text color (typically matches the bar color or black).
+func drawLinearText(img *image.RGBA, text string, x0, y0, areaW, areaH int, textColor color.Color) {
 	face := basicfont.Face7x13
 	metrics := face.Metrics()
 	advance := font.MeasureString(face, text)
@@ -286,7 +285,7 @@ func drawLinearText(img *image.RGBA, text string, x0, y0, areaW, areaH int) {
 	ty := y0 + (areaH+ascent-descent)/2
 	d := &font.Drawer{
 		Dst:  img,
-		Src:  image.NewUniform(color.Black),
+		Src:  image.NewUniform(textColor),
 		Face: face,
 		Dot:  fixed.P(tx, ty),
 	}
@@ -320,8 +319,8 @@ func DrawLinearBarcodeCustomText(pattern, text string, width, height int, showTe
 
 	zoom := float32(width) / originalWidth
 
+	// Transparent background: object FillColor CSS div shows through in HTML export.
 	img := image.NewRGBA(image.Rect(0, 0, width, height))
-	draw.Draw(img, img.Bounds(), image.NewUniform(color.White), image.Point{}, draw.Src)
 
 	barAreaH := float32(height) / zoom
 	const fontHeight float32 = 14
@@ -400,7 +399,7 @@ func DrawLinearBarcodeCustomText(pattern, text string, width, height int, showTe
 			if customDraw != nil {
 				customDraw(img, text, textTop, textH, zoom, modules)
 			} else {
-				drawLinearText(img, text, 0, textTop, width, textH)
+				drawLinearText(img, text, 0, textTop, width, textH, color.Black)
 			}
 		}
 	}

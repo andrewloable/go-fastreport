@@ -12,6 +12,7 @@ import (
 	"github.com/andrewloable/go-fastreport/expr"
 	"github.com/andrewloable/go-fastreport/report"
 	"github.com/andrewloable/go-fastreport/style"
+	"github.com/andrewloable/go-fastreport/utils"
 )
 
 // -----------------------------------------------------------------------
@@ -119,6 +120,11 @@ func (b *BaseBarcodeImpl) SetWideBarRatio(v float32) {
 // WBROverride returns the FRX-deserialized WideBarRatio override (0 if not set).
 func (b *BaseBarcodeImpl) WBROverride() float32 { return b.wideBarRatioOverride }
 
+// SetBarcodeColor sets the bar color for this barcode instance.
+// Implements the colorSetter interface used during FRX deserialization.
+// C# ref: LinearBarcodeBase.Color property (LinearBarcodeBase.cs:69).
+func (b *BaseBarcodeImpl) SetBarcodeColor(c color.RGBA) { b.Color = c }
+
 // clampedWBR returns the effective WideBarRatio: the override if non-zero,
 // otherwise typeDefault; the chosen value is then clamped to [ratioMin, ratioMax].
 // C# LinearBarcodeBase.WideBarRatio getter always returns the already-clamped value.
@@ -217,7 +223,7 @@ func (c *Code128Barcode) Render(width, height int) (image.Image, error) {
 	if err != nil {
 		return nil, err
 	}
-	return DrawLinearBarcode(pattern, c.encodedText, width, height, true, c.GetWideBarRatio()), nil
+	return drawLinearBarcodeColored(pattern, c.encodedText, width, height, true, c.GetWideBarRatio(), c.Color), nil
 }
 
 // DefaultValue returns "12345678" matching C# BarcodeBase.GetDefaultValue() (no override in Barcode128.cs).
@@ -271,7 +277,7 @@ func (c *Code39Barcode) Render(width, height int) (image.Image, error) {
 	if err != nil {
 		return nil, err
 	}
-	return DrawLinearBarcode(pattern, c.encodedText, width, height, true, c.GetWideBarRatio()), nil
+	return drawLinearBarcodeColored(pattern, c.encodedText, width, height, true, c.GetWideBarRatio(), c.Color), nil
 }
 
 // DefaultValue returns the C# BarcodeBase.GetDefaultValue() default: "12345678".
@@ -933,6 +939,17 @@ func (b *BarcodeObject) Deserialize(r report.Reader) error {
 		if setter, ok := b.Barcode.(autoEncodeSetter); ok {
 			setter.SetAutoEncode(r.ReadBool("Barcode.AutoEncode", true))
 		}
+		// Barcode.Color: bar color for linear barcodes (default black).
+		// C# LinearBarcodeBase.Color (LinearBarcodeBase.cs:69).
+		// FRX attribute: Barcode.Color="Blue" or Barcode.Color="101, 67, 33".
+		if cs := r.ReadStr("Barcode.Color", ""); cs != "" {
+			type colorSetter interface{ SetBarcodeColor(color.RGBA) }
+			if setter, ok := b.Barcode.(colorSetter); ok {
+				if c, err := utils.ParseColor(cs); err == nil {
+					setter.SetBarcodeColor(c)
+				}
+			}
+		}
 	}
 	b.angle = r.ReadInt("Angle", 0)
 	b.autoSize = r.ReadBool("AutoSize", true)
@@ -1157,7 +1174,7 @@ func (c *Code93Barcode) Render(width, height int) (image.Image, error) {
 	if err != nil {
 		return nil, err
 	}
-	return DrawLinearBarcode(pattern, c.encodedText, width, height, true, c.GetWideBarRatio()), nil
+	return drawLinearBarcodeColored(pattern, c.encodedText, width, height, true, c.GetWideBarRatio(), c.Color), nil
 }
 
 // DefaultValue returns "12345678" matching C# BarcodeBase.GetDefaultValue() (no override in Barcode93.cs).
@@ -1211,7 +1228,7 @@ func (c *Code2of5Barcode) Render(width, height int) (image.Image, error) {
 	if err != nil {
 		return nil, err
 	}
-	return DrawLinearBarcode(pattern, c.encodedText, width, height, true, c.GetWideBarRatio()), nil
+	return drawLinearBarcodeColored(pattern, c.encodedText, width, height, true, c.GetWideBarRatio(), c.Color), nil
 }
 
 // DefaultValue returns a sample 2-of-5 value.
@@ -1271,7 +1288,7 @@ func (c *CodabarBarcode) Render(width, height int) (image.Image, error) {
 	if err != nil {
 		return nil, err
 	}
-	return DrawLinearBarcode(pattern, c.encodedText, width, height, true, c.GetWideBarRatio()), nil
+	return drawLinearBarcodeColored(pattern, c.encodedText, width, height, true, c.GetWideBarRatio(), c.Color), nil
 }
 
 // DefaultValue returns the C# BarcodeBase.GetDefaultValue() default: "12345678".

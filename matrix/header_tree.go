@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strconv"
 
 	"github.com/andrewloable/go-fastreport/format"
 	"github.com/andrewloable/go-fastreport/object"
@@ -538,6 +539,22 @@ func (m *MatrixObject) BuildTemplateMultiLevel() {
 				}
 				cell.SetRowSpan(rowSpan)
 			}
+			// Fire BeforePrint for column header cells (e.g. month number → name).
+			// C# ref: PrintColumnHeader calls GetData() / OnBeforePrint on header cells.
+			if !ItemIsTotal(e.item) {
+				if v, err := strconv.ParseFloat(e.item.Value, 64); err == nil {
+					cell.SetCurrentValue(v)
+				} else {
+					cell.SetCurrentValue(e.item.Value)
+				}
+				m.fireCellBeforePrint(cell)
+				// Apply cached DataColumn image to PictureObjects in this header cell.
+				// C# ref: PrintColumnHeader → templateCell.GetData() → PictureObject.GetData()
+				// evaluates DataColumn for the current column's header value.
+				if len(m.colHeaderImgByVal) > 0 {
+					m.applyHeaderImages(cell, m.colHeaderImgByVal, e.item.Value)
+				}
+			}
 			row.AddCell(cell)
 			for s := 1; s < span; s++ {
 				row.AddCell(nil)
@@ -706,6 +723,11 @@ func (m *MatrixObject) BuildTemplateMultiLevel() {
 			if span > 1 {
 				cell.SetRowSpan(span)
 			}
+			// Apply cached DataColumn image to PictureObjects in this row header cell.
+			// C# ref: PrintRowHeader → templateCell.GetData() → PictureObject.GetData().
+			if len(m.rowHeaderImgByVal) > 0 {
+				m.applyHeaderImages(cell, m.rowHeaderImgByVal, rPath[level])
+			}
 			emittedRowNode[node] = true
 			tableRow.AddCell(cell)
 		}
@@ -734,11 +756,13 @@ func (m *MatrixObject) BuildTemplateMultiLevel() {
 								for _, dl := range getNonTotalTerminalItems(parent) {
 									raw := rt.GetCellValue(ItemIndex(dl), ItemIndex(rLeaf), ci)
 									if raw != nil {
-										rawNumVal += toFloat(raw)
+													rawNumVal += toFloat(raw)
 									}
 								}
 							}
 							if rawNumVal != 0 {
+								// C# uses decimal arithmetic; round to 2dp to match display.
+								rawNumVal = math.Round(rawNumVal*100) / 100
 								cellText = fmtVal(cell, rawNumVal)
 								found = true
 							}
@@ -1223,8 +1247,10 @@ func (m *MatrixObject) fireCellBeforePrint(cell *table.TableCell) {
 		senderName = eventName[:idx]
 	}
 
-	// Build named object map from the result cell's children.
+	// Build named object map: include the sender cell itself plus its children.
+	// The sender cell must be present so that scripts can assign Cell4.Text, etc.
 	objects := make(map[string]script.ContextObject)
+	objects[senderName] = cell
 	for _, obj := range cell.Objects() {
 		co, isCtx := obj.(script.ContextObject)
 		if !isCtx {

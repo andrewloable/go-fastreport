@@ -250,6 +250,15 @@ func (e *ReportEngine) RunDataBandRowsKeep(db *band.DataBand, rows int, keepFirs
 //
 // This is the primary entry point used by RunBands when a DataBand has a DataSource.
 func (e *ReportEngine) RunDataBandFull(db *band.DataBand) error {
+	// Track the current data band for subreport master-detail filtering.
+	// Mirrors C# BandBase.ParentDataBand which walks up through
+	// ReportPage.Subreport to find the enclosing DataBand, used by
+	// DataBand.InitDataSource to filter the child datasource by the current
+	// parent row. C# ref: BandBase.cs line 311, DataBand.cs line 567.
+	saveMasterDataBand := e.masterDataBand
+	e.masterDataBand = db
+	defer func() { e.masterDataBand = saveMasterDataBand }()
+
 	// When the page has unlimited height and page-level multi-column layout,
 	// propagate the page column count to the DataBand so it renders as columns.
 	// Mirrors C# RunDataBand line 49:

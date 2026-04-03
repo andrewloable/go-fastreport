@@ -192,7 +192,7 @@ func (c *Code93ExtendedBarcode) Render(width, height int) (image.Image, error) {
 	if err != nil {
 		return nil, err
 	}
-	return DrawLinearBarcode(pattern, c.encodedText, width, height, true, c.GetWideBarRatio()), nil
+	return drawLinearBarcodeColored(pattern, c.encodedText, width, height, true, c.GetWideBarRatio(), c.Color), nil
 }
 
 // ── Code128ABarcode ───────────────────────────────────────────────────────────
@@ -227,7 +227,7 @@ func (c *Code128ABarcode) Render(width, height int) (image.Image, error) {
 	if err != nil {
 		return nil, err
 	}
-	return DrawLinearBarcode(pattern, c.encodedText, width, height, true, c.GetWideBarRatio()), nil
+	return drawLinearBarcodeColored(pattern, c.encodedText, width, height, true, c.GetWideBarRatio(), c.Color), nil
 }
 
 // ── Code128BBarcode ───────────────────────────────────────────────────────────
@@ -261,7 +261,7 @@ func (c *Code128BBarcode) Render(width, height int) (image.Image, error) {
 	if err != nil {
 		return nil, err
 	}
-	return DrawLinearBarcode(pattern, c.encodedText, width, height, true, c.GetWideBarRatio()), nil
+	return drawLinearBarcodeColored(pattern, c.encodedText, width, height, true, c.GetWideBarRatio(), c.Color), nil
 }
 
 // ── Code128CBarcode ───────────────────────────────────────────────────────────
@@ -293,7 +293,7 @@ func (c *Code128CBarcode) Render(width, height int) (image.Image, error) {
 	if err != nil {
 		return nil, err
 	}
-	return DrawLinearBarcode(pattern, c.encodedText, width, height, true, c.GetWideBarRatio()), nil
+	return drawLinearBarcodeColored(pattern, c.encodedText, width, height, true, c.GetWideBarRatio(), c.Color), nil
 }
 
 // ── Code2of5IndustrialBarcode ─────────────────────────────────────────────────
@@ -337,7 +337,7 @@ func (c *Code2of5IndustrialBarcode) Render(width, height int) (image.Image, erro
 	if err != nil {
 		return nil, err
 	}
-	return DrawLinearBarcode(pattern, c.encodedText, width, height, true, c.GetWideBarRatio()), nil
+	return drawLinearBarcodeColored(pattern, c.encodedText, width, height, true, c.GetWideBarRatio(), c.Color), nil
 }
 
 // ── Code2of5MatrixBarcode ─────────────────────────────────────────────────────
@@ -383,7 +383,7 @@ func (c *Code2of5MatrixBarcode) Render(width, height int) (image.Image, error) {
 	if err != nil {
 		return nil, err
 	}
-	return DrawLinearBarcode(pattern, c.encodedText, width, height, true, c.GetWideBarRatio()), nil
+	return drawLinearBarcodeColored(pattern, c.encodedText, width, height, true, c.GetWideBarRatio(), c.Color), nil
 }
 
 // ── ITF14Barcode ──────────────────────────────────────────────────────────────
@@ -518,7 +518,7 @@ func (d *DeutscheIdentcodeBarcode) Render(width, height int) (image.Image, error
 	if err != nil {
 		return nil, err
 	}
-	return DrawLinearBarcode(pattern, d.encodedText, width, height, true, d.GetWideBarRatio()), nil
+	return drawLinearBarcodeColored(pattern, d.encodedText, width, height, true, d.GetWideBarRatio(), d.Color), nil
 }
 
 // ── DeutscheLeitcodeBarcode ───────────────────────────────────────────────────
@@ -581,7 +581,7 @@ func (d *DeutscheLeitcodeBarcode) Render(width, height int) (image.Image, error)
 	if err != nil {
 		return nil, err
 	}
-	return DrawLinearBarcode(pattern, d.encodedText, width, height, true, d.GetWideBarRatio()), nil
+	return drawLinearBarcodeColored(pattern, d.encodedText, width, height, true, d.GetWideBarRatio(), d.Color), nil
 }
 
 // ── Supplement2Barcode ────────────────────────────────────────────────────────
@@ -623,7 +623,7 @@ func (s *Supplement2Barcode) Render(width, height int) (image.Image, error) {
 	if err != nil {
 		return nil, err
 	}
-	return DrawLinearBarcode(pattern, s.encodedText, width, height, false, s.GetWideBarRatio()), nil
+	return drawLinearBarcodeColored(pattern, s.encodedText, width, height, false, s.GetWideBarRatio(), s.Color), nil
 }
 
 // ── Supplement5Barcode ────────────────────────────────────────────────────────
@@ -663,7 +663,7 @@ func (s *Supplement5Barcode) Render(width, height int) (image.Image, error) {
 	if err != nil {
 		return nil, err
 	}
-	return DrawLinearBarcode(pattern, s.encodedText, width, height, false, s.GetWideBarRatio()), nil
+	return drawLinearBarcodeColored(pattern, s.encodedText, width, height, false, s.GetWideBarRatio(), s.Color), nil
 }
 
 // ── JapanPost4StateBarcode ────────────────────────────────────────────────────
@@ -717,7 +717,7 @@ func (c *Code39ExtendedBarcode) Render(width, height int) (image.Image, error) {
 	if err != nil {
 		return nil, err
 	}
-	return DrawLinearBarcode(pattern, c.encodedText, width, height, true, c.GetWideBarRatio()), nil
+	return drawLinearBarcodeColored(pattern, c.encodedText, width, height, true, c.GetWideBarRatio(), c.Color), nil
 }
 
 // UPCE0Barcode implements UPC-E number system 0.
@@ -808,7 +808,7 @@ func (g *GS1_128Barcode) Render(width, height int) (image.Image, error) {
 	if err != nil {
 		return nil, err
 	}
-	return DrawLinearBarcode(pattern, g.encodedText, width, height, true, g.GetWideBarRatio()), nil
+	return drawLinearBarcodeColored(pattern, g.encodedText, width, height, true, g.GetWideBarRatio(), g.Color), nil
 }
 
 // GS1DatamatrixBarcode implements GS1 DataMatrix.
@@ -866,5 +866,5 @@ func (j *JapanPost4StateBarcode) Render(width, height int) (image.Image, error) 
 	if err != nil {
 		return nil, err
 	}
-	return DrawLinearBarcode(pattern, j.encodedText, width, height, j.showText, j.GetWideBarRatio()), nil
+	return drawLinearBarcodeColored(pattern, j.encodedText, width, height, j.showText, j.GetWideBarRatio(), j.Color), nil
 }

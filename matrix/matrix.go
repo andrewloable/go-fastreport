@@ -4,6 +4,7 @@ package matrix
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 
 	"github.com/andrewloable/go-fastreport/data"
@@ -206,6 +207,22 @@ func (a *accumulator) result() float64 {
 	return 0
 }
 
+// toFloatSum2dp sums a []any cell aggregate rounding each individual leaf value
+// to 2 decimal places before accumulating. For non-slice values it is identical
+// to toFloat. This approximates C# decimal arithmetic for currency totals: each
+// individual data-row value is rounded to cents before being added, so the
+// per-cell sum matches the decimal equivalent to 2dp.
+func toFloatSum2dp(v any) float64 {
+	if s, ok := v.([]any); ok {
+		sum := 0.0
+		for _, elem := range s {
+			sum += math.Round(toFloat(elem)*100) / 100
+		}
+		return sum
+	}
+	return toFloat(v)
+}
+
 // cellKey uniquely identifies a matrix cell by (rowKey, colKey, cellIdx).
 type cellKey struct {
 	row     string
@@ -313,17 +330,27 @@ type MatrixObject struct {
 	// visible shadows ComponentBase.visible so SaveState/RestoreState work
 	// without depending on the exact embedding depth.
 	visible bool
+
+	// colHeaderImgByVal maps column-header key strings to decoded image bytes.
+	// Populated during GetDataWithCalc when column header template cells have
+	// PictureObjects with DataColumn bindings.
+	// C# ref: PrintColumnHeader calls templateCell.GetData() which evaluates DataColumn.
+	colHeaderImgByVal map[string][]byte
+	// rowHeaderImgByVal maps row-header key strings to decoded image bytes.
+	rowHeaderImgByVal map[string][]byte
 }
 
 // New creates a MatrixObject with defaults matching the C# constructor.
 func New() *MatrixObject {
 	return &MatrixObject{
-		TableBase:    *table.NewTableBase(),
-		AutoSize:     true,
-		PrintIfEmpty: true,
-		accumulators: make(map[cellKey]*accumulator),
-		rowIndex:     make(map[string]int),
-		colIndex:     make(map[string]int),
+		TableBase:         *table.NewTableBase(),
+		AutoSize:          true,
+		PrintIfEmpty:      true,
+		accumulators:      make(map[cellKey]*accumulator),
+		rowIndex:          make(map[string]int),
+		colIndex:          make(map[string]int),
+		colHeaderImgByVal: make(map[string][]byte),
+		rowHeaderImgByVal: make(map[string][]byte),
 	}
 }
 

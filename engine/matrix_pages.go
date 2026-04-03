@@ -8,6 +8,7 @@ import "github.com/andrewloable/go-fastreport/preview"
 type matrixHSplitInfo struct {
 	colBounds  []float32 // cumulative column X offsets (relative to table left = 0)
 	originX    float32   // absolute X of the matrix table (renderLeft)
+	originY    float32   // Y offset of matrix table within its containing DataBand (mx.Top())
 	fixedCols  int       // number of fixed (row-header) columns
 	fixedWidth float32   // total width of fixed columns
 }
@@ -188,6 +189,13 @@ func (e *ReportEngine) splitMatrixAcrossThenDown(pb *preview.PreparedBand) {
 		return
 	}
 
+	// C# GeneratePagesAcrossThenDown captures saveCurY = engine.CurY *after* the
+	// containing DataBand has advanced CurY by the band template height (originY).
+	// In Go, e.curY = pb.Top (not yet advanced) when this function is called, so we
+	// add info.originY (= mx.Top(), the matrix's offset within the DataBand) to match
+	// the C# saveCurY. For this report: 133.5 (ReportTitle) + 9.45 (DataBand) = 142.95.
+	origTop := e.curY + info.originY
+
 	availWidth := e.pageWidth - info.originX
 	fixedRight := info.fixedWidth + info.originX
 	nCols := len(info.colBounds) - 1
@@ -246,8 +254,11 @@ func (e *ReportEngine) splitMatrixAcrossThenDown(pb *preview.PreparedBand) {
 		for remaining > 0 {
 			avail := float32(0)
 			if isFirst {
-				avail = e.FreeSpace()
+				// FreeSpace() = pageHeight - e.curY - footerH, but band.Top = origTop
+				// = e.curY + originY. Subtract originY so avail = space from band.Top.
+				avail = e.FreeSpace() - info.originY
 			} else {
+				// Subsequent row groups start at y=0 on fresh pages (C# saveCurY=0 there).
 				avail = e.pageHeight - e.PageFooterHeight()
 			}
 			if !isFirst && fixedH > 0 {
@@ -287,8 +298,16 @@ func (e *ReportEngine) splitMatrixAcrossThenDown(pb *preview.PreparedBand) {
 
 	// Render each (row group, col group) pair: AcrossThenDown order.
 	// For each row group → for each col group → one page.
+	//
+	// C# GeneratePagesAcrossThenDown captures saveCurY = engine.CurY once per outer
+	// (row group) loop iteration and restores it before each GeneratePage call in the
+	// inner (col group) loop. This means:
+	//   - RG0: saveCurY = origTop (e.g. 133.5 after a ReportTitle band)
+	//   - RG1+: saveCurY = 0 (fresh page after StartNewPage)
+	// We replicate this with rowGroupTop: origTop for RG0, e.curY after startNewPage for RG1+.
 	firstPage := true
-	for _, rg := range rowGroups {
+	rowGroupTop := origTop // RG0 starts at origTop = e.curY + originY
+	for rgIdx, rg := range rowGroups {
 		headerOffset := float32(0)
 		if !rg.isFirst && fixedH > 0 {
 			headerOffset = fixedH
@@ -298,8 +317,28 @@ func (e *ReportEngine) splitMatrixAcrossThenDown(pb *preview.PreparedBand) {
 		for cgIdx, cg := range colGroups {
 			if !firstPage {
 				e.startNewPageForCurrent()
+				if cgIdx == 0 {
+					// First col group of a new row group: capture rowGroupTop from curY
+					// after StartNewPage (= 0 or pageHeaderHeight). Matches C# saveCurY.
+					rowGroupTop = e.curY
+				}
 			}
 			firstPage = false
+			_ = rgIdx // used implicitly via rowGroupTop
+
+			// Advance curY to rowGroupTop for every page in this row group.
+			// For RG0 CG0 (first page): 133.5 → 142.95 (origTop includes originY).
+			// For RG0 CG1+: 0 → 142.95 after startNewPage.
+			// For RG1+ CG0: rowGroupTop=curY=0, no advance needed.
+			// For RG1+ CG1+: 0 → 0, no advance needed.
+			if rowGroupTop > e.curY {
+				delta := rowGroupTop - e.curY
+				e.curY += delta
+				e.freeSpace -= delta
+				if e.freeSpace < 0 {
+					e.freeSpace = 0
+				}
+			}
 
 			groupLeft := info.colBounds[cg.startCol] + info.originX
 			groupRight := info.colBounds[cg.endCol] + info.originX
@@ -312,12 +351,19 @@ func (e *ReportEngine) splitMatrixAcrossThenDown(pb *preview.PreparedBand) {
 				xShift -= info.originX
 			}
 
+			// sliceBand.Top = e.curY = rowGroupTop (already adjusted by origTop).
+			// Subtract info.originY from Height to compensate for the origTop shift:
+			// the band starts originY higher on the page (e.g. 142.95 vs 133.5), so
+			// its height must be originY shorter to stay within the footer boundary.
+			// C# ref: GeneratePagesAcrossThenDown sets PreparedBand height from
+			// the number of rows it contains, which naturally excludes the DataBand
+			// template strip (originY) since C# creates a separate PreparedBand for it.
 			sliceBand := &preview.PreparedBand{
 				Name:             pb.Name,
 				Left:             pb.Left,
 				Top:              e.curY,
 				Width:            pb.Width,
-				Height:           sliceH + headerOffset,
+				Height:           sliceH + headerOffset - info.originY,
 				// BackgroundHeight only applies to the first page (gap above the matrix).
 				BackgroundHeight: 0,
 				// Continuation col groups suppress the band background div; sectionBg
@@ -368,6 +414,11 @@ func (e *ReportEngine) splitMatrixAcrossThenDown(pb *preview.PreparedBand) {
 					} else {
 						hpo.Left += xShift
 					}
+					// Shift objects up by originY so that the matrix top row starts
+					// at -0.5 (border overlap) relative to the sliceBand, matching C#
+					// which creates a dedicated PreparedBand for the matrix (no DataBand
+					// template height embedded in the object positions).
+					hpo.Top -= info.originY
 					sliceBand.Objects = append(sliceBand.Objects, hpo)
 				}
 			}
@@ -406,6 +457,18 @@ func (e *ReportEngine) splitMatrixAcrossThenDown(pb *preview.PreparedBand) {
 					} else {
 						clone.Height = rg.breakLine - objTop
 					}
+				}
+
+				// Shift object up by originY: matrix cells in pb have Top values that
+				// include the DataBand template height (originY). C# positions them
+				// relative to a dedicated matrix PreparedBand (no DataBand strip).
+				clone.Top -= info.originY
+
+				// Override sectionBg height to fill the page from sliceBand.Top to
+				// the footer. C# renders the section background as a full-page element
+				// that spans the available height for this row group's band position.
+				if isSectionBg(po) {
+					clone.Height = e.pageHeight - e.PageFooterHeight() - rowGroupTop
 				}
 
 				// Column-group-specific adjustments.

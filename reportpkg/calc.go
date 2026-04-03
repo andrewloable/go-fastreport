@@ -25,6 +25,11 @@ func (r *Report) SetCalcContext(ds data.DataSource) {
 	r.calcDS = ds
 }
 
+// CalcContext returns the current data source set by SetCalcContext, or nil.
+func (r *Report) CalcContext() data.DataSource {
+	return r.calcDS
+}
+
 // Calc evaluates a FastReport bracket expression and returns its value.
 //
 // The expression may be:

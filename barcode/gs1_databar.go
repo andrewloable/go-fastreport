@@ -383,7 +383,7 @@ func (b *GS1DataBarOmniBarcode) Render(width, height int) (image.Image, error) {
 		}
 		if textH < height {
 			barH = height - textH
-			drawLinearText(img, b.encodedText, 0, barH, width, textH)
+			drawLinearText(img, b.encodedText, 0, barH, width, textH, color.Black)
 		}
 	}
 	drawGS1Bars(b.encodedData[0], img, 0, barH, zoom, b.wideBarRatio, false, false)
@@ -516,7 +516,7 @@ func (b *GS1DataBarStackedBarcode) Render(width, height int) (image.Image, error
 		}
 		if textH < height {
 			barH = height - textH
-			drawLinearText(img, b.encodedText, 0, barH, width, textH)
+			drawLinearText(img, b.encodedText, 0, barH, width, textH, color.Black)
 		}
 	}
 
@@ -671,7 +671,7 @@ func (b *GS1DataBarStackedOmniBarcode) Render(width, height int) (image.Image, e
 		}
 		if textH < height {
 			barH = height - textH
-			drawLinearText(img, b.encodedText, 0, barH, width, textH)
+			drawLinearText(img, b.encodedText, 0, barH, width, textH, color.Black)
 		}
 	}
 
@@ -1011,7 +1011,7 @@ func (b *GS1DataBarLimitedBarcode) Render(width, height int) (image.Image, error
 		}
 		if textH < height {
 			barH = height - textH
-			drawLinearText(img, b.encodedText, 0, barH, width, textH)
+			drawLinearText(img, b.encodedText, 0, barH, width, textH, color.Black)
 		}
 	}
 	drawGS1Bars(b.encodedData[0], img, 0, barH, zoom, b.wideBarRatio, false, false)

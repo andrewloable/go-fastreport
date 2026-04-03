@@ -469,6 +469,25 @@ func (e *ReportEngine) showBand(b report.Base) {
 				pb.Objects[i].Left += e.curX
 			}
 		}
+		// Apply subreport X offset (originX) for non-page bands.
+		// Mirrors C# ReportEngine.Bands.cs AddToPreparedPages line 450:
+		//   if (!isPageBand) band.Left += originX + CurX;
+		// isPageBand is true for PageHeaderBand, PageFooterBand, OverlayBand.
+		if e.originX != 0 {
+			_, isPageBand := b.(*band.PageHeaderBand)
+			if !isPageBand {
+				_, isPageBand = b.(*band.PageFooterBand)
+			}
+			if !isPageBand {
+				_, isPageBand = b.(*band.OverlayBand)
+			}
+			if !isPageBand {
+				pb.Left += e.originX
+				for i := range pb.Objects {
+					pb.Objects[i].Left += e.originX
+				}
+			}
+		}
 		// Do not put page bands twice — this may happen when rendering a subreport
 		// or appending one report to another. Mirrors C# AddToPreparedPages lines 484-499
 		// (ReportEngine.Bands.cs):
@@ -529,6 +548,10 @@ func populateBandProps(b report.Base, pb *preview.PreparedBand) {
 			// sheen is rendered as a PNG image in a second CSS class.
 			// C# ref: HTMLExportLayers.cs LayerBack → LayerPicture → dual-class.
 			pb.BackgroundCSS = renderGlassFillCSS(gf, int(pb.Width), int(pb.Height))
+		} else if lgf, ok2 := f.Fill().(*style.LinearGradientFill); ok2 {
+			// LinearGradientFill: rendered as a PNG image in a second CSS class,
+			// matching C# HTMLExportLayers.cs LayerBack → LayerPicture for non-SolidFill.
+			pb.BackgroundCSS = renderLinearGradientFillCSS(lgf, int(pb.Width), int(pb.Height))
 		}
 	}
 	if br, ok := b.(hasBorder); ok {

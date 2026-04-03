@@ -71,6 +71,7 @@ type fpxObject struct {
 	ShapeCurve     float32
 	LineDiagonal   bool
 	Points         [][2]float32
+	PathPoints     [][3]float32
 	Font           style.Font
 	TextColor      color.RGBA
 	FillColor      color.RGBA
@@ -78,6 +79,7 @@ type fpxObject struct {
 	VertAlign      int
 	Border         fpxBorder
 	WordWrap       bool
+	Underlines     bool
 	Checked         bool
 	CheckedSymbol   int
 	UncheckedSymbol int
@@ -215,6 +217,8 @@ func encodeObjects(objs []PreparedObject) []fpxObject {
 	for i, o := range objs {
 		pts := make([][2]float32, len(o.Points))
 		copy(pts, o.Points)
+		ppts := make([][3]float32, len(o.PathPoints))
+		copy(ppts, o.PathPoints)
 		mods := cloneBoolMatrix(o.BarcodeModules)
 		out[i] = fpxObject{
 			Name:           o.Name,
@@ -229,6 +233,7 @@ func encodeObjects(objs []PreparedObject) []fpxObject {
 			ShapeCurve:     o.ShapeCurve,
 			LineDiagonal:   o.LineDiagonal,
 			Points:         pts,
+			PathPoints:     ppts,
 			Font:           o.Font,
 			TextColor:      o.TextColor,
 			FillColor:      o.FillColor,
@@ -236,6 +241,7 @@ func encodeObjects(objs []PreparedObject) []fpxObject {
 			VertAlign:      o.VertAlign,
 			Border:         encodeBorder(o.Border),
 			WordWrap:       o.WordWrap,
+			Underlines:     o.Underlines,
 			Checked:         o.Checked,
 			CheckedSymbol:   int(o.CheckedSymbol),
 			UncheckedSymbol: int(o.UncheckedSymbol),
@@ -371,6 +377,8 @@ func decodeObjects(src []fpxObject) []PreparedObject {
 	for i, fo := range src {
 		pts := make([][2]float32, len(fo.Points))
 		copy(pts, fo.Points)
+		ppts := make([][3]float32, len(fo.PathPoints))
+		copy(ppts, fo.PathPoints)
 		out[i] = PreparedObject{
 			Name:           fo.Name,
 			Kind:           ObjectType(fo.Kind),
@@ -384,6 +392,7 @@ func decodeObjects(src []fpxObject) []PreparedObject {
 			ShapeCurve:     fo.ShapeCurve,
 			LineDiagonal:   fo.LineDiagonal,
 			Points:         pts,
+			PathPoints:     ppts,
 			Font:           fo.Font,
 			TextColor:      fo.TextColor,
 			FillColor:      fo.FillColor,
@@ -391,6 +400,7 @@ func decodeObjects(src []fpxObject) []PreparedObject {
 			VertAlign:      fo.VertAlign,
 			Border:         decodeBorder(fo.Border),
 			WordWrap:       fo.WordWrap,
+			Underlines:     fo.Underlines,
 			Checked:         fo.Checked,
 			CheckedSymbol:   fo.CheckedSymbol,
 			UncheckedSymbol: fo.UncheckedSymbol,

@@ -172,3 +172,21 @@ func (f *FilteredDataSource) SortRows(specs []SortSpec) {
 		_ = f.rebuildIndex()
 	}
 }
+
+// ExprSortRows delegates expression-based sorting to the inner data source and
+// rebuilds the filtered row index afterward.
+func (f *FilteredDataSource) ExprSortRows(keyFn func(row map[string]any) any, descending bool) {
+	if inner, ok := f.inner.(ExpressionSortable); ok {
+		inner.ExprSortRows(keyFn, descending)
+		_ = f.rebuildIndex()
+	}
+}
+
+// MultiSortRows delegates multi-key sorting to the inner data source and
+// rebuilds the filtered row index afterward.
+func (f *FilteredDataSource) MultiSortRows(keys []SortKey) {
+	if inner, ok := f.inner.(MultiSortable); ok {
+		inner.MultiSortRows(keys)
+		_ = f.rebuildIndex()
+	}
+}

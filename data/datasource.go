@@ -300,6 +300,75 @@ type Sortable interface {
 	SortRows(specs []SortSpec)
 }
 
+// ExpressionSortable is implemented by data sources that support sorting via
+// an arbitrary key function evaluated per row. Used when sort expressions
+// cannot be reduced to a simple column name (e.g. script function calls).
+type ExpressionSortable interface {
+	ExprSortRows(keyFn func(row map[string]any) any, descending bool)
+}
+
+// ExprSortRows reorders the internal rows slice by the key returned by keyFn
+// for each row. C# equivalent: RowComparer.Compare sets the current row and
+// calls report.Calc(expression) to evaluate arbitrary sort expressions.
+func (ds *BaseDataSource) ExprSortRows(keyFn func(row map[string]any) any, descending bool) {
+	slices.SortStableFunc(ds.rows, func(a, b map[string]any) int {
+		av := keyFn(a)
+		bv := keyFn(b)
+		c := compareAny(av, bv)
+		if descending {
+			c = -c
+		}
+		return c
+	})
+}
+
+// SortKey describes one key in a multi-key sort. Exactly one of KeyFn or Column
+// must be set. KeyFn is used for expression-based keys (e.g. script functions);
+// Column is used for plain column-name keys.
+type SortKey struct {
+	KeyFn      func(row map[string]any) any
+	Column     string
+	Descending bool
+}
+
+// MultiSortable is implemented by data sources that support a single-pass
+// multi-key sort where each key may be either a column name or an arbitrary
+// expression function. This avoids the correctness bug caused by applying
+// column sorts and expression sorts as separate passes (each pass overrides
+// the previous one for rows that compare equal on the new key).
+type MultiSortable interface {
+	MultiSortRows(keys []SortKey)
+}
+
+// MultiSortRows reorders rows using all keys in a single stable pass.
+// C# equivalent: DataSourceBase.cs RowComparer.Compare — iterates all sort
+// specs in order, evaluating expressions per row.
+func (ds *BaseDataSource) MultiSortRows(keys []SortKey) {
+	if len(keys) == 0 {
+		return
+	}
+	slices.SortStableFunc(ds.rows, func(a, b map[string]any) int {
+		for _, k := range keys {
+			var av, bv any
+			if k.KeyFn != nil {
+				av = k.KeyFn(a)
+				bv = k.KeyFn(b)
+			} else {
+				av = a[k.Column]
+				bv = b[k.Column]
+			}
+			c := compareAny(av, bv)
+			if k.Descending {
+				c = -c
+			}
+			if c != 0 {
+				return c
+			}
+		}
+		return 0
+	})
+}
+
 // unicodeCollator provides culture-aware string comparison that matches C#'s
 // default CurrentCulture sort order. Accented characters sort near their base
 // characters (e.g. â sorts as a variant of 'a'), matching System.String.Compare.

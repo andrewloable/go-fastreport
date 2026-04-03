@@ -2,9 +2,11 @@ package engine
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/andrewloable/go-fastreport/band"
 	"github.com/andrewloable/go-fastreport/data"
+	"github.com/andrewloable/go-fastreport/script"
 )
 
 // groupTreeItem represents one node in the group tree built before rendering.
@@ -506,23 +508,32 @@ func (e *ReportEngine) RunGroup(groupBand *band.GroupHeaderBand) {
 // applyGroupSort sorts the DataBand's data source using a combined key list:
 // group-header condition columns first (for correct grouping), then the
 // DataBand's own sort specs (for ordering within each group).
+//
+// All keys — whether plain column names or script function expressions — are
+// applied in a SINGLE stable sort pass via MultiSortRows. Applying them as
+// separate passes (old approach) caused later passes to override earlier ones
+// for rows that compared equal on the newer key.
+// C# ref: DataSourceBase.cs RowComparer.Compare — all specs evaluated in order.
 func (e *ReportEngine) applyGroupSort(groupBand *band.GroupHeaderBand, db *band.DataBand) {
 	ds := db.DataSourceRef()
+	fmt.Printf("[DEBUG applyGroupSort ENTRY] db=%q finalPass=%v ds=%T\n", db.Name(), e.FinalPass(), ds)
 	if ds == nil {
+		fmt.Printf("[DEBUG applyGroupSort] ds is nil, returning\n")
 		return
 	}
-	sortable, ok := ds.(data.Sortable)
+	multiSortable, ok := ds.(data.MultiSortable)
+	fmt.Printf("[DEBUG applyGroupSort] MultiSortable=%v\n", ok)
 	if !ok {
 		return
 	}
 
-	var specs []data.SortSpec
+	var keys []data.SortKey
 	g := groupBand
 	for g != nil {
 		if g.SortOrder() != band.SortOrderNone {
 			col := groupConditionColumn(g.Condition())
 			if col != "" {
-				specs = append(specs, data.SortSpec{
+				keys = append(keys, data.SortKey{
 					Column:     col,
 					Descending: g.SortOrder() == band.SortOrderDescending,
 				})
@@ -536,17 +547,157 @@ func (e *ReportEngine) applyGroupSort(groupBand *band.GroupHeaderBand, db *band.
 		if expr == "" {
 			expr = s.Column
 		}
+		// Check if the expression is a script function call like "GroupRank()"
+		// (name followed by "()" with no leading "["). These cannot be reduced
+		// to a column name and must be evaluated per-row via the script engine.
+		// C# ref: DataSourceBase.cs RowComparer.Compare — sets the current row
+		// then calls report.Calc(expression) for each comparison pair.
+		if isScriptFunctionExpr(expr) {
+			keyFn := e.buildScriptSortKeyFn(expr)
+			if keyFn != nil {
+				keys = append(keys, data.SortKey{
+					KeyFn:      keyFn,
+					Descending: s.Order == band.SortOrderDescending,
+				})
+			}
+			continue
+		}
 		col := groupConditionColumn(expr)
 		if col != "" {
-			specs = append(specs, data.SortSpec{
+			keys = append(keys, data.SortKey{
 				Column:     col,
 				Descending: s.Order == band.SortOrderDescending,
 			})
 		}
 	}
 
-	if len(specs) > 0 {
-		sortable.SortRows(specs)
+	if len(keys) > 0 {
+		// DEBUG
+		fmt.Printf("[DEBUG applyGroupSort] finalPass=%v firstPass=%v keys=%d\n", e.FinalPass(), e.FirstPass(), len(keys))
+		for i, k := range keys {
+			if k.KeyFn != nil {
+				fmt.Printf("[DEBUG applyGroupSort]   key[%d]: script fn, desc=%v\n", i, k.Descending)
+			} else {
+				fmt.Printf("[DEBUG applyGroupSort]   key[%d]: col=%q desc=%v\n", i, k.Column, k.Descending)
+			}
+		}
+		multiSortable.MultiSortRows(keys)
+		// Print first 5 rows after sort
+		type rowGetter interface{ GetValue(string) (any, error) }
+		if rg, ok := ds.(rowGetter); ok {
+			if f, ok2 := ds.(interface{ First() error }); ok2 {
+				_ = f.First()
+			}
+			for i := 0; i < 5; i++ {
+				if eof, ok2 := ds.(interface{ EOF() bool }); ok2 && eof.EOF() {
+					break
+				}
+				v, _ := rg.GetValue("ProductName")
+				fmt.Printf("[DEBUG applyGroupSort]   sorted row[%d]: ProductName=%v\n", i, v)
+				if n, ok2 := ds.(interface{ Next() error }); ok2 {
+					_ = n.Next()
+				}
+			}
+		}
+	}
+}
+
+// isScriptFunctionExpr returns true when expr looks like a bare script function
+// call such as "GroupRank()" — i.e. identifier followed by "()" with no "[".
+func isScriptFunctionExpr(expr string) bool {
+	expr = strings.TrimSpace(expr)
+	if strings.HasPrefix(expr, "[") || !strings.HasSuffix(expr, ")") {
+		return false
+	}
+	parenIdx := strings.Index(expr, "(")
+	if parenIdx <= 0 {
+		return false
+	}
+	name := expr[:parenIdx]
+	// Must be a plain identifier (letters/digits/underscore only).
+	for _, c := range name {
+		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_') {
+			return false
+		}
+	}
+	return true
+}
+
+// buildScriptSortKeyFn returns a per-row key function for the named script
+// function expression (e.g. "GroupRank()"). Returns nil if the function is
+// not found in the compiled script.
+// C# ref: DataSourceBase.cs RowComparer — SetCurrentRow + report.Calc() per pair.
+func (e *ReportEngine) buildScriptSortKeyFn(funcExpr string) func(row map[string]any) any {
+	if e.report == nil || e.report.CompiledScript == nil {
+		return nil
+	}
+	parenIdx := strings.Index(funcExpr, "(")
+	if parenIdx <= 0 {
+		return nil
+	}
+	funcName := funcExpr[:parenIdx]
+	method, ok := e.report.CompiledScript.Methods[funcName]
+	if !ok {
+		return nil
+	}
+
+	classState := e.report.CompiledScript.ClassState
+	isFinalPass := e.FinalPass()
+	isFirstPass := e.FirstPass()
+
+	getTotalValue := func(name string) interface{} {
+		d := e.report.Dictionary()
+		if d == nil {
+			return nil
+		}
+		for _, t := range d.Totals() {
+			if strings.EqualFold(t.Name, name) {
+				return t.Value
+			}
+		}
+		return nil
+	}
+	getVariableValue := func(name string) interface{} {
+		d := e.report.Dictionary()
+		if d == nil {
+			return nil
+		}
+		for _, sv := range d.SystemVariables() {
+			if strings.EqualFold(sv.Name, name) {
+				return sv.Value
+			}
+		}
+		for _, p := range d.Parameters() {
+			if strings.EqualFold(p.Name, name) {
+				return p.Value
+			}
+		}
+		return nil
+	}
+
+	return func(row map[string]any) any {
+		ctx := &script.Context{
+			Vars:             make(map[string]interface{}),
+			ClassState:       classState,
+			IsFirstPass:      isFirstPass,
+			IsFinalPass:      isFinalPass,
+			GetTotalValue:    getTotalValue,
+			GetVariableValue: getVariableValue,
+			GetColumnValue: func(name string) interface{} {
+				col := name
+				if dotIdx := strings.LastIndex(name, "."); dotIdx >= 0 {
+					col = name[dotIdx+1:]
+				}
+				return row[col]
+			},
+		}
+		method(ctx)
+		// DEBUG: print first few calls
+		if isFinalPass {
+			colVal := row["ProductName"]
+			fmt.Printf("[DEBUG GroupRank] ProductName=%v ReturnValue=%v classState=%v\n", colVal, ctx.ReturnValue, classState)
+		}
+		return ctx.ReturnValue
 	}
 }
 

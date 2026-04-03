@@ -15,6 +15,14 @@ import (
 // band, starting at CurY and advancing CurY when done.
 
 // renderSubreport runs the bands of a subreport's linked ReportPage.
+//
+// When a master DataBand is active (e.masterDataBand != nil), it applies
+// master-detail relation filters to the subreport page's bands before running
+// them. This mirrors C# BandBase.ParentDataBand which climbs through
+// ReportPage.Subreport back to the enclosing DataBand, and then
+// DataBand.InitDataSource which calls DataSource.Init(parentDataSource) to
+// filter the child datasource to the current parent row.
+// C# ref: BandBase.cs ParentDataBand lines 311-323, DataBand.cs line 567.
 func (e *ReportEngine) renderSubreport(sr *object.SubreportObject) {
 	pgName := sr.ReportPageName()
 	if pgName == "" || e.report == nil {
@@ -25,7 +33,26 @@ func (e *ReportEngine) renderSubreport(sr *object.SubreportObject) {
 		return
 	}
 	bands := pg.Bands()
+
+	// Apply master-detail relation filters so subreport data bands are
+	// filtered to the current parent row. Save and restore the masterDataBand
+	// to handle nested subreports correctly.
+	saveMaster := e.masterDataBand
+	var restore func()
+	if saveMaster != nil {
+		restore = e.applyRelationFilters(saveMaster, bands)
+		// Clear masterDataBand inside subreport so nested sub-bands within
+		// the subreport don't incorrectly re-apply the outer relation.
+		// If the subreport itself has data bands with sub-bands, those will
+		// set their own masterDataBand via RunDataBandFull.
+		e.masterDataBand = nil
+	} else {
+		restore = func() {}
+	}
+
 	_ = e.runBands(bands)
+	restore()
+	e.masterDataBand = saveMaster
 }
 
 // RenderInnerSubreport renders a subreport inside the coordinate space of

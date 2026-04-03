@@ -169,6 +169,25 @@ var namedColors = map[string]color.RGBA{
 	"whitesmoke":           {245, 245, 245, 255},
 	"yellow":               {255, 255, 0, 255},
 	"yellowgreen":          {154, 205, 50, 255},
+
+	// Windows system colors — mapped to Windows 10 defaults so FRX files that
+	// serialize system-color names (e.g. Fill.Color="Highlight") render with
+	// a reasonable colour rather than transparent.
+	"highlight":            {0, 120, 215, 255}, // Windows 10 accent / selection blue
+	"highlighttext":        {255, 255, 255, 255},
+	"windowtext":           {0, 0, 0, 255},
+	"window":               {255, 255, 255, 255},
+	"btnface":              {240, 240, 240, 255},
+	"btntext":              {0, 0, 0, 255},
+	"desktop":              {0, 0, 0, 255},
+	"activecaption":        {0, 120, 215, 255},
+	"inactivecaption":      {191, 205, 219, 255},
+	"menu":                 {240, 240, 240, 255},
+	"menutext":             {0, 0, 0, 255},
+	"scrollbar":            {200, 200, 200, 255},
+	"graytext":             {109, 109, 109, 255},
+	"infotext":             {0, 0, 0, 255},
+	"infobk":               {255, 255, 225, 255},
 }
 
 // ParseColor parses a color from various string formats:

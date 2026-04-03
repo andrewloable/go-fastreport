@@ -19,7 +19,6 @@ import (
 	"github.com/andrewloable/go-fastreport/expr"
 	"github.com/andrewloable/go-fastreport/format"
 	"github.com/andrewloable/go-fastreport/gauge"
-	"github.com/andrewloable/go-fastreport/maprender"
 	"github.com/andrewloable/go-fastreport/matrix"
 	"github.com/andrewloable/go-fastreport/object"
 	"github.com/andrewloable/go-fastreport/preview"
@@ -64,6 +63,97 @@ func renderGlassFillCSS(gf *style.GlassFill, w, h int) string {
 		}
 	}
 	// Encode to PNG.
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		return ""
+	}
+	encoded := base64.StdEncoding.EncodeToString(buf.Bytes())
+	return fmt.Sprintf(
+		"background: url('data:image/Png;base64,%s') no-repeat !important;-webkit-print-color-adjust:exact;",
+		encoded,
+	)
+}
+
+// renderLinearGradientFillCSS generates a PNG image of the linear gradient
+// fill effect and returns a CSS background-image string. Mirrors C#
+// LinearGradientBrush.SetSigmaBellShape + HTMLExportLayers LayerPicture pattern.
+// C# ref: Fills.cs LinearGradientFill.CreateBrush, HTMLExportLayers.cs GetLayerPicture.
+func renderLinearGradientFillCSS(f *style.LinearGradientFill, w, h int) string {
+	if w <= 0 || h <= 0 {
+		return ""
+	}
+	img := image.NewRGBA(image.Rect(0, 0, w, h))
+
+	// Compute gradient direction from angle (degrees clockwise from East, GDI+ convention).
+	angleRad := float64(f.Angle) * math.Pi / 180.0
+	gdx := math.Cos(angleRad)
+	gdy := math.Sin(angleRad)
+
+	// Compute the min and max projections across the bounding box corners.
+	type corner struct{ cx, cy float64 }
+	corners := []corner{{0, 0}, {float64(w - 1), 0}, {0, float64(h - 1)}, {float64(w - 1), float64(h - 1)}}
+	minProj := math.MaxFloat64
+	maxProj := -math.MaxFloat64
+	for _, c := range corners {
+		p := c.cx*gdx + c.cy*gdy
+		if p < minProj {
+			minProj = p
+		}
+		if p > maxProj {
+			maxProj = p
+		}
+	}
+	projRange := maxProj - minProj
+	if projRange == 0 {
+		projRange = 1
+	}
+
+	focus := float64(f.Focus)
+	contrast := float64(f.Contrast)
+
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			proj := float64(x)*gdx + float64(y)*gdy
+			t := (proj - minProj) / projRange // t in [0, 1]
+
+			var blend float64
+			if focus <= 0 {
+				// Simple linear gradient.
+				blend = t
+			} else {
+				// Sigma bell shape approximation: cosine interpolation to the peak at focus.
+				// Mirrors GDI+ LinearGradientBrush.SetSigmaBellShape(focus, scale).
+				var pos float64
+				if t < focus {
+					pos = t / focus
+				} else {
+					if focus < 1 {
+						pos = 1 - (t-focus)/(1-focus)
+					} else {
+						pos = 0
+					}
+				}
+				// Cosine interpolation gives smooth bell curve.
+				blend = contrast * (1 - math.Cos(pos*math.Pi)) / 2
+			}
+			if blend < 0 {
+				blend = 0
+			}
+			if blend > 1 {
+				blend = 1
+			}
+
+			sr, sg, sb, sa := float64(f.StartColor.R), float64(f.StartColor.G), float64(f.StartColor.B), float64(f.StartColor.A)
+			er, eg, eb, ea := float64(f.EndColor.R), float64(f.EndColor.G), float64(f.EndColor.B), float64(f.EndColor.A)
+			img.SetRGBA(x, y, color.RGBA{
+				R: uint8(sr + blend*(er-sr)),
+				G: uint8(sg + blend*(eg-sg)),
+				B: uint8(sb + blend*(eb-sb)),
+				A: uint8(sa + blend*(ea-sa)),
+			})
+		}
+	}
+
 	var buf bytes.Buffer
 	if err := png.Encode(&buf, img); err != nil {
 		return ""
@@ -274,8 +364,8 @@ func (e *ReportEngine) populateBandObjects2(parentBand *band.BandBase, objs *rep
 					}
 				}
 				// Wire compiled BeforePrint event handlers from the report's script.
-				if e.report != nil && e.report.CompiledScripts != nil {
-					mx.EventHandlers = e.report.CompiledScripts
+				if e.report != nil && e.report.CompiledScript != nil {
+					mx.EventHandlers = e.report.CompiledScript.Methods
 				}
 				// Save original width before building so we can track growth.
 				origWidth := mx.Width()
@@ -304,6 +394,7 @@ func (e *ReportEngine) populateBandObjects2(parentBand *band.BandBase, objs *rep
 					e.pendingHSplit = &matrixHSplitInfo{
 						colBounds:  colBounds,
 						originX:    renderLeft,
+						originY:    mx.Top(),
 						fixedCols:  fixedCols,
 						fixedWidth: colBounds[fixedCols],
 					}
@@ -749,9 +840,8 @@ func (e *ReportEngine) populateTableObjects(tbl *table.TableBase, originX, origi
 				pb.Objects = append(pb.Objects, po)
 
 				// Render embedded child objects inside the cell.
-				// C# table cells can contain PictureObjects, ShapeObjects, etc.
-				// (e.g. Photo column with BindableControl="Picture", or shape
-				// indicators set via BeforePrint event). These are rendered as
+				// C# table cells can contain PictureObjects, ShapeObjects,
+				// TextObjects, BarcodeObjects, etc. These are rendered as
 				// separate PreparedObjects positioned relative to the cell origin.
 				for _, childObj := range cell.Objects() {
 					switch child := childObj.(type) {
@@ -796,6 +886,104 @@ func (e *ReportEngine) populateTableObjects(tbl *table.TableBase, originX, origi
 							shapePO.FillColor = f.Color
 						}
 						pb.Objects = append(pb.Objects, shapePO)
+					case *object.TextObject:
+						// C# ref: TableCell child TextObjects are positioned relative
+						// to the cell origin (e.g. label TextObjects in Pharmacode.frx).
+						if !child.Visible() {
+							continue
+						}
+						txtPO := preview.PreparedObject{
+							Name:      child.Name(),
+							Kind:      preview.ObjectTypeText,
+							Left:      absLeft + child.Left(),
+							Top:       absTop + child.Top(),
+							Width:     child.Width(),
+							Height:    child.Height(),
+							BlobIdx:   -1,
+							Font:      child.Font(),
+							TextColor: child.TextColor(),
+							HorzAlign: int(child.HorzAlign()),
+							VertAlign: int(child.VertAlign()),
+							WordWrap:  child.WordWrap(),
+							Clip:      child.Clip(),
+							Border:    child.Border(),
+							Text:      e.evalTextWithFormat(child.Text(), child.Format()),
+						}
+						if txtPO.TextColor.A == 0 {
+							txtPO.TextColor = color.RGBA{A: 255}
+						}
+						switch f := child.Fill().(type) {
+						case *style.SolidFill:
+							if f.Color.A > 0 {
+								txtPO.FillColor = f.Color
+							}
+						case *style.GlassFill:
+							txtPO.BackgroundCSS = renderGlassFillCSS(f, int(child.Width()), int(child.Height()))
+						case *style.LinearGradientFill:
+							txtPO.BackgroundCSS = renderLinearGradientFillCSS(f, int(child.Width()), int(child.Height()))
+						}
+						pb.Objects = append(pb.Objects, txtPO)
+					case *barcode.BarcodeObject:
+						// C# ref: TableCell child BarcodeObjects (e.g. Pharmacode.frx).
+						// Mirrors buildPreparedObject *barcode.BarcodeObject case.
+						if !child.Visible() {
+							continue
+						}
+						var bText string
+						if col := child.DataColumn(); col != "" {
+							bText = e.evalText("[" + col + "]")
+						} else if child.Expression() != "" {
+							bText = e.evalText(child.Expression())
+						} else {
+							bText = e.evalText(child.Text())
+						}
+						if child.Trim() {
+							bText = strings.TrimSpace(bText)
+						}
+						if bText == "" && !child.HideIfNoData() {
+							bText = child.NoDataText()
+						}
+						if bText == "" && !child.HideIfNoData() && child.Barcode != nil {
+							bText = child.Barcode.DefaultValue()
+						}
+						barcodePO := preview.PreparedObject{
+							Name:    child.Name(),
+							Kind:    preview.ObjectTypePicture,
+							Left:    absLeft + child.Left(),
+							Top:     absTop + child.Top(),
+							Width:   child.Width(),
+							Height:  child.Height(),
+							BlobIdx: -1,
+							Angle:   child.Angle(),
+							Border:  child.Border(),
+						}
+						if f, ok := child.Fill().(*style.SolidFill); ok && f.Color.A > 0 {
+							barcodePO.FillColor = f.Color
+						}
+						if bText != "" && child.Barcode != nil {
+							if err := child.Barcode.Encode(bText); err == nil {
+								child.UpdateAutoSize()
+								w := int(child.Width())
+								h := int(child.Height())
+								if w <= 0 {
+									w = 200
+								}
+								if h <= 0 {
+									h = 60
+								}
+								barcodePO.Width = child.Width()
+								barcodePO.Height = child.Height()
+								if img, err := renderBarcode(child.Barcode, w, h); err == nil && img != nil && e.preparedPages != nil {
+									var buf bytes.Buffer
+									if encErr := png.Encode(&buf, img); encErr == nil {
+										barcodePO.BlobIdx = e.preparedPages.BlobStore.Add("", buf.Bytes())
+									}
+									barcodePO.IsBarcode = true
+									barcodePO.BarcodeModules = extractBarcodeModules(img)
+								}
+							}
+						}
+						pb.Objects = append(pb.Objects, barcodePO)
 					}
 				}
 			}
@@ -838,16 +1026,24 @@ func (e *ReportEngine) autoManualBuild(tbl *table.TableObject) *table.TableBase 
 		return nil
 	}
 
-	// Simple row-first pattern: no FixedColumns, no FixedRows, ≥2 rows.
+	// Simple row-first pattern: no FixedColumns, ≥2 rows.
 	// C# pattern: PrintRow(0); PrintColumns(); foreach DS: PrintRow(1); PrintColumns()
-	// This covers tables like Table2 in Table.frx (Categories with images).
-	if fixedCols == 0 && tbl.FixedRows() == 0 && tbl.RowCount() >= 2 {
+	// This covers tables like Table2 in Table.frx (Categories with images) and
+	// master-detail tables like "Row Datasource, Detail Rows" (FixedRows=1).
+	if fixedCols == 0 && tbl.RowCount() >= 2 {
+		// Try nested master-detail first (table drives both master + detail loops).
+		if built := e.autoManualBuildNestedMasterDetail(tbl); built != nil {
+			return built
+		}
 		if built := e.autoManualBuildSimpleRowFirst(tbl); built != nil {
 			return built
 		}
 		// Fall back to for-loop interpretation (e.g. Multiplication Table with
 		// nested integer-range loops and expressions like [x * y]).
-		return e.autoManualBuildForLoops(tbl)
+		if tbl.FixedRows() == 0 {
+			return e.autoManualBuildForLoops(tbl)
+		}
+		return nil
 	}
 
 	if fixedCols <= 0 {
@@ -984,6 +1180,302 @@ func (e *ReportEngine) autoManualBuild(tbl *table.TableObject) *table.TableBase 
 	}
 
 	return h.Result()
+}
+
+// masterDetailInfo describes a master-detail Init() pattern parsed from a C#
+// ManualBuild script body. Example C# pattern:
+//
+//	DataSourceBase parentData = Report.GetDataSource("Categories");
+//	DataSourceBase rowData = Report.GetDataSource("Products");
+//	rowData.Init(parentData);
+type masterDetailInfo struct {
+	parentAlias string // parent (master) data source alias, e.g. "Categories"
+	childAlias  string // child (detail) data source alias, e.g. "Products"
+}
+
+// parseMasterDetailFromScript inspects the C# ManualBuild event handler body
+// for the pattern:  childVar.Init(parentVar)  where both variables were
+// assigned via Report.GetDataSource("alias").
+// Returns nil when the pattern is not found.
+func parseMasterDetailFromScript(scriptText, eventName string) *masterDetailInfo {
+	if scriptText == "" || eventName == "" {
+		return nil
+	}
+	funcIdx := strings.Index(scriptText, eventName)
+	if funcIdx < 0 {
+		return nil
+	}
+	sub := scriptText[funcIdx:]
+	bodyStart := strings.Index(sub, "{")
+	if bodyStart < 0 {
+		return nil
+	}
+	bodyEnd := -1
+	depth := 0
+	for i, ch := range sub[bodyStart:] {
+		if ch == '{' {
+			depth++
+		} else if ch == '}' {
+			depth--
+			if depth == 0 {
+				bodyEnd = bodyStart + i + 1
+				break
+			}
+		}
+	}
+	if bodyEnd < 0 {
+		bodyEnd = len(sub)
+	}
+	body := sub[bodyStart:bodyEnd]
+
+	// Map local variable names → data source aliases.
+	// Pattern: Report.GetDataSource("Alias")  assigned to  varName.
+	dsRe := regexp.MustCompile(`(\w+)\s*=\s*Report\.GetDataSource\(\s*"([^"]+)"\s*\)`)
+	matches := dsRe.FindAllStringSubmatch(body, -1)
+	varToAlias := make(map[string]string)
+	for _, m := range matches {
+		varToAlias[m[1]] = m[2]
+	}
+	if len(varToAlias) < 2 {
+		return nil
+	}
+
+	// Detect childVar.Init(parentVar) pattern.
+	initRe := regexp.MustCompile(`(\w+)\.Init\(\s*(\w+)\s*\)`)
+	initMatch := initRe.FindStringSubmatch(body)
+	if initMatch == nil {
+		return nil
+	}
+	childVar := initMatch[1]
+	parentVar := initMatch[2]
+	childAlias, ok1 := varToAlias[childVar]
+	parentAlias, ok2 := varToAlias[parentVar]
+	if !ok1 || !ok2 {
+		return nil
+	}
+	return &masterDetailInfo{parentAlias: parentAlias, childAlias: childAlias}
+}
+
+// nestedMasterDetailInfo describes a fully parsed nested master-detail ManualBuild
+// pattern where the table script drives BOTH the master and detail iteration.
+// C# pattern:
+//
+//	masterData.Init();
+//	while (masterData.HasMoreRows) {
+//	    PrintRow(0); PrintColumns();  // master rows
+//	    detailData.Init(masterData);
+//	    PrintRow(3); PrintColumns();  // detail header
+//	    while (detailData.HasMoreRows) {
+//	        PrintRow(4); PrintColumns();  // detail body
+//	        detailData.Next();
+//	    }
+//	    PrintRow(5); PrintColumns();  // detail footer rows
+//	    masterData.Next();
+//	}
+type nestedMasterDetailInfo struct {
+	masterAlias    string // master data source alias, e.g. "Categories"
+	detailAlias    string // detail data source alias, e.g. "Products"
+	masterRows     []int  // row indices printed before detail (per master row)
+	detailHeadRows []int  // detail header rows (before inner loop)
+	detailBodyRow  int    // the single row index printed in the inner loop
+	detailFootRows []int  // rows printed after the inner loop (per master row)
+}
+
+// parseNestedMasterDetailScript parses the ManualBuild event handler for the
+// nested master-detail pattern where the table drives both master and detail
+// iteration. Returns nil if the pattern is not detected.
+func parseNestedMasterDetailScript(scriptText, eventName string) *nestedMasterDetailInfo {
+	if scriptText == "" || eventName == "" {
+		return nil
+	}
+	funcIdx := strings.Index(scriptText, eventName)
+	if funcIdx < 0 {
+		return nil
+	}
+	sub := scriptText[funcIdx:]
+	bodyStart := strings.Index(sub, "{")
+	if bodyStart < 0 {
+		return nil
+	}
+	bodyEnd := -1
+	depth := 0
+	for i, ch := range sub[bodyStart:] {
+		if ch == '{' {
+			depth++
+		} else if ch == '}' {
+			depth--
+			if depth == 0 {
+				bodyEnd = bodyStart + i + 1
+				break
+			}
+		}
+	}
+	if bodyEnd < 0 {
+		bodyEnd = len(sub)
+	}
+	body := sub[bodyStart:bodyEnd]
+
+	// Map variable names → data source aliases.
+	dsRe := regexp.MustCompile(`(\w+)\s*=\s*Report\.GetDataSource\(\s*"([^"]+)"\s*\)`)
+	dsMatches := dsRe.FindAllStringSubmatch(body, -1)
+	varToAlias := make(map[string]string)
+	for _, m := range dsMatches {
+		varToAlias[m[1]] = m[2]
+	}
+	if len(varToAlias) < 2 {
+		return nil
+	}
+
+	// Detect masterVar.Init() (no args) → master data source.
+	// Must also have detailVar.Init(masterVar) → detail data source.
+	initNoArgRe := regexp.MustCompile(`(\w+)\.Init\(\s*\)`)
+	initWithArgRe := regexp.MustCompile(`(\w+)\.Init\(\s*(\w+)\s*\)`)
+
+	initNoArgMatch := initNoArgRe.FindStringSubmatch(body)
+	initWithArgMatch := initWithArgRe.FindStringSubmatch(body)
+	if initNoArgMatch == nil || initWithArgMatch == nil {
+		return nil
+	}
+
+	masterVar := initNoArgMatch[1]
+	detailVar := initWithArgMatch[1]
+	masterAlias, ok1 := varToAlias[masterVar]
+	detailAlias, ok2 := varToAlias[detailVar]
+	if !ok1 || !ok2 {
+		return nil
+	}
+
+	// Confirm: detailVar.Init(masterVar) — the parent arg must be the master.
+	if initWithArgMatch[2] != masterVar {
+		return nil
+	}
+
+	// Find the inner while loop: while (detailVar.HasMoreRows)
+	innerLoopRe := regexp.MustCompile(`while\s*\(\s*` + regexp.QuoteMeta(detailVar) + `\.HasMoreRows\s*\)\s*\{`)
+	innerLoc := innerLoopRe.FindStringIndex(body)
+	if innerLoc == nil {
+		return nil
+	}
+
+	// Find the outer while loop: while (masterVar.HasMoreRows)
+	outerLoopRe := regexp.MustCompile(`while\s*\(\s*` + regexp.QuoteMeta(masterVar) + `\.HasMoreRows\s*\)\s*\{`)
+	outerLoc := outerLoopRe.FindStringIndex(body)
+	if outerLoc == nil {
+		return nil
+	}
+
+	// Extract the inner loop body (balanced braces from innerLoc).
+	innerBodyStart := strings.Index(body[innerLoc[0]:], "{")
+	if innerBodyStart < 0 {
+		return nil
+	}
+	innerBodyStart += innerLoc[0]
+	innerBodyEnd := -1
+	depth = 0
+	for i, ch := range body[innerBodyStart:] {
+		if ch == '{' {
+			depth++
+		} else if ch == '}' {
+			depth--
+			if depth == 0 {
+				innerBodyEnd = innerBodyStart + i + 1
+				break
+			}
+		}
+	}
+	if innerBodyEnd < 0 {
+		return nil
+	}
+	innerBody := body[innerBodyStart:innerBodyEnd]
+
+	// Extract the outer loop body similarly.
+	outerBodyStart := strings.Index(body[outerLoc[0]:], "{")
+	if outerBodyStart < 0 {
+		return nil
+	}
+	outerBodyStart += outerLoc[0]
+	outerBodyEnd := -1
+	depth = 0
+	for i, ch := range body[outerBodyStart:] {
+		if ch == '{' {
+			depth++
+		} else if ch == '}' {
+			depth--
+			if depth == 0 {
+				outerBodyEnd = outerBodyStart + i + 1
+				break
+			}
+		}
+	}
+	if outerBodyEnd < 0 {
+		return nil
+	}
+	outerBody := body[outerBodyStart:outerBodyEnd]
+
+	// Parse PrintRow(N) calls from the outer loop body but NOT inside the inner loop.
+	printRowRe := regexp.MustCompile(`\.PrintRow\(\s*(\d+)\s*\)`)
+
+	// Split outer body into: before inner loop, inner loop, after inner loop.
+	// Use relative positions within outerBody.
+	innerRelStart := innerBodyStart - outerBodyStart
+	innerRelEnd := innerBodyEnd - outerBodyStart
+	beforeInner := outerBody[:innerRelStart]
+	afterInner := outerBody[innerRelEnd:]
+
+	// Find the detailVar.Init(masterVar) call — rows before it are master rows,
+	// rows after it (but before inner loop) are detail header rows.
+	initCallRe := regexp.MustCompile(regexp.QuoteMeta(detailVar) + `\.Init\(\s*` + regexp.QuoteMeta(masterVar) + `\s*\)`)
+	initCallLoc := initCallRe.FindStringIndex(beforeInner)
+
+	var masterRows, detailHeadRows []int
+	if initCallLoc != nil {
+		// Master rows: PrintRow calls before detailVar.Init
+		for _, m := range printRowRe.FindAllStringSubmatch(beforeInner[:initCallLoc[0]], -1) {
+			if n, err := strconv.Atoi(m[1]); err == nil {
+				masterRows = append(masterRows, n)
+			}
+		}
+		// Detail header rows: PrintRow calls between Init and inner loop
+		for _, m := range printRowRe.FindAllStringSubmatch(beforeInner[initCallLoc[1]:], -1) {
+			if n, err := strconv.Atoi(m[1]); err == nil {
+				detailHeadRows = append(detailHeadRows, n)
+			}
+		}
+	} else {
+		// No explicit Init location — all before-inner PrintRows are master rows
+		for _, m := range printRowRe.FindAllStringSubmatch(beforeInner, -1) {
+			if n, err := strconv.Atoi(m[1]); err == nil {
+				masterRows = append(masterRows, n)
+			}
+		}
+	}
+
+	// Detail body row: PrintRow inside the inner loop.
+	innerPrintRows := printRowRe.FindAllStringSubmatch(innerBody, -1)
+	if len(innerPrintRows) == 0 {
+		return nil
+	}
+	detailBodyRow, err := strconv.Atoi(innerPrintRows[0][1])
+	if err != nil {
+		return nil
+	}
+
+	// Detail footer rows: PrintRow calls after the inner loop.
+	var detailFootRows []int
+	for _, m := range printRowRe.FindAllStringSubmatch(afterInner, -1) {
+		if n, err := strconv.Atoi(m[1]); err == nil {
+			detailFootRows = append(detailFootRows, n)
+		}
+	}
+
+	return &nestedMasterDetailInfo{
+		masterAlias:    masterAlias,
+		detailAlias:    detailAlias,
+		masterRows:     masterRows,
+		detailHeadRows: detailHeadRows,
+		detailBodyRow:  detailBodyRow,
+		detailFootRows: detailFootRows,
+	}
 }
 
 // columnPageBreakCond holds a parsed conditional PageBreak from a C# ManualBuild
@@ -1173,6 +1665,13 @@ func (e *ReportEngine) autoManualBuildSimpleRowFirst(tbl *table.TableObject) *ta
 		return nil
 	}
 
+	// Save the current CalcContext so we can restore it after the table build.
+	// The parent DataBand sets CalcContext to its own data source (e.g. Categories)
+	// before rendering band objects. The table iteration below temporarily changes
+	// it to the detail data source; we must restore it so subsequent band objects
+	// (e.g. TextObjects with [Categories.CategoryName]) still evaluate correctly.
+	savedCalcCtx := e.report.CalcContext()
+
 	// Detect DS alias from row 1 cells — text expressions or PictureObject DataColumn.
 	dsAlias := ""
 	for ci := 0; ci < nCols && dsAlias == ""; ci++ {
@@ -1209,65 +1708,263 @@ func (e *ReportEngine) autoManualBuildSimpleRowFirst(tbl *table.TableObject) *ta
 	if ds == nil {
 		return nil
 	}
-	if err := ds.Init(); err != nil {
+
+	// Check for master-detail Init(parentData) pattern in the script.
+	// When detected, wrap the child DS in a FilteredDataSource that only
+	// exposes rows matching the current parent row's join-key values.
+	// C# ref: DataSourceBase.Init(DataSourceBase parentDS) filters via
+	// the registered Relation between parent and child data sources.
+	var iterDS data.DataSource = ds
+	mdInfo := parseMasterDetailFromScript(e.report.ScriptText, tbl.ManualBuildEvent)
+	if mdInfo != nil && strings.EqualFold(mdInfo.childAlias, dsAlias) {
+		parentDS := dict.FindDataSourceByAlias(mdInfo.parentAlias)
+		if parentDS == nil {
+			parentDS = dict.FindDataSourceByName(mdInfo.parentAlias)
+		}
+		if parentDS != nil {
+			rel := data.FindRelation(dict, parentDS, ds)
+			if rel != nil && len(rel.ParentColumns) > 0 {
+				parentVals := make([]string, len(rel.ParentColumns))
+				for i, col := range rel.ParentColumns {
+					v, _ := parentDS.GetValue(col)
+					parentVals[i] = fmt.Sprintf("%v", v)
+				}
+				filtered, err := data.NewFilteredDataSource(ds, rel.ChildColumns, parentVals)
+				if err == nil {
+					iterDS = filtered
+				}
+			}
+		}
+	}
+
+	if err := iterDS.Init(); err != nil {
 		return nil
 	}
-	if err := ds.First(); err != nil {
+	if err := iterDS.First(); err != nil {
 		return nil
 	}
 
 	h := table.NewTableHelper(tbl)
+
+	// Skip aggregate expressions during initial text evaluation — they'll be
+	// resolved in a second pass after the full result table is built.
+	// Mirrors the approach used in autoManualBuildRowFirst.
+	isAggregate := func(text string) bool {
+		return strings.Contains(text, "Sum(") || strings.Contains(text, "Min(") ||
+			strings.Contains(text, "Max(") || strings.Contains(text, "Avg(") ||
+			strings.Contains(text, "Count(")
+	}
+
+	// evalCellSkipAgg evaluates text with format but preserves aggregate expressions.
+	evalCellSkipAgg := func(cell *table.TableCell) string {
+		text := cell.Text()
+		if isAggregate(text) {
+			return text // preserve raw [Sum(CellN)] for second pass
+		}
+		return e.evalTextWithFormat(text, cell.Format())
+	}
+
+	objectEval := func(cell *table.TableCell) {
+		objs := cell.Objects()
+		for i, childObj := range objs {
+			if pic, ok := childObj.(*object.PictureObject); ok {
+				col := pic.DataColumn()
+				if col == "" {
+					continue
+				}
+				val, err := e.report.Calc("[" + col + "]")
+				if err != nil {
+					continue
+				}
+				s, ok2 := val.(string)
+				if !ok2 || len(s) == 0 {
+					continue
+				}
+				decoded, decErr := base64.StdEncoding.DecodeString(s)
+				if decErr != nil {
+					decoded, decErr = base64.RawStdEncoding.DecodeString(s)
+				}
+				if decErr != nil || len(decoded) == 0 {
+					continue
+				}
+				newPic := object.NewPictureObject()
+				newPic.SetName(pic.Name())
+				newPic.SetLeft(pic.Left())
+				newPic.SetTop(pic.Top())
+				newPic.SetWidth(pic.Width())
+				newPic.SetHeight(pic.Height())
+				newPic.SetImageData(decoded)
+				cell.ReplaceObject(i, newPic)
+			}
+		}
+	}
 
 	// Print header row (row 0) once — no data binding needed.
 	h.PrintRow(0)
 	h.PrintColumns()
 
 	// Print data row (row 1) for each DS record.
-	for !ds.EOF() {
-		e.report.SetCalcContext(ds)
-		h.CellTextEval = func(text string) string { return e.evalText(text) }
-		h.CellObjectEval = func(cell *table.TableCell) {
-			objs := cell.Objects()
-			for i, childObj := range objs {
-				if pic, ok := childObj.(*object.PictureObject); ok {
-					col := pic.DataColumn()
-					if col == "" {
-						continue
-					}
-					val, err := e.report.Calc("[" + col + "]")
-					if err != nil {
-						continue
-					}
-					s, ok2 := val.(string)
-					if !ok2 || len(s) == 0 {
-						continue
-					}
-					decoded, decErr := base64.StdEncoding.DecodeString(s)
-					if decErr != nil {
-						decoded, decErr = base64.RawStdEncoding.DecodeString(s)
-					}
-					if decErr != nil || len(decoded) == 0 {
-						continue
-					}
-					newPic := object.NewPictureObject()
-					newPic.SetName(pic.Name())
-					newPic.SetLeft(pic.Left())
-					newPic.SetTop(pic.Top())
-					newPic.SetWidth(pic.Width())
-					newPic.SetHeight(pic.Height())
-					newPic.SetImageData(decoded)
-					cell.ReplaceObject(i, newPic)
-				}
-			}
-		}
+	for !iterDS.EOF() {
+		e.report.SetCalcContext(iterDS)
+		h.CellTextCellEval = evalCellSkipAgg
+		h.CellObjectEval = objectEval
 		h.PrintRow(1)
 		h.PrintColumns()
-		h.CellTextEval = nil
+		h.CellTextCellEval = nil
 		h.CellObjectEval = nil
-		_ = ds.Next()
+		_ = iterDS.Next()
 	}
 
-	return h.Result()
+	// Print any remaining template rows (row 2+) as footer rows.
+	// Mirrors autoManualBuildRowFirst footer handling (TableHelper.cs).
+	// Footer rows typically contain aggregates like [Sum(CellN)] and
+	// static text like "Total:".
+	e.report.SetCalcContext(nil)
+	for ri := 2; ri < nRows; ri++ {
+		h.CellTextCellEval = evalCellSkipAgg
+		h.PrintRow(ri)
+		h.PrintColumns()
+		h.CellTextCellEval = nil
+	}
+
+	result := h.Result()
+
+	// Second pass: evaluate table aggregate expressions like [Sum(Cell8)].
+	e.evaluateTableAggregates(tbl, result)
+
+	// Restore the CalcContext so subsequent band objects evaluate with the
+	// parent DataBand's data source (e.g. [Categories.CategoryName]).
+	e.report.SetCalcContext(savedCalcCtx)
+
+	return result
+}
+
+// autoManualBuildNestedMasterDetail handles the nested master-detail ManualBuild
+// pattern where the TABLE ITSELF drives both master and detail iteration.
+// The C# script iterates the master DS, printing master header rows for each
+// master row, then iterates the filtered detail DS, printing detail rows.
+//
+// This differs from autoManualBuildSimpleRowFirst which handles tables where
+// the DataBand drives the master iteration and the table only does detail.
+//
+// C# ref: "Row Datasource, Master-Detail.frx" ManualBuild script.
+func (e *ReportEngine) autoManualBuildNestedMasterDetail(tbl *table.TableObject) *table.TableBase {
+	info := parseNestedMasterDetailScript(e.report.ScriptText, tbl.ManualBuildEvent)
+	if info == nil {
+		return nil
+	}
+
+	dict := e.report.Dictionary()
+	if dict == nil {
+		return nil
+	}
+
+	masterDS := dict.FindDataSourceByAlias(info.masterAlias)
+	if masterDS == nil {
+		masterDS = dict.FindDataSourceByName(info.masterAlias)
+	}
+	if masterDS == nil {
+		return nil
+	}
+
+	detailDS := dict.FindDataSourceByAlias(info.detailAlias)
+	if detailDS == nil {
+		detailDS = dict.FindDataSourceByName(info.detailAlias)
+	}
+	if detailDS == nil {
+		return nil
+	}
+
+	// Find the relation between master and detail for filtering.
+	rel := data.FindRelation(dict, masterDS, detailDS)
+
+	if err := masterDS.Init(); err != nil {
+		return nil
+	}
+	if err := masterDS.First(); err != nil {
+		return nil
+	}
+
+	savedCalcCtx := e.report.CalcContext()
+	h := table.NewTableHelper(tbl)
+
+	isAggregate := func(text string) bool {
+		return strings.Contains(text, "Sum(") || strings.Contains(text, "Min(") ||
+			strings.Contains(text, "Max(") || strings.Contains(text, "Avg(") ||
+			strings.Contains(text, "Count(")
+	}
+	evalCellSkipAgg := func(cell *table.TableCell) string {
+		text := cell.Text()
+		if isAggregate(text) {
+			return text
+		}
+		return e.evalTextWithFormat(text, cell.Format())
+	}
+
+	// Iterate master rows.
+	for !masterDS.EOF() {
+		e.report.SetCalcContext(masterDS)
+
+		// Print master rows (e.g. category name, description, spacer).
+		h.CellTextCellEval = evalCellSkipAgg
+		for _, ri := range info.masterRows {
+			h.PrintRow(ri)
+			h.PrintColumns()
+		}
+		h.CellTextCellEval = nil
+
+		// Init detail DS with master-detail filtering.
+		var detailIterDS data.DataSource = detailDS
+		if rel != nil && len(rel.ParentColumns) > 0 {
+			parentVals := make([]string, len(rel.ParentColumns))
+			for i, col := range rel.ParentColumns {
+				v, _ := masterDS.GetValue(col)
+				parentVals[i] = fmt.Sprintf("%v", v)
+			}
+			filtered, err := data.NewFilteredDataSource(detailDS, rel.ChildColumns, parentVals)
+			if err == nil {
+				detailIterDS = filtered
+			}
+		}
+		_ = detailIterDS.Init()
+		_ = detailIterDS.First()
+
+		// Print detail header rows.
+		for _, ri := range info.detailHeadRows {
+			h.PrintRow(ri)
+			h.PrintColumns()
+		}
+
+		// Print detail body rows.
+		for !detailIterDS.EOF() {
+			e.report.SetCalcContext(detailIterDS)
+			h.CellTextCellEval = evalCellSkipAgg
+			h.PrintRow(info.detailBodyRow)
+			h.PrintColumns()
+			h.CellTextCellEval = nil
+			_ = detailIterDS.Next()
+		}
+
+		// Print detail footer rows (back to master context for aggregates).
+		e.report.SetCalcContext(masterDS)
+		h.CellTextCellEval = evalCellSkipAgg
+		for _, ri := range info.detailFootRows {
+			h.PrintRow(ri)
+			h.PrintColumns()
+		}
+		h.CellTextCellEval = nil
+
+		_ = masterDS.Next()
+	}
+
+	result := h.Result()
+
+	// Second pass: evaluate table aggregate expressions like [Sum(Cell8)].
+	e.evaluateTableAggregates(tbl, result)
+
+	e.report.SetCalcContext(savedCalcCtx)
+
+	return result
 }
 
 // parsedForItemKind identifies the type of item in a parsed C# for-loop body.
@@ -2685,6 +3382,11 @@ func (e *ReportEngine) buildPreparedObject(obj report.Base) *preview.PreparedObj
 		case *style.GlassFill:
 			po.BackgroundCSS = renderGlassFillCSS(f, int(po.Width), int(po.Height))
 			po.FillColor = color.RGBA{} // transparent — glass fill PNG handles the background
+		case *style.LinearGradientFill:
+			// C# ref: HTMLExportLayers.cs LayerBack — non-SolidFill calls LayerPicture,
+			// which renders the fill via obj.Draw() (LinearGradientBrush) into a PNG.
+			po.BackgroundCSS = renderLinearGradientFillCSS(f, int(po.Width), int(po.Height))
+			po.FillColor = color.RGBA{} // transparent — gradient PNG handles the background
 		}
 		po.Text = e.evalTextWithFormat(v.Text(), v.Format())
 		// When the text color has alpha=0 (fully transparent), the text is
@@ -2711,6 +3413,7 @@ func (e *ReportEngine) buildPreparedObject(obj report.Base) *preview.PreparedObj
 		po.ParagraphLineSpacingType = int(pf.LineSpacingType)
 		po.RTL = v.RightToLeft()
 		po.Clip = v.Clip()
+		po.Underlines = v.Underlines()
 		// Apply highlight conditions — first matching condition wins.
 		if e.report != nil {
 			for _, cond := range v.Highlights() {
@@ -2777,6 +3480,7 @@ func (e *ReportEngine) buildPreparedObject(obj report.Base) *preview.PreparedObj
 	case *object.PolyLineObject:
 		po.Kind = preview.ObjectTypePolyLine
 		po.Border = v.Border()
+		po.PolyFill = v.Fill()
 		if f, ok := v.Fill().(*style.SolidFill); ok {
 			po.FillColor = f.Color
 		}
@@ -2791,10 +3495,17 @@ func (e *ReportEngine) buildPreparedObject(obj report.Base) *preview.PreparedObj
 			pt := pts.Get(i)
 			po.Points = append(po.Points, [2]float32{pt.X + cx, pt.Y + cy})
 		}
+		// Store full bezier path (with control points) for accurate rendering.
+		// GetPath(0,0,0,0,1,1) returns coordinates relative to the object's origin
+		// (same offset as Points above). Ref: PolyLineObject.cs GetPath.
+		for _, pp := range v.GetPath(0, 0, 0, 0, 1, 1) {
+			po.PathPoints = append(po.PathPoints, [3]float32{pp.X, pp.Y, float32(pp.Type)})
+		}
 
 	case *object.PolygonObject:
 		po.Kind = preview.ObjectTypePolygon
 		po.Border = v.Border()
+		po.PolyFill = v.Fill()
 		if f, ok := v.Fill().(*style.SolidFill); ok {
 			po.FillColor = f.Color
 		}
@@ -2805,6 +3516,11 @@ func (e *ReportEngine) buildPreparedObject(obj report.Base) *preview.PreparedObj
 		for i := 0; i < pts.Len(); i++ {
 			pt := pts.Get(i)
 			po.Points = append(po.Points, [2]float32{pt.X + cx, pt.Y + cy})
+		}
+		// Store full closed bezier path (with control points) for accurate rendering.
+		// PolygonObject.GetPath closes the path back to the first point.
+		for _, pp := range v.GetPath(0, 0, 0, 0, 1, 1) {
+			po.PathPoints = append(po.PathPoints, [3]float32{pp.X, pp.Y, float32(pp.Type)})
 		}
 
 	case *object.LineObject:
@@ -3198,34 +3914,11 @@ func (e *ReportEngine) buildPreparedObject(obj report.Base) *preview.PreparedObj
 		}
 
 	case *object.MapObject:
+		// In C# open-source FastReport, MapObject has no runtime implementation —
+		// the class doesn't exist, so the object is silently skipped during FRX load.
+		// Mark as not exportable to match that behaviour.
 		po.Kind = preview.ObjectTypePicture
-		// Build maprender.Options from MapObject layers.
-		opts := maprender.Options{
-			Width:   int(geom.Width()),
-			Height:  int(geom.Height()),
-			OffsetX: float64(v.OffsetX),
-			OffsetY: float64(v.OffsetY),
-		}
-		for _, layer := range v.Layers {
-			opts.Layers = append(opts.Layers, maprender.Layer{
-				Shapefile: layer.Shapefile,
-				Palette:   layer.Palette,
-				Type:      layer.Type,
-			})
-		}
-		if opts.Width <= 0 {
-			opts.Width = 400
-		}
-		if opts.Height <= 0 {
-			opts.Height = 200
-		}
-		img := maprender.Render(opts)
-		if img != nil && e.preparedPages != nil {
-			var buf bytes.Buffer
-			if encErr := png.Encode(&buf, img); encErr == nil {
-				po.BlobIdx = e.preparedPages.BlobStore.Add(v.Name(), buf.Bytes())
-			}
-		}
+		po.NotExportable = true
 
 	case *object.MSChartObject:
 		po.Kind = preview.ObjectTypePicture

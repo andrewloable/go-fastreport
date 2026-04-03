@@ -73,7 +73,7 @@ func (d *sortableDS) GetValue(col string) (any, error) {
 	return v, nil
 }
 
-// SortRows implements data.Sortable — used by applyGroupSort.
+// SortRows implements data.Sortable — kept for backward compatibility.
 func (d *sortableDS) SortRows(specs []data.SortSpec) {
 	// simple stable sort by the first spec column
 	if len(specs) == 0 || len(d.rows) == 0 {
@@ -91,6 +91,40 @@ func (d *sortableDS) SortRows(specs []data.SortSpec) {
 				swap = ai < aj
 			}
 			if swap {
+				d.rows[i], d.rows[j] = d.rows[j], d.rows[i]
+			}
+		}
+	}
+}
+
+// MultiSortRows implements data.MultiSortable — required by applyGroupSort.
+func (d *sortableDS) MultiSortRows(keys []data.SortKey) {
+	if len(keys) == 0 || len(d.rows) == 0 {
+		return
+	}
+	// bubble sort is fine for tiny test slices
+	for i := 0; i < len(d.rows); i++ {
+		for j := i + 1; j < len(d.rows); j++ {
+			var less bool
+			for _, k := range keys {
+				var ai, aj string
+				if k.KeyFn != nil {
+					ai, _ = k.KeyFn(d.rows[i]).(string)
+					aj, _ = k.KeyFn(d.rows[j]).(string)
+				} else {
+					ai, _ = d.rows[i][k.Column].(string)
+					aj, _ = d.rows[j][k.Column].(string)
+				}
+				if ai == aj {
+					continue
+				}
+				less = ai > aj
+				if k.Descending {
+					less = ai < aj
+				}
+				break
+			}
+			if less {
 				d.rows[i], d.rows[j] = d.rows[j], d.rows[i]
 			}
 		}

@@ -16,7 +16,9 @@ import (
 	"strings"
 
 	"golang.org/x/image/bmp"
+	xdraw "golang.org/x/image/draw"
 	"golang.org/x/image/font"
+	"golang.org/x/image/math/f64"
 	"golang.org/x/image/math/fixed"
 	"golang.org/x/image/tiff"
 	"golang.org/x/image/vector"
@@ -632,44 +634,48 @@ func (e *Exporter) renderObject(obj preview.PreparedObject, bandTop float32) {
 		e.drawPictureObject(x, y, w, h, obj)
 
 	case preview.ObjectTypePolyLine:
-		if len(obj.Points) < 2 {
-			return
-		}
-		lineColor := color.RGBA{A: 255}
-		if obj.Border.Lines[0] != nil && obj.Border.Lines[0].Color.A > 0 {
-			lineColor = obj.Border.Lines[0].Color
-		}
-		for i := 1; i < len(obj.Points); i++ {
-			x0p := x + e.scaled(int(obj.Points[i-1][0]))
-			y0p := y + e.scaled(int(obj.Points[i-1][1]))
-			x1p := x + e.scaled(int(obj.Points[i][0]))
-			y1p := y + e.scaled(int(obj.Points[i][1]))
-			e.drawLine(x0p, y0p, x1p, y1p, lineColor)
+		if len(obj.PathPoints) >= 2 {
+			// Bezier-aware rendering using vector rasterizer.
+			// Ref: PolyLineObject.cs DoDrawPoly, GetPath.
+			e.renderPolyPath(obj, x, y, false)
+		} else if len(obj.Points) >= 2 {
+			// Fallback: straight-line segments (no bezier data).
+			lineColor := color.RGBA{A: 255}
+			if obj.Border.Lines[0] != nil && obj.Border.Lines[0].Color.A > 0 {
+				lineColor = obj.Border.Lines[0].Color
+			}
+			for i := 1; i < len(obj.Points); i++ {
+				x0p := x + e.scaled(int(obj.Points[i-1][0]))
+				y0p := y + e.scaled(int(obj.Points[i-1][1]))
+				x1p := x + e.scaled(int(obj.Points[i][0]))
+				y1p := y + e.scaled(int(obj.Points[i][1]))
+				e.drawLine(x0p, y0p, x1p, y1p, lineColor)
+			}
 		}
 
 	case preview.ObjectTypePolygon:
-		if len(obj.Points) < 2 {
-			return
-		}
-		// Build pixel points (engine stores them as bounding-box-relative after
-		// CenterX/CenterY transform — see engine/objects.go PolygonObject case).
-		n := len(obj.Points)
-		imgPts := make([]image.Point, n)
-		for i, p := range obj.Points {
-			imgPts[i] = image.Point{X: x + e.scaled(int(p[0])), Y: y + e.scaled(int(p[1]))}
-		}
-		// Fill polygon interior before drawing outline (mirrors C# FillPath + DrawPath).
-		// Ref: PolyLineObject.cs DoDrawPoly / PolygonObject.cs drawPoly.
-		if obj.FillColor.A > 0 {
-			e.fillPolygon(imgPts, obj.FillColor)
-		}
-		lineColor := color.RGBA{A: 255}
-		if obj.Border.Lines[0] != nil && obj.Border.Lines[0].Color.A > 0 {
-			lineColor = obj.Border.Lines[0].Color
-		}
-		for i := 0; i < n; i++ {
-			next := (i + 1) % n
-			e.drawLine(imgPts[i].X, imgPts[i].Y, imgPts[next].X, imgPts[next].Y, lineColor)
+		if len(obj.PathPoints) >= 2 {
+			// Bezier-aware rendering using vector rasterizer with fill support.
+			// Ref: PolygonObject.cs drawPoly, GetPath.
+			e.renderPolyPath(obj, x, y, true)
+		} else if len(obj.Points) >= 2 {
+			// Fallback: straight-line polygon (no bezier data).
+			n := len(obj.Points)
+			imgPts := make([]image.Point, n)
+			for i, p := range obj.Points {
+				imgPts[i] = image.Point{X: x + e.scaled(int(p[0])), Y: y + e.scaled(int(p[1]))}
+			}
+			if obj.FillColor.A > 0 {
+				e.fillPolygon(imgPts, obj.FillColor)
+			}
+			lineColor := color.RGBA{A: 255}
+			if obj.Border.Lines[0] != nil && obj.Border.Lines[0].Color.A > 0 {
+				lineColor = obj.Border.Lines[0].Color
+			}
+			for i := 0; i < n; i++ {
+				next := (i + 1) % n
+				e.drawLine(imgPts[i].X, imgPts[i].Y, imgPts[next].X, imgPts[next].Y, lineColor)
+			}
 		}
 
 	case preview.ObjectTypeDigitalSignature:
@@ -1865,6 +1871,7 @@ func RenderObjectPNG(obj preview.PreparedObject) ([]byte, error) {
 	exp.renderObject(renderObj, 0)
 
 	// Rotate the canvas to match the object's Angle.
+	// 90°/180°/270° use exact pixel-swap routines; other angles use bilinear affine.
 	var result *image.RGBA
 	switch obj.Angle {
 	case 90:
@@ -1874,7 +1881,11 @@ func RenderObjectPNG(obj preview.PreparedObject) ([]byte, error) {
 	case 270:
 		result = rotateRGBA90CCW(canvas)
 	default:
-		result = canvas
+		if obj.Angle != 0 {
+			result = rotateRGBAArbitrary(canvas, obj.Angle)
+		} else {
+			result = canvas
+		}
 	}
 
 	var buf bytes.Buffer
@@ -1922,6 +1933,33 @@ func rotateRGBA90CCW(src *image.RGBA) *image.RGBA {
 			dst.SetRGBA(y, sw-1-x, src.RGBAAt(x, y))
 		}
 	}
+	return dst
+}
+
+// rotateRGBAArbitrary rotates src clockwise by angleDeg degrees around its center,
+// returning a new image of the same dimensions. Uses bilinear interpolation.
+// Mirrors C# TextRenderer.Draw → Graphics.RotateTransform(Angle) around the center
+// of the display rect (HTMLExportLayers GetLayerPicture).
+func rotateRGBAArbitrary(src *image.RGBA, angleDeg int) *image.RGBA {
+	b := src.Bounds()
+	w, h := b.Dx(), b.Dy()
+	dst := image.NewRGBA(image.Rect(0, 0, w, h))
+
+	rad := float64(angleDeg) * math.Pi / 180.0
+	cx := float64(w) / 2.0
+	cy := float64(h) / 2.0
+	c := math.Cos(rad)
+	s := math.Sin(rad)
+
+	// Affine matrix mapping source pixel coords → destination pixel coords (s2d).
+	// draw.ApproxBiLinear.Transform takes s2d and internally inverts it.
+	// CW rotation by θ around center: x' = c*(x-cx) - s*(y-cy) + cx
+	//                                  y' = s*(x-cx) + c*(y-cy) + cy
+	aff := f64.Aff3{
+		c, -s, cx*(1-c) + cy*s,
+		s, c, cy*(1-c) - cx*s,
+	}
+	xdraw.ApproxBiLinear.Transform(dst, aff, src, b, xdraw.Src, nil)
 	return dst
 }
 
@@ -2096,6 +2134,340 @@ func (e *Exporter) drawVLine(x, y0, y1 int, c color.RGBA) {
 		if y >= bounds.Min.Y && y < bounds.Max.Y {
 			e.curPage.SetRGBA(x, y, c)
 		}
+	}
+}
+
+// ── Poly/Bezier rendering helpers ────────────────────────────────────────────
+
+// renderPolyPath renders ObjectTypePolyLine or ObjectTypePolygon using PathPoints
+// (which carry full cubic bezier data from the engine). When closed=true the path
+// is treated as a polygon: interior fill is applied before the outline stroke.
+// Mirrors C# PolyLineObject.DoDrawPoly / PolygonObject.drawPoly (PolyLineObject.cs).
+func (e *Exporter) renderPolyPath(obj preview.PreparedObject, ox, oy int, closed bool) {
+	pts := obj.PathPoints
+	if len(pts) < 2 {
+		return
+	}
+	sc := float32(e.effectiveScale())
+	ox32 := float32(ox)
+	oy32 := float32(oy)
+	pageBounds := e.curPage.Bounds()
+
+	lineW := float32(1) * sc
+	lineColor := color.RGBA{A: 255}
+	if obj.Border.Lines[0] != nil {
+		if obj.Border.Lines[0].Width > 0 {
+			lineW = obj.Border.Lines[0].Width * sc
+		}
+		if obj.Border.Lines[0].Color.A > 0 {
+			lineColor = obj.Border.Lines[0].Color
+		}
+	}
+
+	// For polygons: fill the interior first (matches C# FillPath before DrawPath).
+	if closed {
+		var fillSrc image.Image
+		if obj.PolyFill != nil && !obj.PolyFill.IsTransparent() {
+			fillSrc = makeFillImage(obj.PolyFill, pageBounds)
+		} else if obj.FillColor.A > 0 {
+			fillSrc = &image.Uniform{obj.FillColor}
+		}
+		if fillSrc != nil {
+			r := &vector.Rasterizer{}
+			r.Reset(pageBounds.Dx(), pageBounds.Dy())
+			polyBuildPath(r, pts, ox32, oy32, sc)
+			r.ClosePath()
+			mask := image.NewAlpha(pageBounds)
+			r.Draw(mask, pageBounds, image.Opaque, image.Point{})
+			draw.DrawMask(e.curPage, pageBounds, fillSrc, pageBounds.Min, mask, pageBounds.Min, draw.Over)
+		}
+	}
+
+	// Stroke the outline using a thick vector path.
+	if lineColor.A > 0 && lineW > 0 {
+		r := &vector.Rasterizer{}
+		r.Reset(pageBounds.Dx(), pageBounds.Dy())
+		polyAddStroke(r, pts, ox32, oy32, sc, lineW)
+		mask := image.NewAlpha(pageBounds)
+		r.Draw(mask, pageBounds, image.Opaque, image.Point{})
+		draw.DrawMask(e.curPage, pageBounds, &image.Uniform{lineColor}, image.Point{}, mask, pageBounds.Min, draw.Over)
+	}
+}
+
+// polyBuildPath adds PathPoints to a vector.Rasterizer, treating sequences of
+// three type-3 entries as cubic bezier (cp1, cp2, endpoint).
+func polyBuildPath(r *vector.Rasterizer, pts [][3]float32, ox, oy, sc float32) {
+	bezBuf := [3][2]float32{}
+	bezIdx := 0
+	for _, pt := range pts {
+		px := ox + sc*pt[0]
+		py := oy + sc*pt[1]
+		switch int(pt[2]) {
+		case 0: // MoveTo
+			r.MoveTo(px, py)
+		case 1: // LineTo
+			r.LineTo(px, py)
+			bezIdx = 0
+		case 3: // Cubic bezier control/endpoint
+			bezBuf[bezIdx] = [2]float32{px, py}
+			bezIdx++
+			if bezIdx == 3 {
+				r.CubeTo(
+					bezBuf[0][0], bezBuf[0][1],
+					bezBuf[1][0], bezBuf[1][1],
+					bezBuf[2][0], bezBuf[2][1],
+				)
+				bezIdx = 0
+			}
+		}
+	}
+}
+
+// polyAddStroke adds a thick stroke for each path segment to the rasterizer.
+// Cubic bezier segments are flattened to line strips before stroking.
+func polyAddStroke(r *vector.Rasterizer, pts [][3]float32, ox, oy, sc, width float32) {
+	bezBuf := [3][2]float32{}
+	bezIdx := 0
+	var curX, curY float32
+	first := true
+	for _, pt := range pts {
+		px := ox + sc*pt[0]
+		py := oy + sc*pt[1]
+		switch int(pt[2]) {
+		case 0: // MoveTo
+			curX, curY = px, py
+			first = true
+		case 1: // LineTo
+			strokeLine(r, curX, curY, px, py, width)
+			curX, curY = px, py
+			bezIdx = 0
+			first = false
+		case 3: // Cubic bezier
+			bezBuf[bezIdx] = [2]float32{px, py}
+			bezIdx++
+			if bezIdx == 3 {
+				p0 := [2]float32{curX, curY}
+				flattenCubicBezierStroke(r, p0, bezBuf[0], bezBuf[1], bezBuf[2], width)
+				curX, curY = bezBuf[2][0], bezBuf[2][1]
+				bezIdx = 0
+				first = false
+			}
+		}
+		_ = first
+	}
+}
+
+// flattenCubicBezierStroke approximates a cubic bezier curve as 20 strokeLine
+// segments to produce a smooth anti-aliased thick stroke.
+func flattenCubicBezierStroke(r *vector.Rasterizer, p0, cp1, cp2, p3 [2]float32, width float32) {
+	const steps = 20
+	prev := p0
+	for i := 1; i <= steps; i++ {
+		t := float32(i) / float32(steps)
+		t1 := 1 - t
+		curr := [2]float32{
+			p0[0]*t1*t1*t1 + 3*cp1[0]*t1*t1*t + 3*cp2[0]*t1*t*t + p3[0]*t*t*t,
+			p0[1]*t1*t1*t1 + 3*cp1[1]*t1*t1*t + 3*cp2[1]*t1*t*t + p3[1]*t*t*t,
+		}
+		strokeLine(r, prev[0], prev[1], curr[0], curr[1], width)
+		prev = curr
+	}
+}
+
+// makeFillImage creates a source image to composite over a polygon fill mask.
+// Returns nil when the fill produces no visible output.
+// Mirrors C# Fill.CreateBrush for the various fill types (Fills.cs).
+func makeFillImage(fill style.Fill, bounds image.Rectangle) image.Image {
+	if fill == nil || fill.IsTransparent() {
+		return nil
+	}
+	switch f := fill.(type) {
+	case *style.SolidFill:
+		return &image.Uniform{f.Color}
+	case *style.LinearGradientFill:
+		return makeLinearGradientImage(f, bounds)
+	case *style.PathGradientFill:
+		return makePathGradientImage(f, bounds)
+	case *style.HatchFill:
+		return makeHatchImage(f, bounds)
+	case *style.GlassFill:
+		return &image.Uniform{f.Color}
+	default:
+		return nil
+	}
+}
+
+// makeLinearGradientImage creates a linear gradient image matching C#
+// LinearGradientBrush(rect, startColor, endColor, angle).
+// Angle 0=left-to-right, 90=top-to-bottom (GDI+ convention).
+func makeLinearGradientImage(f *style.LinearGradientFill, bounds image.Rectangle) *image.RGBA {
+	img := image.NewRGBA(bounds)
+	w, h := bounds.Dx(), bounds.Dy()
+	if w == 0 || h == 0 {
+		return img
+	}
+	// Gradient direction unit vector (angle measured clockwise from right).
+	angleRad := float64(f.Angle) * math.Pi / 180.0
+	dx := math.Cos(angleRad)
+	dy := math.Sin(angleRad)
+
+	// Find the projection range over all four corners of the bounding rect.
+	corners := [4][2]float64{{0, 0}, {float64(w), 0}, {0, float64(h)}, {float64(w), float64(h)}}
+	minP, maxP := math.MaxFloat64, -math.MaxFloat64
+	for _, c := range corners {
+		p := c[0]*dx + c[1]*dy
+		if p < minP {
+			minP = p
+		}
+		if p > maxP {
+			maxP = p
+		}
+	}
+	span := maxP - minP
+	if span < 1e-6 {
+		span = 1
+	}
+
+	focus := float64(f.Focus)
+	contrast := float64(f.Contrast)
+
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			proj := float64(x)*dx + float64(y)*dy
+			t := (proj - minP) / span
+			if t < 0 {
+				t = 0
+			}
+			if t > 1 {
+				t = 1
+			}
+
+			// Apply SetSigmaBellShape(focus, contrast) when Focus or Contrast deviate
+			// from the "plain lerp" defaults (Focus=0 → simple StartColor→EndColor).
+			// C# bell: peak of StartColor at position `focus`, EndColor at 0 and 1.
+			// Blend factor for StartColor = contrast * tent(t, focus).
+			// Ref: GDI+ LinearGradientBrush.SetSigmaBellShape.
+			var blend float64
+			if focus <= 0 {
+				// Bell peak at position 0: EndColor at left edge, StartColor at right.
+				// tent right-half only: blend = (1-t)/(1-0) = 1-t.
+				blend = 1 - t
+			} else if focus >= 1 {
+				// Bell peak at position 1: StartColor at left, EndColor at right edge.
+				// tent left-half only: blend = t/1 = t (plain StartColor→EndColor lerp).
+				blend = t
+			} else {
+				// Piecewise linear tent function peaking at focus.
+				if t <= focus {
+					blend = t / focus
+				} else {
+					blend = (1 - t) / (1 - focus)
+				}
+				blend *= contrast
+				if blend > 1 {
+					blend = 1
+				}
+			}
+			// blend=0 → StartColor; blend=1 → EndColor at focus (GDI+ SetSigmaBellShape:
+			// position `focus` is where EndColor reaches full intensity).
+			img.SetRGBA(bounds.Min.X+x, bounds.Min.Y+y, lerpColor(f.StartColor, f.EndColor, float32(blend)))
+		}
+	}
+	return img
+}
+
+// makePathGradientImage creates an elliptic gradient image matching C#
+// PathGradientBrush with CenterColor at center and EdgeColor at edges.
+// Mirrors C# PathGradientFill.CreateBrush (Fills.cs lines 447-463).
+func makePathGradientImage(f *style.PathGradientFill, bounds image.Rectangle) *image.RGBA {
+	img := image.NewRGBA(bounds)
+	w, h := bounds.Dx(), bounds.Dy()
+	if w == 0 || h == 0 {
+		return img
+	}
+	cx := float64(w-1) / 2.0
+	cy := float64(h-1) / 2.0
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			// Normalized elliptic distance from center (0=center, 1=edge).
+			var d float64
+			if cx > 0 && cy > 0 {
+				ex := (float64(x) - cx) / cx
+				ey := (float64(y) - cy) / cy
+				d = math.Sqrt(ex*ex + ey*ey)
+				if d > 1 {
+					d = 1
+				}
+			}
+			img.SetRGBA(bounds.Min.X+x, bounds.Min.Y+y, lerpColor(f.CenterColor, f.EdgeColor, float32(d)))
+		}
+	}
+	return img
+}
+
+// makeHatchImage creates a tiled hatch-pattern image matching C# HatchBrush.
+// Mirrors C# HatchFill.CreateBrush (Fills.cs lines 564-567).
+func makeHatchImage(f *style.HatchFill, bounds image.Rectangle) *image.RGBA {
+	img := image.NewRGBA(bounds)
+	w, h := bounds.Dx(), bounds.Dy()
+	const spacing = 8 // GDI+ HatchBrush uses an 8×8 pixel tile; one line per tile
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			var c color.RGBA
+			switch f.Style {
+			case style.HatchHorizontal:
+				if y%spacing == 0 {
+					c = f.ForeColor
+				} else {
+					c = f.BackColor
+				}
+			case style.HatchVertical:
+				if x%spacing == 0 {
+					c = f.ForeColor
+				} else {
+					c = f.BackColor
+				}
+			case style.HatchDiagonal1: // forward diagonal /
+				if (x+y)%spacing == 0 {
+					c = f.ForeColor
+				} else {
+					c = f.BackColor
+				}
+			case style.HatchDiagonal2: // backward diagonal \
+				if (x-y+1024*spacing)%spacing == 0 {
+					c = f.ForeColor
+				} else {
+					c = f.BackColor
+				}
+			case style.HatchCross: // horizontal + vertical
+				if x%spacing == 0 || y%spacing == 0 {
+					c = f.ForeColor
+				} else {
+					c = f.BackColor
+				}
+			case style.HatchDiagonalCross: // diagonal X
+				if (x+y)%spacing == 0 || (x-y+1024*spacing)%spacing == 0 {
+					c = f.ForeColor
+				} else {
+					c = f.BackColor
+				}
+			default:
+				c = f.BackColor
+			}
+			img.SetRGBA(bounds.Min.X+x, bounds.Min.Y+y, c)
+		}
+	}
+	return img
+}
+
+// lerpColor linearly interpolates between two RGBA colors at parameter t (0=a, 1=b).
+func lerpColor(a, b color.RGBA, t float32) color.RGBA {
+	t1 := 1 - t
+	return color.RGBA{
+		R: uint8(float32(a.R)*t1 + float32(b.R)*t + 0.5),
+		G: uint8(float32(a.G)*t1 + float32(b.G)*t + 0.5),
+		B: uint8(float32(a.B)*t1 + float32(b.B)*t + 0.5),
+		A: uint8(float32(a.A)*t1 + float32(b.A)*t + 0.5),
 	}
 }
 

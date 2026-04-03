@@ -1,6 +1,13 @@
 package matrix
 
-import "github.com/andrewloable/go-fastreport/format"
+import (
+	"encoding/base64"
+	"fmt"
+
+	"github.com/andrewloable/go-fastreport/format"
+	"github.com/andrewloable/go-fastreport/object"
+	"github.com/andrewloable/go-fastreport/table"
+)
 
 // matrix_lifecycle.go adds the runtime state fields and engine lifecycle hooks
 // to MatrixObject that were identified as missing gaps.
@@ -170,6 +177,172 @@ func (m *MatrixObject) addDataRowWithCalc(calc func(expr string) any) {
 		dataRowNo = m.DataSource.CurrentRowNo()
 	}
 	m.Data.AddValueAt(colVals, rowVals, cellVals, dataRowNo)
+	// Collect DataColumn image bindings from header template cells.
+	// C# ref: PrintColumnHeader/PrintData call templateCell.GetData() which
+	// evaluates DataColumn per data row, caching per unique header value.
+	m.collectHeaderImages(colVals, rowVals, calc)
+}
+
+// collectHeaderImages scans column- and row-header template cells for
+// PictureObjects with DataColumn bindings. For each unique header key seen
+// during data iteration, it evaluates the DataColumn expression once and
+// caches the decoded image bytes.
+// C# ref: PrintColumnHeader → templateCell.GetData() → PictureObject.GetData()
+//
+//	evaluates DataColumn = Report.GetColumnValue(col) → image bytes.
+func (m *MatrixObject) collectHeaderImages(colVals, rowVals []any, calc func(string) any) {
+	if calc == nil {
+		return
+	}
+	if m.colHeaderImgByVal == nil {
+		m.colHeaderImgByVal = make(map[string][]byte)
+	}
+	if m.rowHeaderImgByVal == nil {
+		m.rowHeaderImgByVal = make(map[string][]byte)
+	}
+
+	titleOffset := 0
+	if m.ShowTitle {
+		titleOffset = 1
+	}
+	nColDims := len(m.Data.Columns)
+	if nColDims < 1 {
+		nColDims = 1
+	}
+	nRowHdrs := len(m.Data.Rows)
+	if nRowHdrs < 1 {
+		nRowHdrs = 1
+	}
+
+	templateRows := m.TableBase.Rows()
+
+	// Column header template: row at titleOffset, cells at columns nRowHdrs..nRowHdrs+ci
+	if titleOffset < len(templateRows) && len(colVals) > 0 {
+		row := templateRows[titleOffset]
+		if row != nil {
+			cells := row.Cells()
+			for ci := range m.Data.Columns {
+				cellIdx := nRowHdrs + ci
+				if cellIdx >= len(cells) {
+					break
+				}
+				cell := cells[cellIdx]
+				if cell == nil {
+					continue
+				}
+				for _, obj := range cell.Objects() {
+					pic, ok := obj.(*object.PictureObject)
+					if !ok || pic.DataColumn() == "" {
+						continue
+					}
+					if ci >= len(colVals) {
+						continue
+					}
+					key := fmt.Sprintf("%v", colVals[ci])
+					if _, exists := m.colHeaderImgByVal[key]; exists {
+						continue // already cached for this header value
+					}
+					if data := m.evalPicDataColumn(calc, pic.DataColumn()); len(data) > 0 {
+						m.colHeaderImgByVal[key] = data
+					}
+				}
+			}
+		}
+	}
+
+	// Row header template: row at titleOffset+nColDims, cells at columns 0..nRowHdrs-1
+	rowHdrTemplate := titleOffset + nColDims
+	if rowHdrTemplate < len(templateRows) && len(rowVals) > 0 {
+		row := templateRows[rowHdrTemplate]
+		if row != nil {
+			cells := row.Cells()
+			for ri := range m.Data.Rows {
+				if ri >= len(cells) {
+					break
+				}
+				cell := cells[ri]
+				if cell == nil {
+					continue
+				}
+				for _, obj := range cell.Objects() {
+					pic, ok := obj.(*object.PictureObject)
+					if !ok || pic.DataColumn() == "" {
+						continue
+					}
+					if ri >= len(rowVals) {
+						continue
+					}
+					key := fmt.Sprintf("%v", rowVals[ri])
+					if _, exists := m.rowHeaderImgByVal[key]; exists {
+						continue // already cached
+					}
+					if data := m.evalPicDataColumn(calc, pic.DataColumn()); len(data) > 0 {
+						m.rowHeaderImgByVal[key] = data
+					}
+				}
+			}
+		}
+	}
+}
+
+// evalPicDataColumn evaluates a DataColumn expression via the calc function and
+// decodes the result as a base64-encoded image. Returns nil if not decodable.
+// C# ref: PictureObject.GetData() → Report.GetColumnValueNullable(DataColumn).
+// applyHeaderImages replaces shared PictureObject references in a result header
+// cell with clones that carry the cached image bytes for the given header key.
+// C# ref: RunTimeAssign (called from PrintColumnHeader / PrintRowHeader) clones
+// the template cell including PictureObject children; GetData() then loads the
+// image from the DataColumn.
+func (m *MatrixObject) applyHeaderImages(cell *table.TableCell, imgByVal map[string][]byte, key string) {
+	data, ok := imgByVal[key]
+	if !ok || len(data) == 0 {
+		return
+	}
+	objs := cell.Objects()
+	for i, obj := range objs {
+		pic, isPic := obj.(*object.PictureObject)
+		if !isPic || pic.DataColumn() == "" {
+			continue
+		}
+		// Clone so each result cell gets its own independent PictureObject.
+		newPic := object.NewPictureObject()
+		newPic.SetName(pic.Name())
+		newPic.SetLeft(pic.Left())
+		newPic.SetTop(pic.Top())
+		newPic.SetWidth(pic.Width())
+		newPic.SetHeight(pic.Height())
+		newPic.SetDataColumn(pic.DataColumn())
+		newPic.SetImageData(data)
+		cell.ReplaceObject(i, newPic)
+	}
+}
+
+func (m *MatrixObject) evalPicDataColumn(calc func(string) any, colName string) []byte {
+	val := calc("[" + colName + "]")
+	if val == nil {
+		return nil
+	}
+	// Mirror the pattern in engine/objects.go lines 3015-3027: handle both
+	// pre-decoded []byte (returned by some datasources) and base64 strings.
+	switch d := val.(type) {
+	case []byte:
+		if len(d) > 0 {
+			return d
+		}
+	case string:
+		if len(d) == 0 {
+			return nil
+		}
+		// Try standard base64 then raw (no padding).
+		decoded, err := base64.StdEncoding.DecodeString(d)
+		if err != nil {
+			decoded, err = base64.RawStdEncoding.DecodeString(d)
+		}
+		if err == nil && len(decoded) > 0 {
+			return decoded
+		}
+	}
+	return nil
 }
 
 // OnAfterData is called by the engine after all data has been collected and

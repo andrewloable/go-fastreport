@@ -5,6 +5,18 @@ import (
 	"time"
 )
 
+// formatCSharpDateTime formats t as C# DateTime.ToString() does with en-US culture:
+// "M/d/yyyy h:mm:ss\u202fAM" / "M/d/yyyy h:mm:ss\u202fPM".
+// The narrow no-break space (\u202f) before AM/PM matches .NET 6+ en-US culture output.
+// C# ref: FastReport.Data.DateVariable — Value = Report.Engine.Date (DateTime.Now).
+func formatCSharpDateTime(t time.Time) string {
+	ampm := "AM"
+	if t.Hour() >= 12 {
+		ampm = "PM"
+	}
+	return t.Format("1/2/2006 3:04:05") + "\u202f" + ampm
+}
+
 // syncSystemVariables pushes the current engine state into the report's
 // Dictionary system variables so that Report.Calc() can resolve them.
 //
@@ -34,7 +46,7 @@ func (e *ReportEngine) syncSystemVariables() {
 	d.SetSystemVariable("TotalPages", totalPages)
 	d.SetSystemVariable("PageN", fmt.Sprintf("Page %d", pageNo))
 	d.SetSystemVariable("PageNofM", fmt.Sprintf("Page %d of %d", pageNo, totalPages))
-	d.SetSystemVariable("Date", e.date.Format("2006-01-02"))
+	d.SetSystemVariable("Date", formatCSharpDateTime(e.date))
 	d.SetSystemVariable("Time", e.date.Format("15:04:05"))
 	d.SetSystemVariable("Row", e.rowNo)
 	d.SetSystemVariable("AbsRow", e.absRowNo)
@@ -83,7 +95,7 @@ func (e *ReportEngine) syncPageVariables() {
 	d.SetSystemVariable("TotalPages", totalPages)
 	d.SetSystemVariable("PageN", fmt.Sprintf("Page %d", pageNo))
 	d.SetSystemVariable("PageNofM", fmt.Sprintf("Page %d of %d", pageNo, totalPages))
-	d.SetSystemVariable("Date", e.date.Format("2006-01-02"))
+	d.SetSystemVariable("Date", formatCSharpDateTime(e.date))
 	d.SetSystemVariable("Time", e.date.Format("15:04:05"))
 	// Hierarchy variables are page-scoped in hierarchical reports.
 	d.SetSystemVariable("HierarchyLevel", e.hierarchyLevel)
@@ -108,7 +120,7 @@ func (e *ReportEngine) ensureSystemVariables() {
 		"TotalPages": 0,
 		"PageN":      "Page 1",
 		"PageNofM":   "Page 1 of 0",
-		"Date":       e.date.Format("2006-01-02"),
+		"Date":       formatCSharpDateTime(e.date),
 		"Time":       e.date.Format("15:04:05"),
 		"Row":        1,
 		"AbsRow":     1,

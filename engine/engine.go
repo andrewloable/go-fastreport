@@ -195,6 +195,14 @@ type ReportEngine struct {
 	// This ensures the band's header (TextObjects above the table) renders at
 	// the correct page position before the table itself starts generating pages.
 	pendingAcrossTable *pendingAcrossTableInfo
+
+	// masterDataBand is the DataBand currently being iterated in RunDataBandFull.
+	// It is used by renderSubreport to apply master-detail relation filters to
+	// subreport page bands, mirroring C# BandBase.ParentDataBand which walks up
+	// through ReportPage.Subreport to reach the enclosing DataBand.
+	// C# ref: BandBase.cs ParentDataBand (lines 311-323) and
+	//         DataBand.InitDataSource (DataBand.cs line 567).
+	masterDataBand *band.DataBand
 }
 
 // pendingAcrossTableInfo carries the parameters needed to defer

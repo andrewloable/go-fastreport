@@ -58,11 +58,11 @@ private void Cell4_BeforePrint(object sender, EventArgs e)
 `
 
 func TestParseScript_OitM(t *testing.T) {
-	methods, err := script.ParseScript(oitmScript)
+	s, err := script.ParseScript(oitmScript)
 	if err != nil {
 		t.Fatalf("ParseScript error: %v", err)
 	}
-	handler, ok := methods["Cell4_BeforePrint"]
+	handler, ok := s.Methods["Cell4_BeforePrint"]
 	if !ok {
 		t.Fatal("Cell4_BeforePrint not found")
 	}
@@ -116,6 +116,81 @@ func TestParseScript_OitM(t *testing.T) {
 		want := color.RGBA{R: tt.wantFillR, G: tt.wantFillG, B: tt.wantFillB, A: 255}
 		if sf.Color != want {
 			t.Errorf("value=%.0f: Shape1.Fill.Color=%v, want %v", tt.value, sf.Color, want)
+		}
+	}
+}
+
+const printMonthNamesScript = `
+  public class ReportScript
+  {
+    private string[] monthNames = new string[] {
+      "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec" };
+
+    private void Cell4_BeforePrint(object sender, EventArgs e)
+    {
+      Cell4.Text = monthNames[(int)Cell4.Value - 1];
+    }
+  }
+`
+
+type testCell struct {
+	text         string
+	currentValue interface{}
+}
+
+func (c *testCell) ScriptGetProperty(name string) interface{} {
+	switch name {
+	case "Text":
+		return c.text
+	case "Value":
+		return c.currentValue
+	}
+	return nil
+}
+
+func (c *testCell) ScriptSetProperty(name string, value interface{}) {
+	if name == "Text" {
+		if s, ok := value.(string); ok {
+			c.text = s
+		}
+	}
+}
+
+func TestParseScript_PrintMonthNames(t *testing.T) {
+	s, err := script.ParseScript(printMonthNamesScript)
+	if err != nil {
+		t.Fatalf("ParseScript error: %v", err)
+	}
+	handler, ok := s.Methods["Cell4_BeforePrint"]
+	if !ok {
+		t.Fatal("Cell4_BeforePrint not found")
+	}
+
+	tests := []struct {
+		monthNum float64
+		wantName string
+	}{
+		{1, "Jan"},
+		{2, "Feb"},
+		{3, "Mar"},
+		{10, "Oct"},
+		{11, "Nov"},
+		{12, "Dec"},
+	}
+
+	for _, tt := range tests {
+		cell := &testCell{currentValue: tt.monthNum}
+		ctx := &script.Context{
+			SenderName:  "Cell4",
+			SenderValue: tt.monthNum,
+			Objects: map[string]script.ContextObject{
+				"Cell4": cell,
+			},
+			Vars: make(map[string]interface{}),
+		}
+		handler(ctx)
+		if cell.text != tt.wantName {
+			t.Errorf("monthNum=%.0f: got %q, want %q", tt.monthNum, cell.text, tt.wantName)
 		}
 	}
 }

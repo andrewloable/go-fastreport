@@ -3,6 +3,7 @@ package pdf
 import (
 	"encoding/binary"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/andrewloable/go-fastreport/export/pdf/core"
@@ -238,19 +239,26 @@ func (fm *pdfFontManager) finalizeFont(ef *embeddedFont) {
 	ffObj := fm.writer.NewObject(ffStream)
 
 	// ── FontDescriptor ───────────────────────────────────────────────────────
+	// Extract actual metrics from the parsed font for proper PDF rendering.
+	ascent, descent, capHeight := 800, -200, 716
+	if m, err := ef.parsed.Metrics(&sfnt.Buffer{}, fixed.Int26_6(ef.parsed.UnitsPerEm())<<6, xfont.HintingNone); err == nil {
+		upm := float64(ef.parsed.UnitsPerEm())
+		ascent = int(float64(m.Ascent>>6) * 1000.0 / upm)
+		descent = -int(float64(m.Descent>>6) * 1000.0 / upm)
+		capHeight = int(float64(m.CapHeight>>6) * 1000.0 / upm)
+	}
 	fdDict := core.NewDictionary()
 	fdDict.Add("Type", core.NewName("FontDescriptor"))
 	fdDict.Add("FontName", core.NewName(ef.baseName))
 	fdDict.Add("Flags", core.NewInt(4))
-	// Generic bounding box – adequate for embedding correctness.
 	fdDict.Add("FontBBox", core.NewArray(
-		core.NewInt(-166), core.NewInt(-210),
-		core.NewInt(1000), core.NewInt(898),
+		core.NewInt(-166), core.NewInt(descent),
+		core.NewInt(1000), core.NewInt(ascent),
 	))
 	fdDict.Add("ItalicAngle", core.NewInt(0))
-	fdDict.Add("Ascent", core.NewInt(800))
-	fdDict.Add("Descent", core.NewInt(-200))
-	fdDict.Add("CapHeight", core.NewInt(716))
+	fdDict.Add("Ascent", core.NewInt(ascent))
+	fdDict.Add("Descent", core.NewInt(descent))
+	fdDict.Add("CapHeight", core.NewInt(capHeight))
 	fdDict.Add("StemV", core.NewInt(80))
 	fdDict.Add("FontFile2", core.NewRef(ffObj))
 	fdObj := fm.writer.NewObject(fdDict)
@@ -267,7 +275,15 @@ func (fm *pdfFontManager) finalizeFont(ef *embeddedFont) {
 	cidDict.Add("BaseFont", core.NewName(ef.baseName))
 	cidDict.Add("CIDSystemInfo", cidSysInfo)
 	cidDict.Add("FontDescriptor", core.NewRef(fdObj))
-	cidDict.Add("DW", core.NewInt(500))
+	cidDict.Add("DW", core.NewInt(1000))
+
+	// Build W (glyph width) array so PDF readers know exact character widths.
+	// Format: [CID [w] CID [w] ...] — one entry per used glyph.
+	wArr := fm.buildGlyphWidths(ef)
+	if wArr != nil {
+		cidDict.Add("W", wArr)
+	}
+
 	cidObj := fm.writer.NewObject(cidDict)
 
 	// ── ToUnicode CMap ───────────────────────────────────────────────────────
@@ -325,6 +341,50 @@ func (fm *pdfFontManager) buildToUnicode(ef *embeddedFont) *core.IndirectObject 
 	cmapStream.Compressed = true
 	cmapStream.Data = []byte(sb.String())
 	return fm.writer.NewObject(cmapStream)
+}
+
+// buildGlyphWidths builds the PDF W (width) array for a CIDFont.
+// Each used glyph gets an entry: [CID [width]] where width is in 1/1000 em units.
+// This tells PDF readers the exact advance width of each character so text
+// is spaced correctly instead of falling back to the DW default.
+func (fm *pdfFontManager) buildGlyphWidths(ef *embeddedFont) *core.Array {
+	if ef.parsed == nil || len(ef.usedGlyphs) == 0 {
+		return nil
+	}
+
+	buf := &sfnt.Buffer{}
+	unitsPerEm := float64(ef.parsed.UnitsPerEm())
+	ppem := fixed.Int26_6(ef.parsed.UnitsPerEm()) << 6
+
+	// Collect glyph indices sorted for deterministic output.
+	type gw struct {
+		gi    sfnt.GlyphIndex
+		width int // in 1/1000 em units
+	}
+	var glyphs []gw
+	for gi := range ef.usedGlyphs {
+		advance, err := ef.parsed.GlyphAdvance(buf, gi, ppem, xfont.HintingNone)
+		if err != nil {
+			continue
+		}
+		// advance is in 26.6 fixed-point at ppem=unitsPerEm, so advance>>6 == design units.
+		designUnits := float64(advance >> 6)
+		// Convert to 1/1000 em units (PDF CIDFont standard).
+		w1000 := int(designUnits * 1000.0 / unitsPerEm)
+		glyphs = append(glyphs, gw{gi: gi, width: w1000})
+	}
+
+	sort.Slice(glyphs, func(i, j int) bool {
+		return glyphs[i].gi < glyphs[j].gi
+	})
+
+	// Build W array: [CID [width] CID [width] ...]
+	wArr := core.NewArray()
+	for _, g := range glyphs {
+		wArr.Add(core.NewInt(int(g.gi)))
+		wArr.Add(core.NewArray(core.NewInt(g.width)))
+	}
+	return wArr
 }
 
 // AddToPage inserts all finalized embedded font references into a page's

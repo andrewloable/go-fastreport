@@ -552,6 +552,10 @@ func populateBandProps(b report.Base, pb *preview.PreparedBand) {
 			// LinearGradientFill: rendered as a PNG image in a second CSS class,
 			// matching C# HTMLExportLayers.cs LayerBack → LayerPicture for non-SolidFill.
 			pb.BackgroundCSS = renderLinearGradientFillCSS(lgf, int(pb.Width), int(pb.Height))
+		} else if tf, ok2 := f.Fill().(*style.TextureFill); ok2 {
+			// TextureFill: rendered using CSS background-image with appropriate repeat mode.
+			// C# ref: HTMLExportLayers.cs LayerBack → LayerPicture for non-SolidFill.
+			pb.BackgroundCSS = renderTextureFillCSS(tf, int(pb.Width), int(pb.Height))
 		}
 	}
 	if br, ok := b.(hasBorder); ok {

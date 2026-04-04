@@ -134,9 +134,23 @@ func (e *Exporter) Start() error {
 
 // ExportPageBegin starts a new PDF page.
 // Width and height are converted from pixels (96 dpi) to PDF points (72 dpi).
+// For unlimited-height pages, the MediaBox expands to fit all band content,
+// matching C#'s ExportUtils.GetPageHeight which uses UnlimitedHeightValue.
 func (e *Exporter) ExportPageBegin(pg *preview.PreparedPage) error {
-	widthPt := float64(export.PixelsToPoints(pg.Width))
-	heightPt := float64(export.PixelsToPoints(pg.Height))
+	pageW := pg.Width
+	pageH := pg.Height
+
+	// Expand page height to fit all content (unlimited-height pages).
+	// Mirrors C# ExportUtils.GetPageHeight using UnlimitedHeightValue,
+	// and the HTML exporter's maxBottom expansion in ExportPageEnd.
+	for _, b := range pg.Bands {
+		if bottom := b.Top + b.Height; bottom > pageH {
+			pageH = bottom
+		}
+	}
+
+	widthPt := float64(export.PixelsToPoints(pageW))
+	heightPt := float64(export.PixelsToPoints(pageH))
 	if widthPt <= 0 {
 		widthPt = 595 // A4 width in points
 	}

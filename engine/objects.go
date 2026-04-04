@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	_ "image/jpeg" // register JPEG decoder for image.Decode used by renderTextureFillCSS
 	"image/png"
 	"math"
 	"regexp"
@@ -156,6 +157,178 @@ func renderLinearGradientFillCSS(f *style.LinearGradientFill, w, h int) string {
 
 	var buf bytes.Buffer
 	if err := png.Encode(&buf, img); err != nil {
+		return ""
+	}
+	encoded := base64.StdEncoding.EncodeToString(buf.Bytes())
+	return fmt.Sprintf(
+		"background: url('data:image/Png;base64,%s') no-repeat !important;-webkit-print-color-adjust:exact;",
+		encoded,
+	)
+}
+
+// renderTextureFillCSS generates a PNG image of the texture fill effect and
+// returns a CSS background-image string. Mirrors C# FillBase.Draw() →
+// TextureFill.CreateBrush(rect, scaleX, scaleY) → TextureBrush(image, WrapMode)
+// → FillRectangle. The texture image is tiled/clamped onto a canvas of the
+// given size, then encoded as a base64 PNG for CSS background-image.
+// C# ref: Fills.cs TextureFill.CreateBrush (lines 988-1001),
+//
+//	FillBase.Draw (lines 94-101),
+//	HTMLExportLayers.cs GetLayerPicture → obj.Draw().
+func renderTextureFillCSS(f *style.TextureFill, canvasW, canvasH int) string {
+	if len(f.ImageData) == 0 || canvasW <= 0 || canvasH <= 0 {
+		return ""
+	}
+	// Decode the source tile image. Try standard decoders first (PNG, JPEG),
+	// then fall back to ICO/BMP extraction since some FRX files embed ICO images.
+	src, _, err := image.Decode(bytes.NewReader(f.ImageData))
+	if err != nil {
+		// Try ICO format: header is 00 00 01 00 (type=1=ICO).
+		src = utils.DecodeICOImage(f.ImageData)
+		if src == nil {
+			return ""
+		}
+	}
+	srcBounds := src.Bounds()
+	tileW := srcBounds.Dx()
+	tileH := srcBounds.Dy()
+	if tileW <= 0 || tileH <= 0 {
+		return ""
+	}
+	// C# TextureFill: if ImageWidth/ImageHeight are set and differ from the
+	// natural image size, the image is resized (Fills.cs ResizeImage).
+	// We honour these fields by scaling the source tile.
+	if f.ImageWidth > 0 && f.ImageHeight > 0 && (f.ImageWidth != tileW || f.ImageHeight != tileH) {
+		tileW = f.ImageWidth
+		tileH = f.ImageHeight
+	}
+
+	canvas := image.NewRGBA(image.Rect(0, 0, canvasW, canvasH))
+
+	// C# TextureBrush offset: TranslateTransform(rect.Left + OffsetX, rect.Top + OffsetY)
+	// Since we're rendering at origin (rect.Left=0, rect.Top=0), offset = ImageOffset.
+	offX := f.ImageOffsetX
+	offY := f.ImageOffsetY
+
+	switch f.WrapMode {
+	case style.WrapModeClamp:
+		// Clamp: draw the tile image once at the offset position.
+		for dy := 0; dy < tileH; dy++ {
+			for dx := 0; dx < tileW; dx++ {
+				px := offX + dx
+				py := offY + dy
+				if px >= 0 && px < canvasW && py >= 0 && py < canvasH {
+					srcX := srcBounds.Min.X + dx*srcBounds.Dx()/tileW
+					srcY := srcBounds.Min.Y + dy*srcBounds.Dy()/tileH
+					r, g, b, a := src.At(srcX, srcY).RGBA()
+					canvas.SetRGBA(px, py, color.RGBA{uint8(r >> 8), uint8(g >> 8), uint8(b >> 8), uint8(a >> 8)})
+				}
+			}
+		}
+	case style.WrapModeTile:
+		// Tile: repeat the image across the entire canvas.
+		for cy := 0; cy < canvasH; cy++ {
+			for cx := 0; cx < canvasW; cx++ {
+				// Apply offset and modular arithmetic for tiling.
+				tx := ((cx - offX) % tileW)
+				ty := ((cy - offY) % tileH)
+				if tx < 0 {
+					tx += tileW
+				}
+				if ty < 0 {
+					ty += tileH
+				}
+				srcX := srcBounds.Min.X + tx*srcBounds.Dx()/tileW
+				srcY := srcBounds.Min.Y + ty*srcBounds.Dy()/tileH
+				r, g, b, a := src.At(srcX, srcY).RGBA()
+				canvas.SetRGBA(cx, cy, color.RGBA{uint8(r >> 8), uint8(g >> 8), uint8(b >> 8), uint8(a >> 8)})
+			}
+		}
+	case style.WrapModeTileFlipX:
+		// TileFlipX: tile horizontally with alternating H-flip.
+		for cy := 0; cy < canvasH; cy++ {
+			for cx := 0; cx < canvasW; cx++ {
+				tx := ((cx - offX) % tileW)
+				ty := ((cy - offY) % tileH)
+				if tx < 0 {
+					tx += tileW
+				}
+				if ty < 0 {
+					ty += tileH
+				}
+				col := (cx - offX) / tileW
+				if (cx - offX) < 0 {
+					col--
+				}
+				if col%2 != 0 {
+					tx = tileW - 1 - tx
+				}
+				srcX := srcBounds.Min.X + tx*srcBounds.Dx()/tileW
+				srcY := srcBounds.Min.Y + ty*srcBounds.Dy()/tileH
+				r, g, b, a := src.At(srcX, srcY).RGBA()
+				canvas.SetRGBA(cx, cy, color.RGBA{uint8(r >> 8), uint8(g >> 8), uint8(b >> 8), uint8(a >> 8)})
+			}
+		}
+	case style.WrapModeTileFlipY:
+		// TileFlipY: tile vertically with alternating V-flip.
+		for cy := 0; cy < canvasH; cy++ {
+			for cx := 0; cx < canvasW; cx++ {
+				tx := ((cx - offX) % tileW)
+				ty := ((cy - offY) % tileH)
+				if tx < 0 {
+					tx += tileW
+				}
+				if ty < 0 {
+					ty += tileH
+				}
+				row := (cy - offY) / tileH
+				if (cy - offY) < 0 {
+					row--
+				}
+				if row%2 != 0 {
+					ty = tileH - 1 - ty
+				}
+				srcX := srcBounds.Min.X + tx*srcBounds.Dx()/tileW
+				srcY := srcBounds.Min.Y + ty*srcBounds.Dy()/tileH
+				r, g, b, a := src.At(srcX, srcY).RGBA()
+				canvas.SetRGBA(cx, cy, color.RGBA{uint8(r >> 8), uint8(g >> 8), uint8(b >> 8), uint8(a >> 8)})
+			}
+		}
+	case style.WrapModeTileFlipXY:
+		// TileFlipXY: tile with alternating H+V flip.
+		for cy := 0; cy < canvasH; cy++ {
+			for cx := 0; cx < canvasW; cx++ {
+				tx := ((cx - offX) % tileW)
+				ty := ((cy - offY) % tileH)
+				if tx < 0 {
+					tx += tileW
+				}
+				if ty < 0 {
+					ty += tileH
+				}
+				col := (cx - offX) / tileW
+				if (cx - offX) < 0 {
+					col--
+				}
+				row := (cy - offY) / tileH
+				if (cy - offY) < 0 {
+					row--
+				}
+				if col%2 != 0 {
+					tx = tileW - 1 - tx
+				}
+				if row%2 != 0 {
+					ty = tileH - 1 - ty
+				}
+				srcX := srcBounds.Min.X + tx*srcBounds.Dx()/tileW
+				srcY := srcBounds.Min.Y + ty*srcBounds.Dy()/tileH
+				r, g, b, a := src.At(srcX, srcY).RGBA()
+				canvas.SetRGBA(cx, cy, color.RGBA{uint8(r >> 8), uint8(g >> 8), uint8(b >> 8), uint8(a >> 8)})
+			}
+		}
+	}
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, canvas); err != nil {
 		return ""
 	}
 	encoded := base64.StdEncoding.EncodeToString(buf.Bytes())
@@ -490,6 +663,9 @@ func (e *ReportEngine) populateBandObjects2(parentBand *band.BandBase, objs *rep
 							if cond.ApplyFill && cond.Fill != nil {
 								if gf, ok := cond.Fill.(*style.GlassFill); ok {
 									po.BackgroundCSS = renderGlassFillCSS(gf, int(po.Width), int(po.Height))
+									po.FillColor = color.RGBA{}
+								} else if tf, ok := cond.Fill.(*style.TextureFill); ok {
+									po.BackgroundCSS = renderTextureFillCSS(tf, int(po.Width), int(po.Height))
 									po.FillColor = color.RGBA{}
 								} else {
 									po.FillColor = colorFromFill(cond.Fill)
@@ -831,11 +1007,14 @@ func (e *ReportEngine) populateTableObjects(tbl *table.TableBase, originX, origi
 					PaddingRight: pad.Right,
 					PaddingBottom: pad.Bottom,
 				}
-				// Generate glass fill PNG for non-solid fills.
+				// Generate background CSS for non-solid fills.
 				// C# ref: HTMLExportLayers.cs LayerPicture renders non-SolidFill
 				// fills as PNG background images (dual CSS class pattern).
 				if gf, ok := cell.Fill().(*style.GlassFill); ok {
 					po.BackgroundCSS = renderGlassFillCSS(gf, int(cellW), int(cellH))
+				} else if tf, ok := cell.Fill().(*style.TextureFill); ok {
+					po.BackgroundCSS = renderTextureFillCSS(tf, int(po.Width), int(po.Height))
+					po.FillColor = color.RGBA{}
 				}
 				pb.Objects = append(pb.Objects, po)
 
@@ -921,6 +1100,9 @@ func (e *ReportEngine) populateTableObjects(tbl *table.TableBase, originX, origi
 							txtPO.BackgroundCSS = renderGlassFillCSS(f, int(child.Width()), int(child.Height()))
 						case *style.LinearGradientFill:
 							txtPO.BackgroundCSS = renderLinearGradientFillCSS(f, int(child.Width()), int(child.Height()))
+						case *style.TextureFill:
+							txtPO.BackgroundCSS = renderTextureFillCSS(f, int(child.Width()), int(child.Height()))
+							txtPO.FillColor = color.RGBA{}
 						}
 						pb.Objects = append(pb.Objects, txtPO)
 					case *barcode.BarcodeObject:
@@ -3387,6 +3569,11 @@ func (e *ReportEngine) buildPreparedObject(obj report.Base) *preview.PreparedObj
 			// which renders the fill via obj.Draw() (LinearGradientBrush) into a PNG.
 			po.BackgroundCSS = renderLinearGradientFillCSS(f, int(po.Width), int(po.Height))
 			po.FillColor = color.RGBA{} // transparent — gradient PNG handles the background
+		case *style.TextureFill:
+			// C# ref: HTMLExportLayers.cs LayerBack — TextureFill calls LayerPicture,
+			// which renders obj.Draw() (TextureBrush(image, WrapMode)) into a PNG.
+			po.BackgroundCSS = renderTextureFillCSS(f, int(po.Width), int(po.Height))
+			po.FillColor = color.RGBA{} // transparent — texture image handles the background
 		}
 		po.Text = e.evalTextWithFormat(v.Text(), v.Format())
 		// When the text color has alpha=0 (fully transparent), the text is
@@ -3432,6 +3619,9 @@ func (e *ReportEngine) buildPreparedObject(obj report.Base) *preview.PreparedObj
 					if gf, ok := cond.Fill.(*style.GlassFill); ok {
 						po.BackgroundCSS = renderGlassFillCSS(gf, int(po.Width), int(po.Height))
 						po.FillColor = color.RGBA{} // transparent — glass fill handles the background
+					} else if tf, ok := cond.Fill.(*style.TextureFill); ok {
+						po.BackgroundCSS = renderTextureFillCSS(tf, int(po.Width), int(po.Height))
+						po.FillColor = color.RGBA{} // transparent — texture image handles the background
 					} else {
 						po.FillColor = colorFromFill(cond.Fill)
 						po.BackgroundCSS = ""
@@ -3568,6 +3758,12 @@ func (e *ReportEngine) buildPreparedObject(obj report.Base) *preview.PreparedObj
 		po.Border = v.Border()
 		if f, ok := v.Fill().(*style.SolidFill); ok {
 			po.FillColor = f.Color
+		} else if _, ok := v.Fill().(*style.TextureFill); ok {
+			// TextureFill: store the fill on PolyFill so RenderGenericPNG can use
+			// makeFillImage to draw the tiled texture. C# ref: ShapeObject.Draw()
+			// calls Fill.Draw(e, rect) which uses TextureBrush(image, WrapMode).
+			po.PolyFill = v.Fill()
+			po.FillColor = color.RGBA{}
 		}
 
 	case *object.PictureObject:
@@ -3575,6 +3771,9 @@ func (e *ReportEngine) buildPreparedObject(obj report.Base) *preview.PreparedObj
 		po.Border = v.Border()
 		if f, ok := v.Fill().(*style.SolidFill); ok && f.Color.A > 0 {
 			po.FillColor = f.Color
+		} else if tf, ok := v.Fill().(*style.TextureFill); ok {
+			po.BackgroundCSS = renderTextureFillCSS(tf, int(po.Width), int(po.Height))
+			po.FillColor = color.RGBA{}
 		}
 		// Propagate SizeMode and Angle so the HTML exporter can apply the correct
 		// scaling and rotation. C# ref: PictureObjectBase.Draw() checks SizeMode and
@@ -4222,10 +4421,12 @@ func extractBarcodeModules(img image.Image) [][]bool {
 		modules[y] = make([]bool, w)
 		for x := 0; x < w; x++ {
 			c := img.At(bounds.Min.X+x, bounds.Min.Y+y)
-			r, g, b, _ := c.RGBA()
-			// Treat pixels with luminance < 50% as dark modules.
+			r, g, b, a := c.RGBA()
+			// Transparent pixels are white/empty — barcode bars are drawn on
+			// a transparent background, so alpha must be checked first.
+			// Treat opaque pixels with luminance < 50% as dark modules.
 			lum := (r + g + b) / 3
-			modules[y][x] = lum < 0x7FFF
+			modules[y][x] = a >= 0x8000 && lum < 0x7FFF
 		}
 	}
 	return modules

@@ -158,7 +158,8 @@
       "Bash(/tmp/scripttest/go.mod:*)",
       "Bash(__NEW_LINE_3f4367a87a543f67__ cd:*)",
       "Bash(/tmp/debug_matrix_test.go:*)",
-      "Bash(cp /tmp/debug_matrix_test.go /Volumes/mandark-1Tb/projects/loabletech/go-fastreport/engine/debug_matrix_test.go)"
+      "Bash(cp /tmp/debug_matrix_test.go /Volumes/mandark-1Tb/projects/loabletech/go-fastreport/engine/debug_matrix_test.go)",
+      "Bash(open:*)"
     ]
   }
 }

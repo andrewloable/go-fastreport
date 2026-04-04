@@ -647,14 +647,20 @@ func cellMeasuredWidth(cell *TableCell) float32 {
 // cellMeasuredHeight returns the height needed to display the cell's text,
 // accounting for word-wrap at the cell width and explicit newlines.
 // Mirrors C# TextObject.CalcHeight() / CalcSize().Height used in TableBase.CalcHeight (TableBase.cs:989).
-func cellMeasuredHeight(cell *TableCell) float32 {
+// colWidth is the column width used for text wrapping when cell.Width() is 0
+// (common for auto-sized matrix cells where width is on the column, not the cell).
+func cellMeasuredHeight(cell *TableCell, colWidth float32) float32 {
 	_, lineH := utils.MeasureText("X", cell.Font(), 0)
 	pad := cell.Padding()
 	text := cell.Text()
 	if text == "" {
 		return lineH + pad.Top + pad.Bottom + 1
 	}
-	availW := cell.Width() - pad.Left - pad.Right
+	cellW := cell.Width()
+	if cellW <= 0 {
+		cellW = colWidth
+	}
+	availW := cellW - pad.Left - pad.Right
 	if availW <= 0 {
 		availW = 0
 	}
@@ -725,7 +731,8 @@ func (t *TableBase) CalcHeight() float32 {
 				continue
 			}
 			// Use the larger of the measured text height and any explicit cell height.
-			ch := cellMeasuredHeight(cell)
+			// Pass column width for text wrapping (cell.Width() may be 0 for matrix cells).
+			ch := cellMeasuredHeight(cell, t.columns[ci].Width())
 			if explicit := cell.Height(); explicit > ch {
 				ch = explicit
 			}

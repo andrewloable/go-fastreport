@@ -43,3 +43,4 @@ original-dotnet/
 /csharp-validation/FrxToHtml/obj
 html-delta
 compare_screenshots
+pdf-output

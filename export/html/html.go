@@ -496,7 +496,10 @@ func (e *Exporter) renderObject(obj preview.PreparedObject, scale float32) {
 				// The adjusted position/size go in each div's inline style.
 				var picCSS strings.Builder
 				picCSS.WriteString("text-align:center;position:absolute;color:rgb(255, 255, 255);")
-				if obj.FillColor.A == 0 {
+				if obj.BackgroundCSS != "" {
+					// TextureFill/GlassFill: use transparent base + separate CSS class for the fill image.
+					picCSS.WriteString("background-color:transparent;")
+				} else if obj.FillColor.A == 0 {
 					picCSS.WriteString("background-color:transparent;")
 				} else {
 					picCSS.WriteString(fmt.Sprintf("background-color:%s;", rgbColor(obj.FillColor)))
@@ -543,6 +546,11 @@ func (e *Exporter) renderObject(obj preview.PreparedObject, scale float32) {
 					picCSS.String(), imgCSS, pxVal(adjLeft), pxVal(adjTop), pxVal(adjW), pxVal(adjH)))
 			} else {
 				picClass := e.css.Register(picCSS.String())
+				// Add BackgroundCSS class for non-solid fills (TextureFill, etc.).
+				if obj.BackgroundCSS != "" {
+					bgClass := e.css.Register(obj.BackgroundCSS)
+					picClass = picClass + " " + bgClass
+				}
 				imgClass := e.css.Register(imgCSS)
 				e.sb.WriteString(fmt.Sprintf(
 					"<div class=\"%s\" style=\"left:%spx;top:%spx;width:%spx;height:%spx;border:none;\">&nbsp;</div>\n",
@@ -559,7 +567,9 @@ func (e *Exporter) renderObject(obj preview.PreparedObject, scale float32) {
 		// background-color:transparent, border:none, with absolute positioning.
 		var bgCSS strings.Builder
 		bgCSS.WriteString("text-align:center;position:absolute;color:rgb(255, 255, 255);")
-		if obj.FillColor.A == 0 {
+		if obj.BackgroundCSS != "" {
+			bgCSS.WriteString("background-color:transparent;")
+		} else if obj.FillColor.A == 0 {
 			bgCSS.WriteString("background-color:transparent;")
 		} else {
 			bgCSS.WriteString(fmt.Sprintf("background-color:%s;", rgbColor(obj.FillColor)))
@@ -573,6 +583,11 @@ func (e *Exporter) renderObject(obj preview.PreparedObject, scale float32) {
 				bgCSS.String(), pxVal(left), pxVal(top), pxVal(w), pxVal(h)))
 		} else {
 			bgClass := e.css.Register(bgCSS.String())
+			// Add BackgroundCSS class for non-solid fills (TextureFill, etc.).
+			if obj.BackgroundCSS != "" {
+				fillClass := e.css.Register(obj.BackgroundCSS)
+				bgClass = bgClass + " " + fillClass
+			}
 			e.sb.WriteString(fmt.Sprintf(
 				"<div class=\"%s\" style=\"left:%spx;top:%spx;width:%spx;height:%spx;\">&nbsp;</div>\n",
 				bgClass, pxVal(left), pxVal(top), pxVal(w), pxVal(h)))

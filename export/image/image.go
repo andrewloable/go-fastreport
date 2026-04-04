@@ -462,6 +462,11 @@ func (e *Exporter) renderObject(obj preview.PreparedObject, bandTop float32) {
 		// g.FillAndDrawRectangle for Rectangle, g.FillAndDrawEllipse for Ellipse.
 		// Each shape fills only its geometric area (not the full bounding rect).
 		fc := obj.FillColor
+		// For non-solid fills (TextureFill etc.), use makeFillImage via PolyFill.
+		var shapeFillSrc image.Image
+		if obj.PolyFill != nil && !obj.PolyFill.IsTransparent() {
+			shapeFillSrc = makeFillImage(obj.PolyFill, bounds)
+		}
 		shapeColor := color.RGBA{A: 255}
 		if obj.Border.Lines[0] != nil && obj.Border.Lines[0].Color.A > 0 {
 			shapeColor = obj.Border.Lines[0].Color
@@ -490,7 +495,11 @@ func (e *Exporter) renderObject(obj preview.PreparedObject, bandTop float32) {
 		}
 		switch obj.ShapeKind {
 		case 2: // Ellipse — fill ellipse, then draw outline.
-			if fc.A > 0 {
+			if shapeFillSrc != nil {
+				// Non-solid fill: draw the fill image clipped to the bounding rect.
+				// (Ellipse masking would be ideal, but rect fill matches common use.)
+				draw.Draw(e.curPage, bounds, shapeFillSrc, bounds.Min, draw.Over)
+			} else if fc.A > 0 {
 				e.fillEllipse(x, y, w, h, fc)
 			}
 			// Draw thick ellipse by drawing multiple concentric outlines.
@@ -505,7 +514,9 @@ func (e *Exporter) renderObject(obj preview.PreparedObject, bandTop float32) {
 				{X: x + w - bInset, Y: y + h - bInset},
 				{X: x, Y: y + h - bInset},
 			}
-			if fc.A > 0 {
+			if shapeFillSrc != nil {
+				draw.Draw(e.curPage, bounds, shapeFillSrc, bounds.Min, draw.Over)
+			} else if fc.A > 0 {
 				e.fillPolygon(triPts, fc)
 			}
 			drawThickLine(x+w/2, y, x+w-bInset, y+h-bInset)
@@ -521,7 +532,9 @@ func (e *Exporter) renderObject(obj preview.PreparedObject, bandTop float32) {
 				{X: x + w/2, Y: y + h},
 				{X: x, Y: y + h/2},
 			}
-			if fc.A > 0 {
+			if shapeFillSrc != nil {
+				draw.Draw(e.curPage, bounds, shapeFillSrc, bounds.Min, draw.Over)
+			} else if fc.A > 0 {
 				e.fillPolygon(diaPts, fc)
 			}
 			drawThickLine(x+w/2, y, x+w, y+h/2)
@@ -529,7 +542,9 @@ func (e *Exporter) renderObject(obj preview.PreparedObject, bandTop float32) {
 			drawThickLine(x+w/2, y+h, x, y+h/2)
 			drawThickLine(x, y+h/2, x+w/2, y)
 		case 1: // RoundRectangle — fill then draw outline.
-			if !bounds.Empty() && fc.A > 0 {
+			if !bounds.Empty() && shapeFillSrc != nil {
+				draw.Draw(e.curPage, bounds, shapeFillSrc, bounds.Min, draw.Over)
+			} else if !bounds.Empty() && fc.A > 0 {
 				draw.Draw(e.curPage, bounds, &image.Uniform{fc}, image.Point{}, draw.Over)
 			}
 			radius := int(math.Round(float64(obj.ShapeCurve)))
@@ -541,7 +556,9 @@ func (e *Exporter) renderObject(obj preview.PreparedObject, bandTop float32) {
 				}
 			}
 		default: // Rectangle (0) — fill bounding rect, then draw outline.
-			if !bounds.Empty() && fc.A > 0 {
+			if !bounds.Empty() && shapeFillSrc != nil {
+				draw.Draw(e.curPage, bounds, shapeFillSrc, bounds.Min, draw.Over)
+			} else if !bounds.Empty() && fc.A > 0 {
 				draw.Draw(e.curPage, bounds, &image.Uniform{fc}, image.Point{}, draw.Over)
 			}
 			for i := 0; i < shapePenW; i++ {
@@ -2292,9 +2309,126 @@ func makeFillImage(fill style.Fill, bounds image.Rectangle) image.Image {
 		return makeHatchImage(f, bounds)
 	case *style.GlassFill:
 		return &image.Uniform{f.Color}
+	case *style.TextureFill:
+		return makeTextureFillImage(f, bounds)
 	default:
 		return nil
 	}
+}
+
+// makeTextureFillImage creates a texture-filled image matching C#
+// TextureBrush(image, WrapMode) → FillRectangle pattern.
+// C# ref: Fills.cs TextureFill.CreateBrush (lines 988-1001).
+func makeTextureFillImage(f *style.TextureFill, bounds image.Rectangle) *image.RGBA {
+	if len(f.ImageData) == 0 {
+		return nil
+	}
+	src, _, err := image.Decode(bytes.NewReader(f.ImageData))
+	if err != nil {
+		// Fallback: try ICO format (some FRX files embed ICO images).
+		src = utils.DecodeICOImage(f.ImageData)
+		if src == nil {
+			return nil
+		}
+	}
+	srcBounds := src.Bounds()
+	tileW := srcBounds.Dx()
+	tileH := srcBounds.Dy()
+	if tileW <= 0 || tileH <= 0 {
+		return nil
+	}
+	if f.ImageWidth > 0 && f.ImageHeight > 0 && (f.ImageWidth != tileW || f.ImageHeight != tileH) {
+		tileW = f.ImageWidth
+		tileH = f.ImageHeight
+	}
+	canvasW := bounds.Dx()
+	canvasH := bounds.Dy()
+	img := image.NewRGBA(bounds)
+	offX := f.ImageOffsetX
+	offY := f.ImageOffsetY
+
+	for cy := 0; cy < canvasH; cy++ {
+		for cx := 0; cx < canvasW; cx++ {
+			var tx, ty int
+			switch f.WrapMode {
+			case style.WrapModeClamp:
+				tx = cx - offX
+				ty = cy - offY
+				if tx < 0 || tx >= tileW || ty < 0 || ty >= tileH {
+					continue
+				}
+			case style.WrapModeTileFlipX:
+				tx = (cx - offX) % tileW
+				ty = (cy - offY) % tileH
+				if tx < 0 {
+					tx += tileW
+				}
+				if ty < 0 {
+					ty += tileH
+				}
+				col := (cx - offX) / tileW
+				if (cx - offX) < 0 {
+					col--
+				}
+				if col%2 != 0 {
+					tx = tileW - 1 - tx
+				}
+			case style.WrapModeTileFlipY:
+				tx = (cx - offX) % tileW
+				ty = (cy - offY) % tileH
+				if tx < 0 {
+					tx += tileW
+				}
+				if ty < 0 {
+					ty += tileH
+				}
+				row := (cy - offY) / tileH
+				if (cy - offY) < 0 {
+					row--
+				}
+				if row%2 != 0 {
+					ty = tileH - 1 - ty
+				}
+			case style.WrapModeTileFlipXY:
+				tx = (cx - offX) % tileW
+				ty = (cy - offY) % tileH
+				if tx < 0 {
+					tx += tileW
+				}
+				if ty < 0 {
+					ty += tileH
+				}
+				col := (cx - offX) / tileW
+				if (cx - offX) < 0 {
+					col--
+				}
+				row := (cy - offY) / tileH
+				if (cy - offY) < 0 {
+					row--
+				}
+				if col%2 != 0 {
+					tx = tileW - 1 - tx
+				}
+				if row%2 != 0 {
+					ty = tileH - 1 - ty
+				}
+			default: // WrapModeTile
+				tx = (cx - offX) % tileW
+				ty = (cy - offY) % tileH
+				if tx < 0 {
+					tx += tileW
+				}
+				if ty < 0 {
+					ty += tileH
+				}
+			}
+			srcX := srcBounds.Min.X + tx*srcBounds.Dx()/tileW
+			srcY := srcBounds.Min.Y + ty*srcBounds.Dy()/tileH
+			r, g, b, a := src.At(srcX, srcY).RGBA()
+			img.SetRGBA(bounds.Min.X+cx, bounds.Min.Y+cy, color.RGBA{uint8(r >> 8), uint8(g >> 8), uint8(b >> 8), uint8(a >> 8)})
+		}
+	}
+	return img
 }
 
 // makeLinearGradientImage creates a linear gradient image matching C#

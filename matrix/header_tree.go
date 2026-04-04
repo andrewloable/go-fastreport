@@ -217,6 +217,18 @@ func (m *MatrixObject) BuildTemplateMultiLevel() {
 		nColHeaderRows++ // extra row for cell descriptor names
 	}
 
+	// C# ref: MatrixHelper.UpdateTemplateSizes — when !CellsSideBySide with multiple
+	// cell descriptors (stacked mode), headerWidth++ adds an extra row-header column
+	// for cell descriptor names (e.g. "Items Sold", "Revenue") and bodyHeight is
+	// multiplied by the number of cell descriptors (each row-leaf produces nCells rows).
+	stacked := !m.CellsSideBySide && len(m.Data.Cells) > 1
+	stackedCells := 1
+	origRowHeaderCols := nRowHeaderCols
+	if stacked {
+		stackedCells = len(m.Data.Cells)
+		nRowHeaderCols++ // extra column for cell descriptor names ("Data" column)
+	}
+
 	// C# ref: MatrixHelper.UpdateTemplateSizes — when ShowTitle, headerHeight++.
 	// The title row occupies row 0 in the result table and shifts everything else down.
 	titleOffset := 0
@@ -226,8 +238,8 @@ func (m *MatrixObject) BuildTemplateMultiLevel() {
 
 	// Total table columns = row-header columns + (col-leaves × nCells).
 	nCols := nRowHeaderCols + len(colLeaves)*nCells
-	// Total table rows = title (if any) + col-header rows + one per row-leaf.
-	nRows := titleOffset + nColHeaderRows + len(rowLeaves)
+	// Total table rows = title (if any) + col-header rows + row-leaves × stackedCells.
+	nRows := titleOffset + nColHeaderRows + len(rowLeaves)*stackedCells
 
 	// Reset table and restore position and identity.
 	m.TableBase = *table.NewTableBase()
@@ -447,7 +459,9 @@ func (m *MatrixObject) BuildTemplateMultiLevel() {
 		for c := 0; c < nRowHeaderCols; c++ {
 			if level == 0 {
 				cell := newCell(levelHdrTemplate, c)
-				if c < len(m.Data.Rows) {
+				// Set text from template for row descriptor columns and the
+				// stacked "Data" column (extra column for cell descriptor names).
+				if c < len(m.Data.Rows) || (stacked && c == origRowHeaderCols) {
 					if len(m.savedTemplateRows) > levelHdrTemplate {
 						templateRow := m.savedTemplateRows[levelHdrTemplate]
 						if templateRow != nil && c < len(templateRow.Cells()) && templateRow.Cells()[c] != nil {
@@ -679,221 +693,300 @@ func (m *MatrixObject) BuildTemplateMultiLevel() {
 	for ri, rLeaf := range rowLeaves {
 		// Detect level-0 group boundary (e.g. year change) and insert subtotal row.
 		curLevel0Node := findNodeAtLevel(m.rowRoot, rowLeafPaths[rLeaf], 0)
-		if hasTotals && nRowHeaderCols > 1 && prevLevel0Node != nil && curLevel0Node != prevLevel0Node {
+		if hasTotals && origRowHeaderCols > 1 && prevLevel0Node != nil && curLevel0Node != prevLevel0Node {
 			// Set RowIndex before addSubtotalRow so highlight conditions are evaluated
 			// with the correct index.
 			m.RowIndex = rowIdx
-			m.addSubtotalRow(prevLevel0Node, groupLeaves, colLeaves, nRowHeaderCols, nCells)
-			rowIdx++
+			m.addSubtotalRow(prevLevel0Node, groupLeaves, colLeaves, nRowHeaderCols, nCells, stackedCells, origRowHeaderCols, dataTemplate)
+			rowIdx += stackedCells
 			groupLeaves = nil
 		}
 		prevLevel0Node = curLevel0Node
 		groupLeaves = append(groupLeaves, rLeaf)
 
-		// Set RowIndex for this data row before building cells.
-		// C# ref: Matrix.RowIndex is set in PrintData before templateCell.GetData().
-		m.RowIndex = rowIdx
-		_ = ri
-		tableRow := newRow(dataTemplate) // data rows use template row after headers
 		rPath := rowLeafPaths[rLeaf]
 
-		// Row-header columns with RowSpan support.
-		for level := 0; level < nRowHeaderCols; level++ {
-			if level >= len(rPath) {
-				tableRow.AddCell(newCell(dataTemplate, level))
-				continue
+		// Each row-leaf produces stackedCells rows (1 normally, >1 in stacked mode).
+		for sci := 0; sci < stackedCells; sci++ {
+			// Template row for this stacked cell descriptor.
+			stackedTemplate := dataTemplate
+			if stacked {
+				stackedTemplate = dataTemplate + sci
 			}
-			// Find the HeaderItem at this level in the path.
-			node := findNodeAtLevel(m.rowRoot, rPath, level)
-			if node == nil || emittedRowNode[node] {
-				// Already emitted this header span — insert nil placeholder.
-				tableRow.AddCell(nil)
-				continue
-			}
-			// First occurrence — emit the cell with proper RowSpan.
-			cell := newCell(dataTemplate, level) // template: row header cell at this column
-			cell.SetText(rPath[level])
-			span := node.CellSize
-			// Add 1 for the subtotal row that follows this group.
-			// Applies to all level-0 groups, even those with a single leaf,
-			// because the subtotal row is always emitted.
-			if hasTotals && nRowHeaderCols > 1 && level == 0 {
-				span++
-			}
-			if span > 1 {
-				cell.SetRowSpan(span)
-			}
-			// Apply cached DataColumn image to PictureObjects in this row header cell.
-			// C# ref: PrintRowHeader → templateCell.GetData() → PictureObject.GetData().
-			if len(m.rowHeaderImgByVal) > 0 {
-				m.applyHeaderImages(cell, m.rowHeaderImgByVal, rPath[level])
-			}
-			emittedRowNode[node] = true
-			tableRow.AddCell(cell)
-		}
 
-		// Data cells — try runtime cell store first, fall back to mlAccumulators.
-		// For Total column leaves (added by AddTotalItems), aggregate non-Total siblings.
-		// C# ref: MatrixHelper.PrintData — when CellsSideBySide, iterates cell
-		// descriptors for each column, placing them in consecutive columns.
-		for leafIdx, cLeaf := range colLeaves {
-			cPath := colLeafPaths[cLeaf]
-			isTotalCol := ItemIsTotal(cLeaf)
-			for ci := 0; ci < nCells; ci++ {
-				tCol := templateColForLeaf(leafIdx, ci)
-				cell := newCell(dataTemplate, tCol)
-				var rawNumVal float64
-				if len(m.Data.Cells) > 0 {
-					var cellText string
-					var found bool
-					rt := m.Data.Runtime()
-					if rt != nil {
-						if isTotalCol {
-							// Aggregate across all non-Total data leaves under cLeaf's parent.
-							// C# ref: MatrixHelper computes totals by summing terminal items.
-							parent := ItemParent(cLeaf)
-							if parent != nil {
-								for _, dl := range getNonTotalTerminalItems(parent) {
-									raw := rt.GetCellValue(ItemIndex(dl), ItemIndex(rLeaf), ci)
-									if raw != nil {
-													rawNumVal += toFloat(raw)
+			// Set RowIndex for this data row before building cells.
+			// C# ref: Matrix.RowIndex is set in PrintData before templateCell.GetData().
+			m.RowIndex = rowIdx
+			_ = ri
+			tableRow := newRow(stackedTemplate)
+
+			// Row-header columns with RowSpan support.
+			for level := 0; level < nRowHeaderCols; level++ {
+				// Stacked "Data" column: emit cell descriptor name from template.
+				if stacked && level == origRowHeaderCols {
+					cell := newCell(stackedTemplate, level)
+					if tc := templateCell(stackedTemplate, level); tc != nil {
+						cell.SetText(tc.Text())
+					}
+					tableRow.AddCell(cell)
+					continue
+				}
+
+				// For non-first stacked rows, original row-header columns are spanned.
+				if sci > 0 && level < origRowHeaderCols {
+					tableRow.AddCell(nil)
+					continue
+				}
+
+				if level >= len(rPath) {
+					tableRow.AddCell(newCell(stackedTemplate, level))
+					continue
+				}
+				// Find the HeaderItem at this level in the path.
+				node := findNodeAtLevel(m.rowRoot, rPath, level)
+				if node == nil || emittedRowNode[node] {
+					// Already emitted this header span — insert nil placeholder.
+					tableRow.AddCell(nil)
+					continue
+				}
+				// First occurrence — emit the cell with proper RowSpan.
+				cell := newCell(stackedTemplate, level)
+				cell.SetText(rPath[level])
+				span := node.CellSize * stackedCells
+				// Add stackedCells for the subtotal row(s) that follow this group.
+				// Applies to all level-0 groups, even those with a single leaf,
+				// because the subtotal row is always emitted.
+				if hasTotals && origRowHeaderCols > 1 && level == 0 {
+					span += stackedCells
+				}
+				if span > 1 {
+					cell.SetRowSpan(span)
+				}
+				// Apply cached DataColumn image to PictureObjects in this row header cell.
+				// C# ref: PrintRowHeader → templateCell.GetData() → PictureObject.GetData().
+				if len(m.rowHeaderImgByVal) > 0 {
+					m.applyHeaderImages(cell, m.rowHeaderImgByVal, rPath[level])
+				}
+				emittedRowNode[node] = true
+				tableRow.AddCell(cell)
+			}
+
+			// Data cells — try runtime cell store first, fall back to mlAccumulators.
+			// For Total column leaves (added by AddTotalItems), aggregate non-Total siblings.
+			// C# ref: MatrixHelper.PrintData — when CellsSideBySide, iterates cell
+			// descriptors for each column, placing them in consecutive columns.
+			// When stacked, sci selects which cell descriptor's value to show.
+			cellIdx := sci // cell descriptor index for value lookup
+			for leafIdx, cLeaf := range colLeaves {
+				cPath := colLeafPaths[cLeaf]
+				isTotalCol := ItemIsTotal(cLeaf)
+				for ci := 0; ci < nCells; ci++ {
+					valueCellIdx := cellIdx
+					if sideBySide {
+						valueCellIdx = ci // side-by-side: ci selects the cell descriptor
+					}
+					tCol := templateColForLeaf(leafIdx, ci)
+					cell := newCell(stackedTemplate, tCol)
+					var rawNumVal float64
+					if len(m.Data.Cells) > 0 {
+						var cellText string
+						var found bool
+						rt := m.Data.Runtime()
+						if rt != nil {
+							if isTotalCol {
+								// Aggregate across all non-Total data leaves under cLeaf's parent.
+								// C# ref: MatrixHelper computes totals by summing terminal items.
+								parent := ItemParent(cLeaf)
+								if parent != nil {
+									for _, dl := range getNonTotalTerminalItems(parent) {
+										raw := rt.GetCellValue(ItemIndex(dl), ItemIndex(rLeaf), valueCellIdx)
+										if raw != nil {
+											rawNumVal += toFloat(raw)
+										}
 									}
 								}
-							}
-							if rawNumVal != 0 {
-								// C# uses decimal arithmetic; round to 2dp to match display.
-								rawNumVal = math.Round(rawNumVal*100) / 100
-								cellText = fmtVal(cell, rawNumVal)
-								found = true
-							}
-						} else {
-							raw := rt.GetCellValue(ItemIndex(cLeaf), ItemIndex(rLeaf), ci)
-							if raw != nil {
-								rawNumVal = toFloat(raw)
 								if rawNumVal != 0 {
+									// C# uses decimal arithmetic; round to 2dp to match display.
+									rawNumVal = math.Round(rawNumVal*100) / 100
 									cellText = fmtVal(cell, rawNumVal)
 									found = true
 								}
-							}
-						}
-					}
-					// Fall back to mlAccumulators (populated by AddDataMultiLevel).
-					// Total leaves have no mlAccumulators entry; skip fallback for them.
-					if !found && !isTotalCol {
-						val, err := m.CellResultMultiLevel(rPath, cPath, ci)
-						if err == nil {
-							rawNumVal = toFloat(val)
-							cellText = fmtVal(cell, val)
-							found = true
-						}
-					}
-					if found {
-						cell.SetText(cellText)
-					}
-				}
-				// Apply highlight conditions with the raw numeric value as context.
-				m.CurrentCellValue = rawNumVal
-				m.applyHighlights(cell)
-				// Set the raw value on the result cell so BeforePrint scripts can
-				// read it via "Cell4.Value", then fire any registered BeforePrint event.
-				cell.SetCurrentValue(rawNumVal)
-				m.fireCellBeforePrint(cell)
-				tableRow.AddCell(cell)
-			}
-		}
-
-		// Apply EvenStyle fill to even-indexed data rows.
-		// C# ref: MatrixHelper.PrintData applies EvenStyle on even rows.
-		if ri%2 == 1 && evenFill != nil {
-			for _, cell := range tableRow.Cells() {
-				if cell != nil {
-					cell.SetFill(evenFill)
-				}
-			}
-		}
-
-		// Apply highlight conditions for each cell in this row.
-		// C# ref: templateCell.GetData() in PrintData evaluates highlights with current RowIndex.
-		for _, cell := range tableRow.Cells() {
-			if cell != nil {
-				m.applyHighlights(cell)
-			}
-		}
-
-		m.TableBase.AddRow(tableRow)
-		rowIdx++
-	}
-
-	// Insert subtotal for the last group.
-	if hasTotals && nRowHeaderCols > 1 && prevLevel0Node != nil {
-		m.RowIndex = rowIdx
-		m.addSubtotalRow(prevLevel0Node, groupLeaves, colLeaves, nRowHeaderCols, nCells)
-		rowIdx++
-	}
-
-	// Grand total row (sum per column + grand total).
-	// C# ref: MatrixHelper uses the last template row (Row7) for the grand total.
-	// When CellsSideBySide, emits nCells cells per column leaf.
-	if hasTotals {
-		// Set RowIndex for the grand total row.
-		m.RowIndex = rowIdx
-		grandTotalTemplateRow := len(savedRows) - 1
-		totalRow := newRow(grandTotalTemplateRow) // grand total uses last template row
-		// Total label spanning all row-header columns.
-		labelCell := newCell(grandTotalTemplateRow, 0) // template: grand total label cell
-		labelCell.SetText("Total")
-		if nRowHeaderCols > 1 {
-			labelCell.SetColSpan(nRowHeaderCols)
-		}
-		totalRow.AddCell(labelCell)
-		for c := 1; c < nRowHeaderCols; c++ {
-			totalRow.AddCell(nil) // spanned placeholders
-		}
-
-		// One cell per column leaf (data or Total).
-		// For Total column leaves, aggregate non-Total siblings.
-		for leafIdx, cLeaf := range colLeaves {
-			for ci := 0; ci < nCells; ci++ {
-				tCol := templateColForLeaf(leafIdx, ci)
-				cell := newCell(grandTotalTemplateRow, tCol)
-				colSum := 0.0
-				rt := m.Data.Runtime()
-				if rt != nil {
-					if ItemIsTotal(cLeaf) {
-						// Aggregate across non-Total data leaves under parent.
-						parent := ItemParent(cLeaf)
-						if parent != nil {
-							for _, dl := range getNonTotalTerminalItems(parent) {
-								for _, rLeaf := range rowLeaves {
-									raw := rt.GetCellValue(ItemIndex(dl), ItemIndex(rLeaf), ci)
-									if raw != nil {
-										colSum += toFloat(raw)
+							} else {
+								raw := rt.GetCellValue(ItemIndex(cLeaf), ItemIndex(rLeaf), valueCellIdx)
+								if raw != nil {
+									rawNumVal = toFloat(raw)
+									if rawNumVal != 0 {
+										cellText = fmtVal(cell, rawNumVal)
+										found = true
 									}
 								}
 							}
 						}
-					} else {
-						for _, rLeaf := range rowLeaves {
-							raw := rt.GetCellValue(ItemIndex(cLeaf), ItemIndex(rLeaf), ci)
-							if raw != nil {
-								colSum += toFloat(raw)
+						// Fall back to mlAccumulators (populated by AddDataMultiLevel).
+						// Total leaves have no mlAccumulators entry; skip fallback for them.
+						if !found && !isTotalCol {
+							val, err := m.CellResultMultiLevel(rPath, cPath, valueCellIdx)
+							if err == nil {
+								rawNumVal = toFloat(val)
+								cellText = fmtVal(cell, val)
+								found = true
 							}
 						}
+						if found {
+							cell.SetText(cellText)
+						}
+					}
+					// Apply highlight conditions with the raw numeric value as context.
+					m.CurrentCellValue = rawNumVal
+					m.applyHighlights(cell)
+					// Set the raw value on the result cell so BeforePrint scripts can
+					// read it via "Cell4.Value", then fire any registered BeforePrint event.
+					cell.SetCurrentValue(rawNumVal)
+					m.fireCellBeforePrint(cell)
+					tableRow.AddCell(cell)
+				}
+			}
+
+			// Apply EvenStyle fill to even-indexed data rows.
+			// C# ref: MatrixHelper.PrintData applies EvenStyle on even rows.
+			if ri%2 == 1 && evenFill != nil {
+				for _, cell := range tableRow.Cells() {
+					if cell != nil {
+						cell.SetFill(evenFill)
 					}
 				}
-				if colSum != 0 {
-					cell.SetText(fmtVal(cell, colSum))
+			}
+
+			// Apply highlight conditions for each cell in this row.
+			// C# ref: templateCell.GetData() in PrintData evaluates highlights with current RowIndex.
+			for _, cell := range tableRow.Cells() {
+				if cell != nil {
+					m.applyHighlights(cell)
+				}
+			}
+
+			m.TableBase.AddRow(tableRow)
+			rowIdx++
+		} // end stacked cell loop (sci)
+	}
+
+	// Insert subtotal for the last group.
+	if hasTotals && origRowHeaderCols > 1 && prevLevel0Node != nil {
+		m.RowIndex = rowIdx
+		m.addSubtotalRow(prevLevel0Node, groupLeaves, colLeaves, nRowHeaderCols, nCells, stackedCells, origRowHeaderCols, dataTemplate)
+		rowIdx += stackedCells
+	}
+
+	// Grand total row(s) (sum per column + grand total).
+	// C# ref: MatrixHelper uses the last template row(s) for the grand total.
+	// When stacked, emits stackedCells rows (one per cell descriptor).
+	// When CellsSideBySide, emits nCells cells per column leaf in a single row.
+	if hasTotals {
+		for sci := 0; sci < stackedCells; sci++ {
+			// Set RowIndex for the grand total row.
+			m.RowIndex = rowIdx
+			// Template row: for stacked, grand total rows start at len(savedRows)-stackedCells.
+			// For non-stacked, use the last template row.
+			grandTotalTemplateRow := len(savedRows) - 1
+			if stacked {
+				grandTotalTemplateRow = len(savedRows) - stackedCells + sci
+			}
+			totalRow := newRow(grandTotalTemplateRow)
+
+			if sci == 0 {
+				// Total label cell — first stacked row emits it with RowSpan.
+				labelCell := newCell(grandTotalTemplateRow, 0)
+				// Use template text (e.g. "Total") if available.
+				if tc := templateCell(grandTotalTemplateRow, 0); tc != nil && tc.Text() != "" {
+					labelCell.SetText(tc.Text())
+				} else {
+					labelCell.SetText("Total")
+				}
+				labelSpan := 1
+				if stacked {
+					// Span the original row-header columns and stackedCells rows.
+					if origRowHeaderCols > 1 {
+						labelCell.SetColSpan(origRowHeaderCols)
+						labelSpan = origRowHeaderCols
+					}
+					if stackedCells > 1 {
+						labelCell.SetRowSpan(stackedCells)
+					}
+				} else if nRowHeaderCols > 1 {
+					labelCell.SetColSpan(nRowHeaderCols)
+					labelSpan = nRowHeaderCols
+				}
+				totalRow.AddCell(labelCell)
+				for c := 1; c < labelSpan; c++ {
+					totalRow.AddCell(nil) // ColSpan placeholders
+				}
+			} else {
+				// Subsequent stacked rows: nil placeholders for row-header columns.
+				for c := 0; c < origRowHeaderCols; c++ {
+					totalRow.AddCell(nil)
+				}
+			}
+
+			// Data descriptor column for stacked mode.
+			if stacked {
+				cell := newCell(grandTotalTemplateRow, origRowHeaderCols)
+				if tc := templateCell(grandTotalTemplateRow, origRowHeaderCols); tc != nil {
+					cell.SetText(tc.Text())
 				}
 				totalRow.AddCell(cell)
 			}
-		}
-		// Apply highlight conditions for the grand total row.
-		for _, cell := range totalRow.Cells() {
-			if cell != nil {
-				m.applyHighlights(cell)
+
+			// One cell per column leaf (data or Total).
+			// For Total column leaves, aggregate non-Total siblings.
+			valueCellIdx := sci
+			for leafIdx, cLeaf := range colLeaves {
+				for ci := 0; ci < nCells; ci++ {
+					vcIdx := valueCellIdx
+					if sideBySide {
+						vcIdx = ci
+					}
+					tCol := templateColForLeaf(leafIdx, ci)
+					cell := newCell(grandTotalTemplateRow, tCol)
+					colSum := 0.0
+					rt := m.Data.Runtime()
+					if rt != nil {
+						if ItemIsTotal(cLeaf) {
+							// Aggregate across non-Total data leaves under parent.
+							parent := ItemParent(cLeaf)
+							if parent != nil {
+								for _, dl := range getNonTotalTerminalItems(parent) {
+									for _, rLeaf := range rowLeaves {
+										raw := rt.GetCellValue(ItemIndex(dl), ItemIndex(rLeaf), vcIdx)
+										if raw != nil {
+											colSum += toFloat(raw)
+										}
+									}
+								}
+							}
+						} else {
+							for _, rLeaf := range rowLeaves {
+								raw := rt.GetCellValue(ItemIndex(cLeaf), ItemIndex(rLeaf), vcIdx)
+								if raw != nil {
+									colSum += toFloat(raw)
+								}
+							}
+						}
+					}
+					if colSum != 0 {
+						cell.SetText(fmtVal(cell, colSum))
+					}
+					totalRow.AddCell(cell)
+				}
 			}
+			// Apply highlight conditions for the grand total row.
+			for _, cell := range totalRow.Cells() {
+				if cell != nil {
+					m.applyHighlights(cell)
+				}
+			}
+			m.TableBase.AddRow(totalRow)
+			rowIdx++
 		}
-		m.TableBase.AddRow(totalRow)
 	}
 
 	// Auto-size columns based on text content width.
@@ -1329,70 +1422,133 @@ func (m *MatrixObject) fmtCellVal(cell *table.TableCell, v any) string {
 	return fmt.Sprintf("%g", v)
 }
 
-// addSubtotalRow inserts a subtotal row for a level-0 group (e.g. per-year subtotal).
+// addSubtotalRow inserts subtotal row(s) for a level-0 group (e.g. per-year subtotal).
 // It sums the cell values for all leaves in the group across all column leaves.
-// nCells is the number of cell descriptors (>1 when CellsSideBySide).
-// Template row index 2 (Row5) provides styling for the subtotal cells.
+// nCells is the number of cell descriptors per column (>1 when CellsSideBySide).
+// stackedCells is the number of rows per cell descriptor (>1 when stacked).
+// origRowHeaderCols is the number of row-header columns before the stacked "Data" column.
+// dataTemplate is the template row index for data rows.
 // C# ref: MatrixHelper.PrintRowHeader — total items use TemplateTotalRow cells.
-func (m *MatrixObject) addSubtotalRow(_ *HeaderItem, groupLeaves, colLeaves []*HeaderItem, nRowHeaderCols, nCells int) {
-	row := table.NewTableRow()
-	// Use subtotal template row height (Row5 = index 2 in template).
-	if len(m.savedTemplateRows) > 2 {
-		row.SetHeight(m.savedTemplateRows[2].Height())
-		row.SetAutoSize(m.savedTemplateRows[2].AutoSize())
-	}
-	// First cell: empty (year cell already has RowSpan covering this row).
-	row.AddCell(nil)
-	// Second cell: "Total" label — styled from template Cell6 (row 2, col 1).
-	if nRowHeaderCols > 1 {
-		cell := m.newStyledCell(2, 1) // template: Row5/Cell6
-		cell.SetText("Total")
-		row.AddCell(cell)
-	}
-	for c := 2; c < nRowHeaderCols; c++ {
-		row.AddCell(m.newStyledCell(2, c))
-	}
-	// Template column helpers for subtotal cells.
-	dataCellCol := func(ci int) int { return nRowHeaderCols + ci }
-	totalCellCol := func(ci int) int { return nRowHeaderCols + nCells + ci }
-	// Subtotal per column — one cell per cell descriptor per column leaf.
-	subtotalGrands := make([]float64, nCells)
-	rt := m.Data.Runtime()
-	for _, cLeaf := range colLeaves {
-		for ci := 0; ci < nCells; ci++ {
-			cell := m.newStyledCell(2, dataCellCol(ci))
-			colSum := 0.0
-			if rt != nil {
-				for _, rLeaf := range groupLeaves {
-					raw := rt.GetCellValue(ItemIndex(cLeaf), ItemIndex(rLeaf), ci)
-					if raw != nil {
-						colSum += toFloat(raw)
-					}
+func (m *MatrixObject) addSubtotalRow(_ *HeaderItem, groupLeaves, colLeaves []*HeaderItem, nRowHeaderCols, nCells, stackedCells, origRowHeaderCols, dataTemplate int) {
+	stacked := stackedCells > 1
+	for sci := 0; sci < stackedCells; sci++ {
+		subtotalTemplate := 2 // default: template row index 2 (Row5)
+		if stacked {
+			subtotalTemplate = dataTemplate + sci
+		}
+		row := table.NewTableRow()
+		if subtotalTemplate < len(m.savedTemplateRows) {
+			row.SetHeight(m.savedTemplateRows[subtotalTemplate].Height())
+			row.SetAutoSize(m.savedTemplateRows[subtotalTemplate].AutoSize())
+		}
+
+		if sci == 0 {
+			// First cell: empty (year cell already has RowSpan covering this row).
+			row.AddCell(nil)
+			// Second cell: "Total" label — styled from template.
+			if origRowHeaderCols > 1 {
+				cell := m.newStyledCell(subtotalTemplate, 1)
+				cell.SetText("Total")
+				if stacked && stackedCells > 1 {
+					cell.SetRowSpan(stackedCells)
 				}
+				row.AddCell(cell)
 			}
-			subtotalGrands[ci] += colSum
-			if colSum != 0 {
-				cell.SetText(m.fmtCellVal(cell, colSum))
+			for c := 2; c < origRowHeaderCols; c++ {
+				row.AddCell(m.newStyledCell(subtotalTemplate, c))
+			}
+		} else {
+			// Subsequent stacked rows: nil placeholders for row-header columns.
+			for c := 0; c < origRowHeaderCols; c++ {
+				row.AddCell(nil)
+			}
+		}
+
+		// Data descriptor column for stacked mode.
+		if stacked {
+			cell := m.newStyledCell(subtotalTemplate, origRowHeaderCols)
+			if tc := m.templateCellAt(subtotalTemplate, origRowHeaderCols); tc != nil {
+				cell.SetText(tc.Text())
 			}
 			row.AddCell(cell)
 		}
-	}
-	// Subtotal grand total — one per cell descriptor.
-	for ci := 0; ci < nCells; ci++ {
-		gtCell := m.newStyledCell(2, totalCellCol(ci))
-		if subtotalGrands[ci] != 0 {
-			gtCell.SetText(m.fmtCellVal(gtCell, subtotalGrands[ci]))
+
+		// Template column helpers for subtotal cells.
+		// C# ref: MatrixHelper uses the same template column logic as data rows:
+		// data leaves → dataCellCol, Total leaves → totalCellCol/grandTotalCellCol.
+		nColDims := len(m.Data.Columns)
+		if nColDims < 1 {
+			nColDims = 1
 		}
-		row.AddCell(gtCell)
-	}
-	// Apply highlight conditions using the current m.RowIndex (set by the caller).
-	// C# ref: PrintRowHeader calls templateCell.GetData() for subtotal rows too.
-	for _, cell := range row.Cells() {
-		if cell != nil {
-			m.applyHighlights(cell)
+		dataCellCol := func(ci int) int { return nRowHeaderCols + ci }
+		grandTotalCellCol := func(ci int) int { return nRowHeaderCols + nCells*nColDims + ci }
+		totalCellCol := func(ci int) int { return nRowHeaderCols + nCells + ci }
+		subtotalTemplateCol := func(leafIdx, ci int) int {
+			if leafIdx < 0 || leafIdx >= len(colLeaves) {
+				return dataCellCol(ci)
+			}
+			leaf := colLeaves[leafIdx]
+			if !ItemIsTotal(leaf) {
+				return dataCellCol(ci)
+			}
+			if ItemParent(leaf) == m.colRoot {
+				return grandTotalCellCol(ci)
+			}
+			return totalCellCol(ci)
 		}
+
+		// Subtotal per column — one cell per cell descriptor per column leaf.
+		// Total column leaves are aggregated from non-Total siblings (like data rows).
+		rt := m.Data.Runtime()
+		for leafIdx, cLeaf := range colLeaves {
+			isTotalCol := ItemIsTotal(cLeaf)
+			for ci := 0; ci < nCells; ci++ {
+				tCol := subtotalTemplateCol(leafIdx, ci)
+				cell := m.newStyledCell(subtotalTemplate, tCol)
+				valueCellIdx := sci
+				if nCells > 1 {
+					valueCellIdx = ci // side-by-side
+				}
+				colSum := 0.0
+				if rt != nil {
+					if isTotalCol {
+						// Aggregate across non-Total data leaves under parent.
+						// C# ref: MatrixHelper computes totals by summing terminal items.
+						parent := ItemParent(cLeaf)
+						if parent != nil {
+							for _, dl := range getNonTotalTerminalItems(parent) {
+								for _, rLeaf := range groupLeaves {
+									raw := rt.GetCellValue(ItemIndex(dl), ItemIndex(rLeaf), valueCellIdx)
+									if raw != nil {
+										colSum += toFloat(raw)
+									}
+								}
+							}
+						}
+					} else {
+						for _, rLeaf := range groupLeaves {
+							raw := rt.GetCellValue(ItemIndex(cLeaf), ItemIndex(rLeaf), valueCellIdx)
+							if raw != nil {
+								colSum += toFloat(raw)
+							}
+						}
+					}
+				}
+				if colSum != 0 {
+					cell.SetText(m.fmtCellVal(cell, colSum))
+				}
+				row.AddCell(cell)
+			}
+		}
+		// Apply highlight conditions using the current m.RowIndex (set by the caller).
+		// C# ref: PrintRowHeader calls templateCell.GetData() for subtotal rows too.
+		for _, cell := range row.Cells() {
+			if cell != nil {
+				m.applyHighlights(cell)
+			}
+		}
+		m.TableBase.AddRow(row)
 	}
-	m.TableBase.AddRow(row)
 }
 
 // joinPath concatenates path segments with a zero-byte separator for a unique key.

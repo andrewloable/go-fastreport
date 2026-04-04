@@ -17,6 +17,7 @@ import (
 	"os"
 	"strings"
 
+	_ "golang.org/x/image/bmp" // register BMP decoder for ICO-embedded BMP
 	xdraw "golang.org/x/image/draw"
 )
 
@@ -286,4 +287,75 @@ func scaleDraw(src image.Image, srcRect image.Rectangle, dst *image.NRGBA, dstRe
 		return
 	}
 	xdraw.CatmullRom.Scale(dst, dstRect, src, srcRect, xdraw.Over, nil)
+}
+
+// DecodeICOImage extracts and decodes the first image from ICO format data.
+// ICO files embed BMP or PNG image data. C# System.Drawing.Image.FromStream
+// handles ICO natively; this provides equivalent Go decoding.
+// Returns nil if the data is not valid ICO or cannot be decoded.
+func DecodeICOImage(data []byte) image.Image {
+	if len(data) < 22 { // 6 header + 16 directory entry minimum
+		return nil
+	}
+	// ICO magic: reserved=0, type=1.
+	if data[0] != 0 || data[1] != 0 || data[2] != 1 || data[3] != 0 {
+		return nil
+	}
+	// Read data offset and size from the first directory entry (starts at byte 6).
+	dataSize := int(data[14]) | int(data[15])<<8 | int(data[16])<<16 | int(data[17])<<24
+	dataOffset := int(data[18]) | int(data[19])<<8 | int(data[20])<<16 | int(data[21])<<24
+	if dataOffset < 0 || dataOffset >= len(data) || dataSize <= 0 || dataOffset+dataSize > len(data) {
+		return nil
+	}
+	imgData := data[dataOffset : dataOffset+dataSize]
+	// Embedded PNG? (magic: 89 50 4E 47)
+	if len(imgData) >= 8 && imgData[0] == 0x89 && imgData[1] == 0x50 {
+		if img, _, err := image.Decode(bytes.NewReader(imgData)); err == nil {
+			return img
+		}
+	}
+	// Otherwise embedded BMP DIB (BITMAPINFOHEADER).
+	if len(imgData) < 40 {
+		return nil
+	}
+	dibHeaderSize := int(imgData[0]) | int(imgData[1])<<8 | int(imgData[2])<<16 | int(imgData[3])<<24
+	bitsPerPixel := int(imgData[14]) | int(imgData[15])<<8
+	colorUsed := int(imgData[32]) | int(imgData[33])<<8 | int(imgData[34])<<16 | int(imgData[35])<<24
+	paletteSize := 0
+	if bitsPerPixel <= 8 {
+		if colorUsed == 0 {
+			colorUsed = 1 << uint(bitsPerPixel)
+		}
+		paletteSize = colorUsed * 4
+	}
+	bmpHeaderSize := 14
+	pixelOffset := bmpHeaderSize + dibHeaderSize + paletteSize
+	// ICO BMPs store double-height (image + AND mask). Halve the height.
+	icoHeight := int(imgData[8]) | int(imgData[9])<<8 | int(imgData[10])<<16 | int(imgData[11])<<24
+	halfHeight := icoHeight / 2
+	// Build a full BMP file: 14-byte file header + modified DIB.
+	modImgData := make([]byte, len(imgData))
+	copy(modImgData, imgData)
+	modImgData[8] = byte(halfHeight)
+	modImgData[9] = byte(halfHeight >> 8)
+	modImgData[10] = byte(halfHeight >> 16)
+	modImgData[11] = byte(halfHeight >> 24)
+	fileSize := bmpHeaderSize + len(modImgData)
+	bmpFile := make([]byte, fileSize)
+	bmpFile[0] = 'B'
+	bmpFile[1] = 'M'
+	bmpFile[2] = byte(fileSize)
+	bmpFile[3] = byte(fileSize >> 8)
+	bmpFile[4] = byte(fileSize >> 16)
+	bmpFile[5] = byte(fileSize >> 24)
+	bmpFile[10] = byte(pixelOffset)
+	bmpFile[11] = byte(pixelOffset >> 8)
+	bmpFile[12] = byte(pixelOffset >> 16)
+	bmpFile[13] = byte(pixelOffset >> 24)
+	copy(bmpFile[bmpHeaderSize:], modImgData)
+	img, _, err := image.Decode(bytes.NewReader(bmpFile))
+	if err != nil {
+		return nil
+	}
+	return img
 }
